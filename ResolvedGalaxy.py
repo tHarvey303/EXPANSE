@@ -8,6 +8,8 @@ from astropy.nddata import Cutout2D
 import ast
 from astropy.convolution import convolve_fft
 import glob
+import shutil
+import os
 # This class is designed to hold all the data for a galaxy, including the cutouts, segmentation maps, and RMS error maps.
 
 '''TODO:
@@ -19,7 +21,7 @@ import glob
 
 class ResolvedGalaxy:
     def __init__(self, galaxy_id, sky_coord, survey, bands, im_paths, im_exts, im_zps, seg_paths, seg_exts,
-                rms_err_paths, rms_err_exts, im_pixel_scales, phot_imgs, phot_img_headers, rms_err_imgs, seg_imgs,
+                rms_err_paths, rms_err_exts, im_pixel_scales, phot_imgs, phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict,
                 cutout_size=64, h5_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/', psf_kernel_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/psf_kernels/', psf_type = 'webbpsf'):
         self.galaxy_id = galaxy_id
         self.sky_coord = sky_coord
@@ -34,6 +36,7 @@ class ResolvedGalaxy:
         self.rms_err_exts = rms_err_exts
         self.im_pixel_scales = im_pixel_scales
         self.cutout_size = cutout_size
+        self.aperture_dict = aperture_dict
 
         # Actual cutouts
         self.phot_imgs = phot_imgs
@@ -71,7 +74,7 @@ class ResolvedGalaxy:
         
     @classmethod
     def init_from_galfind(cls, galaxy_id, survey, version, instruments = ['NIRCam'], 
-                            excl_bands = [], cutout_size=64, forced_phot_band = ["f277W", "f356W", "f444W"], 
+                            excl_bands = [], cutout_size=64, forced_phot_band = ["F277W", "F356W", "F444W"], 
                             aper_diams = [0.32] * u.arcsec, output_flux_unit = u.uJy, h5folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
         # Imports here so only used if needed
         from galfind import Data
@@ -90,6 +93,7 @@ class ResolvedGalaxy:
     
         # Obtain galaxy object
         galaxy = [gal for gal in cat.galaxies if gal.galaxy_id == galaxy_id]
+        
         if len(galaxy) == 0:
             raise Exception(f"Galaxy {galaxy_id} not found")
         elif len(galaxy) > 1:
@@ -99,17 +103,30 @@ class ResolvedGalaxy:
 
         cutout_paths = galaxy.cutout_paths
         # Settings things needed for init
-        galaxy_skycoord = galaxy.sky_coord
-        im_paths = data.im_paths
-        im_exts = data.im_exts
-        bands = data.instrument.bands
+        # Get things from Data object
+        im_paths = cat.data.im_paths
+        im_exts = cat.data.im_exts
         err_paths = cat.data.err_paths
         err_exts = cat.data.err_exts
         seg_paths = cat.data.seg_paths
         seg_exts = cat.data.seg_exts
         im_zps = cat.data.im_zps
         im_pixel_scales = cat.data.instrument.pixel_size
+        bands = cat.data.instrument.bands # should be bands just for galaxy!
 
+        # Get things from galaxy object
+        galaxy_skycoord = galaxy.sky_coord
+        bands_mask = galaxy.phot.flux_Jy.mask
+        bands = bands[~bands_mask]
+        # Get aperture photometry
+        flux_aper = galaxy.phot.flux_Jy[~bands_mask]
+        flux_err_aper = galaxy.phot.flux_err_Jy[~bands_mask]
+        depths = galaxy.phot.depths[~bands_mask]
+        # Get the wavelegnths
+        wave = galaxy.phot.band_wavelengths[~bands_mask]
+        # aperture_dict
+        aperture_dict = {0.32*u.arcsec: {'flux': flux_aper, 'flux_err': flux_err_aper, 'depths': depths, 'wave': wave}}
+        
         phot_imgs = {}
         phot_pix_unit = {}
         rms_err_imgs = {}
@@ -170,6 +187,8 @@ class ResolvedGalaxy:
         seg_exts = ast.literal_eval(hfile['paths']['seg_exts'][()])
         rms_err_paths = ast.literal_eval(hfile['paths']['rms_err_paths'][()])
         rms_err_exts = ast.literal_eval(hfile['paths']['rms_err_exts'][()])
+        # Load aperture photometry
+        aperture_dict = ast.literal_eval(hfile['aperture_photometry']['aperture_dict'][()])
         # Load raw data
         phot_imgs = {}
         rms_err_imgs = {}
@@ -191,6 +210,10 @@ class ResolvedGalaxy:
     def dump_to_h5(self, h5folder='/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
         '''Dump the galaxy data to an .h5 file'''
         # for strings
+
+        if not os.path.exists(h5folder):
+            os.makedirs(h5folder)
+
         str_dt = h5.string_dtype(encoding='utf-8')
         # Convert most dictionaries to strings
         # 'meta' - galaxy ID, survey, sky_coord, version, instruments, excl_bands, cutout_size, zps, pixel_scales, phot_pix_unit
@@ -229,6 +252,8 @@ class ResolvedGalaxy:
         hfile['paths'].create_dataset('seg_exts', data=str(self.seg_exts), dtype=str_dt)
         hfile['paths'].create_dataset('rms_err_exts', data=str(self.rms_err_exts), dtype=str_dt)
 
+        hfile['aperture_photometry'].create_dataset('aperture_dict', data=str(self.aperture_dict), dtype=str_dt)
+
         # Save raw data
         for band in self.bands:
             hfile['raw_data'].create_dataset(f'phot_{band}', data=self.phot_imgs[band])
@@ -262,7 +287,7 @@ class ResolvedGalaxy:
 
 if __name__ == "__main__":
     # Test the Galaxy class
-    galaxy = ResolvedGalaxy.init_from_galfind(52, 'NGDEEP2', 'v11')
+    galaxy = ResolvedGalaxy.init_from_galfind(52, 'NGDEEP2', 'v11', excl_bands = ['F435W', 'F775W', 'F850LP'])
     galaxy.dump_to_h5()
     galaxy2 = ResolvedGalaxy.init_from_h5(52)
     print(galaxy2.galaxy_id)
