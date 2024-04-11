@@ -1,3 +1,4 @@
 demo/*
 *.log
 psfs/webbpsf/
+__pycache__/*
