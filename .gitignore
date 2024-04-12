@@ -2,3 +2,7 @@ demo/*
 *.log
 psfs/webbpsf/
 __pycache__/*
+crop_*
+stamp_*
+galaxies/temp/*.fits
+galaxies/*.fits
