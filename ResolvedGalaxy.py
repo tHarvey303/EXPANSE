@@ -12,16 +12,21 @@ import glob
 import shutil
 from pathlib import Path
 import os
+from astropy.table import Table, QTable
 import typing
 from astropy.utils.exceptions import AstropyWarning
 import warnings
 from astropy.utils.masked import Masked
 from astropy.wcs import WCS
+from astropy.io.misc.hdf5 import write_table_hdf5, read_table_hdf5
 # can write astropy to h5
-
+import copy
+import cmasher as cm
 from piXedfit.piXedfit_bin import pixel_binning
-
-
+# import make_axis_locatable
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+#import ScalarFormatter
+from matplotlib.ticker import ScalarFormatter
 warnings.simplefilter('ignore', category=AstropyWarning)
 
 # This class is designed to hold all the data for a galaxy, including the cutouts, segmentation maps, and RMS error maps.
@@ -41,7 +46,7 @@ class ResolvedGalaxy:
                 rms_err_paths, rms_err_exts, im_pixel_scales, phot_imgs, phot_pix_unit, 
                 phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, 
                 psf_matched_data = None, psf_matched_rms_err = None, pixedfit_map = None, voronoi_map = None, 
-                binned_flux_map = None, binned_flux_err_map = None, cutout_size=64, 
+                binned_flux_map = None, binned_flux_err_map = None, photometry_table = None, sed_fitting_table = None, cutout_size=64, 
                 h5_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/',
                 psf_kernel_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/psfs/', 
                 psf_type = 'webbpsf', overwrite = False):
@@ -67,7 +72,7 @@ class ResolvedGalaxy:
         self.rms_err_imgs = rms_err_imgs
         self.seg_imgs = seg_imgs
         
-        self.h5_path = h5_folder + f'{self.galaxy_id}.h5'
+        self.h5_path = h5_folder + f'{self.survey}_{self.galaxy_id}.h5'
 
         if os.path.exists(self.h5_path) and overwrite:
             os.remove(self.h5_path)
@@ -86,6 +91,10 @@ class ResolvedGalaxy:
         self.binned_flux_map = binned_flux_map
         self.binned_flux_err_map = binned_flux_err_map
 
+        self.photometry_table = photometry_table
+
+        self.sed_fitting_table = sed_fitting_table
+
         self.psf_kernels = {psf_type: {}}
         # Assume bands is in wavelength order, and that the largest PSF is in the last band
         print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
@@ -97,7 +106,7 @@ class ResolvedGalaxy:
                 raise Exception(f"Multiple PSF kernels found between {band} and {bands[-1]}")
             else:
                 self.psf_kernels[psf_type][band] = files[0]
-        print(self.psf_matched_rms_err)
+
         if self.psf_matched_data in [None, {}] or self.psf_matched_rms_err in [None, {}]:  
             print('Convolving images with PSF')
             self.convolve_with_psf(psf_type = psf_type)
@@ -216,9 +225,9 @@ class ResolvedGalaxy:
                     phot_imgs,phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, cutout_size, overwrite=True)
     
     @classmethod
-    def init_from_h5(cls, galaxy_id, h5_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
+    def init_from_h5(cls, h5_name, h5_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
         '''Load a galaxy from an .h5 file'''
-        h5path = f'{h5_folder}{galaxy_id}.h5'
+        h5path = f'{h5_folder}{h5_name}.h5'
         hfile = h5.File(h5path, 'r')
         # Load meta data
         galaxy_id = int(hfile['meta']['galaxy_id'][()].decode('utf-8'))
@@ -293,14 +302,47 @@ class ResolvedGalaxy:
             if hfile['bin_flux_err'].get('pixedfit') is not None:
                 binned_flux_err_map = hfile['bin_flux_err']['pixedfit'][()] * u.erg/u.s/u.cm**2/u.AA
         
+        possible_phot_keys = []
+        possible_sed_keys = []
+        photometry_table = {}
+        if hfile.get('binned_photometry_table') is not None:
+            for psf_type in hfile['binned_photometry_table'].keys():
+                photometry_table[psf_type] = {}
+                for binmap_type in hfile['binned_photometry_table'][psf_type].keys():
+                    if not '__' in binmap_type:
+                        photometry_table[psf_type][binmap_type] = None
+                        possible_phot_keys.append(f'binned_photometry_table/{psf_type}/{binmap_type}')
+        
+        sed_fitting_table = {}
+        
+        if hfile.get('sed_fitting_table') is not None:
+            for tool in hfile['sed_fitting_table'].keys():
+                sed_fitting_table[tool] = {}
+                for run in hfile['sed_fitting_table'][tool].keys():
+                    if not '__' in run:
+                        sed_fitting_table[tool][run] = None
+                        possible_sed_keys.append(f'sed_fitting_table/{tool}/{run}')
 
         hfile.close()
+        # Read in photometry table(s)
+        if len(possible_phot_keys) > 0:
+            for key in possible_phot_keys:
+                table = read_table_hdf5(h5path, key)
+                psf_type, binmap_type = key.split('/')[1:]
+                photometry_table[psf_type][binmap_type] = table
 
+        if len(possible_sed_keys) > 0:
+            for key in possible_sed_keys:
+                table = read_table_hdf5(h5path, key)
+                tool, run = key.split('/')[1:]
+                sed_fitting_table[tool][run] = table
+
+        
         return cls(galaxy_id, sky_coord, survey, bands, im_paths, im_exts, im_zps,
                     seg_paths, rms_err_paths, rms_err_exts, im_pixel_scales, 
                     phot_imgs, phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, 
                     aperture_dict, psf_matched_data, psf_matched_rms_err, pixedfit_map, voronoi_map,
-                    binned_flux_map, binned_flux_err_map,
+                    binned_flux_map, binned_flux_err_map, photometry_table, sed_fitting_table,
                     cutout_size, h5_folder)
 
 
@@ -399,6 +441,17 @@ class ResolvedGalaxy:
         if self.binned_flux_err_map is not None:
             hfile['bin_flux_err'].create_dataset('pixedfit', data=self.binned_flux_err_map)
 
+        hfile.close()
+        # Write photometry table(s)
+        if self.photometry_table is not None:
+            for psf_type in self.photometry_table.keys():
+                for binmap_type in self.photometry_table[psf_type].keys():
+                    write_table_hdf5(self.photometry_table[psf_type][binmap_type], self.h5_path, f'binned_photometry_table/{psf_type}/{binmap_type}', serialize_meta=True, overwrite=True, append=True)
+        # Write sed fitting table(s)
+        if self.sed_fitting_table is not None:
+            for tool in self.sed_fitting_table.keys():
+                for run in self.sed_fitting_table[tool].keys():
+                    write_table_hdf5(self.sed_fitting_table[tool][run], self.h5_path, f'sed_fitting_table/{tool}/{run}', serialize_meta=True, overwrite=True, append=True)
 
     def convolve_with_psf(self, psf_type = 'webbpsf'):
         '''Convolve the images with the PSF'''
@@ -475,7 +528,6 @@ class ResolvedGalaxy:
                     del h5file[f'psf_matched_data/{psf_type}/{self.bands[-1]}']
                 if h5file.get(f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}') is not None:
                     del h5file[f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}']
-                print(f'psf_matched_data/{psf_type}/{self.bands[-1]}')
                 h5file.create_dataset(f'psf_matched_data/{psf_type}/{self.bands[-1]}', data=self.phot_imgs[self.bands[-1]].value)
                 h5file.create_dataset(f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}', data=self.rms_err_imgs[self.bands[-1]].value)
                 h5file.close()
@@ -599,7 +651,7 @@ class ResolvedGalaxy:
         self.gal_region = img_process.galaxy_region(segm_maps_ids=segm_maps_ids)
 
         # Calculate maps of multiband fluxes
-        flux_maps_fits = f"{dir_images}/{self.galaxy_id}_fluxmap.fits"
+        flux_maps_fits = f"{dir_images}/{self.survey}_{self.galaxy_id}_fluxmap.fits"
         Gal_EBV = 0 # Placeholder
 
         img_process.flux_map(self.gal_region, Gal_EBV=Gal_EBV, name_out_fits=flux_maps_fits)
@@ -633,12 +685,11 @@ class ResolvedGalaxy:
         ref_band_pos = np.argwhere(np.array([band == ref_band for band in self.bands])).flatten()[0]
         # Should calculate SNR requirements intelligently based on redshift
         SNR[2:] = SNR_reqs
-        name_out_fits = f'{self.dir_images}/{self.galaxy_id}_binned.fits'
+        name_out_fits = f'{self.dir_images}/{self.survey}_{self.galaxy_id}_binned.fits'
         
         pixel_binning(self.flux_map_path, ref_band=ref_band_pos, Dmin_bin=Dmin_bin, SNR=SNR, redc_chi2_limit=redc_chi2_limit, del_r=del_r,  name_out_fits=name_out_fits)
         
         self.pixedfit_binmap_path = name_out_fits
-        print('Adding to h5')
         self.add_to_h5(name_out_fits, 'bin_maps', 'pixedfit', ext='BIN_MAP', setattr_gal='pixedfit_map')
         self.add_to_h5(name_out_fits, 'bin_fluxes', 'pixedfit', ext='BIN_FLUX', setattr_gal='binned_flux_map')
         self.add_to_h5(name_out_fits, 'bin_flux_err', 'pixedfit', ext='BIN_FLUXERR', setattr_gal='binned_flux_err_map')
@@ -720,11 +771,264 @@ class ResolvedGalaxy:
         from piXedfit.piXedfit_bin import plot_binmap
         plot_binmap(self.pixedfit_binmap_path, plot_binmap_spec=False, savefig=False)
 
+    def measure_flux_in_bins(self, psf_type='webbpsf', binmap_type='pixedfit'):
+        if not hasattr(self, f'{binmap_type}_map'):
+            raise Exception(f"Need to run {binmap_type}_binning first")
+        # Sum fluxes in each bins and produce a table
+        binmap = getattr(self, f'{binmap_type}_map')
+        
+        table = QTable()
+        table['ID'] = [i for i in range(1, int(np.max(binmap))+1)]
+        for pos, band in enumerate(self.bands):
+            fluxes = []
+            flux_errs = []
+            for i in range(1, int(np.max(binmap))+1):
+                flux = np.sum(self.psf_matched_data[psf_type][band][binmap == i])
+                flux_err = np.sqrt(np.sum(self.psf_matched_rms_err[psf_type][band][binmap == i]**2))
+                fluxes.append(flux)
+                flux_errs.append(flux_err)
+               
+            table[band] = u.Quantity(np.array(fluxes), unit = self.phot_pix_unit[band])
+            table[f'{band}_err'] = u.Quantity(np.array(flux_errs), unit = self.phot_pix_unit[band])
+
+        if not (hasattr(self, 'photometry_table') and self.photometry_table is None):
+            self.photometry_table = {psf_type: {binmap_type: table}}
+        else:
+
+            self.photometry_table[psf_type][binmap_type] = table
+        
+        # Write table to our existing h5 file
+        write_table_hdf5(table, self.h5_path, f'binned_photometry_table/{psf_type}/{binmap_type}', serialize_meta = True, overwrite=True, append=True)
+
+        return table
+
+    def provide_bagpipes_phot(self, id):
+        '''Provide the fluxes in the correct format for bagpipes'''
+        if not hasattr(self, 'photometry_table'):
+            raise Exception("Need to run measure_flux_in_bins first")
+        if hasattr(self, 'use_psf_type'):
+            psf_type = self.use_psf_type
+        else:
+            psf_type = 'webbpsf'
+
+        if hasattr(self, 'use_binmap_type'):
+            binmap_type = self.use_binmap_type
+        else:
+            binmap_type = 'pixedfit'
+
+        if hasattr(self, 'sed_min_percentage_err'):
+            min_percentage_error = self.sed_min_percentage_err
+        else:
+            min_percentage_error = 5
+
+        if id == 1:
+            print(f'Using {psf_type} PSF and {binmap_type} binning derived fluxes')        
+        flux_table = self.photometry_table[psf_type][binmap_type]
+        
+        if flux_table[flux_table.colnames[1]].unit != u.uJy:
+            for col in flux_table.colnames[1:]:
+                flux_table[col] = flux_table[col].to(u.uJy)
+        
+        for band in self.bands:
+            flux_col_name = band
+            fluxerr_col_name = f'{band}_err'
+            # Where the error is less than 10% of the flux, set the error to 10% of the flux, if the flux is greater than 0
+            mask = (flux_table[fluxerr_col_name]/flux_table[flux_col_name] < min_percentage_error/100)  & (flux_table[flux_col_name]>0)
+            flux_table[flux_col_name][mask] = min_percentage_error/100 * flux_table[flux_col_name][mask]
+        
+        row = flux_table[flux_table['ID'] == int(id)]
+
+        if len(row) == 0:
+            raise Exception(f'ID {id} not found in flux table')
+        elif len(row) > 1:
+            raise Exception(f'More than one ID {id} found in flux table')
+
+
+        row = Table(row)
+
+        order = list(np.ndarray.flatten(np.array([[f'{band}',f'{band}_err'] for pos, band in enumerate(self.bands)])))
+        
+        table_order = row[order]
+
+        flux, err = [], []
+        for pos, item in enumerate(table_order[0]):	
+            if pos % 2 == 0:
+                flux.append(item)
+            else:	
+                err.append(item)
+        final = np.vstack((np.array(flux), np.array(err))).T
+
+        return final
+    
+    def run_bagpipes(self, bagpipes_config, filt_dir = '/nvme/scratch/work/tharvey/bagpipes/inputs/filters',
+    run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/'):
+        #meta - run_name, use_bpass, redshift (override)
+        assert type(bagpipes_config) == dict, "Bagpipes config must be a dictionary" # Could load from a file as well
+        meta = bagpipes_config.get('meta', {})
+        fit_instructions = bagpipes_config.get('fit_instructions', {})
+
+        use_bpass = meta.get('use_bpass', False)
+        os.environ['use_bpass'] = str(int(use_bpass))
+        run_name = meta.get('run_name', 'default')
+        redshift = meta.get('redshift', 5) # PLACEHOLDER for self.redshift
+
+        fit_instructions['redshift'] = redshift
+
+        if not hasattr(self, 'photometry_table'):
+            raise Exception("Need to run measure_flux_in_bins first")
+        if hasattr(self, 'use_psf_type'):
+            psf_type = self.use_psf_type
+        else:
+            psf_type = 'webbpsf'
+
+        if hasattr(self, 'use_binmap_type'):
+            binmap_type = self.use_binmap_type
+        else:
+            binmap_type = 'pixedfit'
+
+        flux_table = self.photometry_table[psf_type][binmap_type]
+        ids = list(flux_table['ID'].data)
+        nircam_filts = [f'{filt_dir}/{band}_LePhare.txt' for band in self.bands]
+        
+        redshifts = np.ones(len(flux_table)) * redshift
+
+        import bagpipes as pipes
+        # out_subdir (moving files)
+
+        out_subdir = f'{run_name}/{self.survey}/{self.galaxy_id}'
+
+        path_post = f'{run_dir}/posterior/'+out_subdir
+        path_plots = f'{run_dir}/plots/'+out_subdir
+        path_sed = f'{run_dir}/seds/'+out_subdir
+        path_fits = f'{run_dir}/cats/{run_name}/{self.survey}/' # Filename is galaxy ID rather than being a folder
+                
+        for path in [path_post, path_plots, path_sed, path_fits]:
+            os.makedirs(path, exist_ok=True)
+            os.chmod(path, 0o777)
+        # Default pipes install for now
+
+        fit_cat = pipes.fit_catalogue(ids, fit_instructions, self.provide_bagpipes_phot,
+                                    spectrum_exists=False, photometry_exists=True, run=out_subdir,
+                                    make_plots=False, cat_filt_list=nircam_filts,  redshifts = redshifts,
+                                    full_catalogue=True) #analysis_function=custom_plotting,
+        print('Beginning fit')
+        print(fit_instructions)
+        fit_cat.fit(verbose=False, mpi_serial = True)
+ 
+        '''
+        json_file = json.dumps(fit_instructions)
+        f = open(f'{path_overall}/posterior/{out_subdir}/config.json',"w")
+        f.write(json_file)
+        f.close()
+        '''
+
+
+        self.load_bagpipes_results(run_name)
+
+    def load_bagpipes_results(self, run_name, run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/'):
+        
+        catalog_path = f'{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}/{run_name}.fits'
+        try:
+            table = Table.read(catalog_path)
+        except:
+            raise Exception(f'Catalog {catalog_path} not found')
+
+        # SFR map
+        # Av map (dust)
+        # Stellar Mass map
+        # Metallicity map
+        # Age map
+        if getattr(self, 'sed_fitting_table', None) is None:
+            self.sed_fitting_table = {'bagpipes': {run_name: table}}
+        else:
+            if 'bagpipes' not in self.sed_fitting_table.keys():
+                self.sed_fitting_table['bagpipes'] = {run_name: table}
+            else:
+                self.sed_fitting_table['bagpipes'][run_name] = table
+        
+        write_table_hdf5(self.sed_fitting_table['bagpipes'][run_name], self.h5_path, f'sed_fitting_table/bagpipes/{run_name}', serialize_meta=True, overwrite=True, append=True)
+
+    def plot_bagpipes_results(self, run_name, parameters=['stellar_mass', 'sfr', 'dust:Av'] ):
+        
+        cmaps = ['cmr.ember', 'cmr.cosmic', 'cmr.lilac']
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys():
+            self.load_bagpipes_results(run_name)
+            
+        if not hasattr(self, 'pixedfit_map'):
+            raise Exception("Need to run pixedfit_binning first")
+
+        table = self.sed_fitting_table['bagpipes'][run_name]
+        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4))
+
+        axes[0].imshow(self.pixedfit_map, origin='lower', interpolation='none')
+
+        
+        for i, param in enumerate(parameters):
+            ax_divider = make_axes_locatable(axes[i+1])
+            cax = ax_divider.append_axes('top', size='5%', pad='2%')
+            map = np.zeros_like(self.pixedfit_map)
+            changed = np.zeros_like(self.pixedfit_map)
+    
+            for row in table:
+                id = row['#ID']
+                value = row[f'{param}_50']
+            
+                map[self.pixedfit_map == float(id)] = value
+                changed[self.pixedfit_map == float(id)] = 1
+            
+            map[changed == 0] = float('nan')
+
+            mappable = axes[i+1].imshow(map, origin='lower', interpolation='none', cmap=cmaps[i])
+            cbar = fig.colorbar(mappable, cax=cax, orientation='horizontal')
+            
+            cbar.set_label(param)
+            cbar.ax.xaxis.set_ticks_position('top')
+            cbar.ax.xaxis.set_label_position('top')
+            cbar.ax.tick_params(labelsize=8)
+            cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+
+        fig.savefig(f'/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/{run_name}_maps.png')
+        return fig, axes
+
+
+
+
 if __name__ == "__main__":
     # Test the Galaxy class
-    galaxy = ResolvedGalaxy.init_from_galfind(645, 'NGDEEP2', 'v11', excl_bands = ['F435W', 'F775W', 'F850LP'])
-    galaxy2 = ResolvedGalaxy.init_from_h5(645)
-    galaxy2.pixedfit_processing()
+    #galaxy = ResolvedGalaxy.init_from_galfind(645, 'NGDEEP2', 'v11', excl_bands = ['F435W', 'F775W', 'F850LP'])
+    galaxy2 = ResolvedGalaxy.init_from_h5('NGDEEP2_645')
+
+    # Simple test Bagpipes fit_instructions
+
+    sfh = {
+        'age_max': (0.03, 0.5), # Gyr 
+        'age_min': (0, 0.5), # Gyr
+        'metallicity': (1e-3, 2.5), # solar
+        'massformed': (4, 12), # log mstar/msun
+        }
+
+    nebular = {}
+    nebular["logU"] = -2.0 
+
+    dust = {}
+    dust["type"] = "Calzetti"
+    dust["Av"] = (0, 5.0)
+
+    fit_instructions = {"t_bc":0.01,
+                    "constant":sfh,
+                    "nebular":nebular,
+                    "dust":dust,  
+                    }
+    meta = {'run_name':'initial_test_cnst_sfh', 'redshift':0.48466974}
+
+    overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
+
+    galaxy2.run_bagpipes(overall_dict)
+
+    galaxy2.plot_bagpipes_results('initial_test_cnst_sfh')
+    #galaxy2.pixedfit_processing()
+    
+
     
           
     

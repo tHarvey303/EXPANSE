@@ -6,3 +6,4 @@ crop_*
 stamp_*
 galaxies/temp/*.fits
 galaxies/*.fits
+pipes/*
