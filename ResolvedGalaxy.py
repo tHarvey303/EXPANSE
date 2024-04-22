@@ -10,6 +10,7 @@ import ast
 from astropy.convolution import convolve_fft
 import glob
 import shutil
+from astropy.cosmology import FlatLambdaCDM
 from pathlib import Path
 import os
 from astropy.table import Table, QTable
@@ -22,6 +23,7 @@ from astropy.io.misc.hdf5 import write_table_hdf5, read_table_hdf5
 # can write astropy to h5
 import copy
 import cmasher as cm
+import sys
 from piXedfit.piXedfit_bin import pixel_binning
 # import make_axis_locatable
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -861,7 +863,7 @@ class ResolvedGalaxy:
         return final
     
     def run_bagpipes(self, bagpipes_config, filt_dir = '/nvme/scratch/work/tharvey/bagpipes/inputs/filters',
-    run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/'):
+    run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/', overwrite=False):
         #meta - run_name, use_bpass, redshift (override)
         assert type(bagpipes_config) == dict, "Bagpipes config must be a dictionary" # Could load from a file as well
         meta = bagpipes_config.get('meta', {})
@@ -886,6 +888,13 @@ class ResolvedGalaxy:
         else:
             binmap_type = 'pixedfit'
 
+        if hasattr(self, 'sed_fitting_table'):
+            if 'bagpipes' in self.sed_fitting_table.keys():
+                if run_name in self.sed_fitting_table['bagpipes'].keys():
+                    if not overwrite:
+                        print(f'Run {run_name} already exists')
+                        return
+
         flux_table = self.photometry_table[psf_type][binmap_type]
         ids = list(flux_table['ID'].data)
         nircam_filts = [f'{filt_dir}/{band}_LePhare.txt' for band in self.bands]
@@ -901,10 +910,27 @@ class ResolvedGalaxy:
         path_plots = f'{run_dir}/plots/'+out_subdir
         path_sed = f'{run_dir}/seds/'+out_subdir
         path_fits = f'{run_dir}/cats/{run_name}/{self.survey}/' # Filename is galaxy ID rather than being a folder
-                
+        
         for path in [path_post, path_plots, path_sed, path_fits]:
             os.makedirs(path, exist_ok=True)
             os.chmod(path, 0o777)
+
+        existing_files = glob.glob(f'{path_post}/*')
+        
+        if overwrite:
+            for file in existing_files:
+                os.remove(file)
+        else: # Check if already run
+            mask = np.zeros(len(ids))
+            for pos, id in enumerate(ids):
+                if f'{id}.fits' in existing_files:
+                    mask[pos] = 1
+            
+            if np.all(mask == 1):
+                print('All files already exist')
+                self.load_bagpipes_results(run_name)
+                return
+
         # Default pipes install for now
 
         fit_cat = pipes.fit_catalogue(ids, fit_instructions, self.provide_bagpipes_phot,
@@ -927,7 +953,7 @@ class ResolvedGalaxy:
 
     def load_bagpipes_results(self, run_name, run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/'):
         
-        catalog_path = f'{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}/{run_name}.fits'
+        catalog_path = f'{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits'
         try:
             table = Table.read(catalog_path)
         except:
@@ -948,40 +974,64 @@ class ResolvedGalaxy:
         
         write_table_hdf5(self.sed_fitting_table['bagpipes'][run_name], self.h5_path, f'sed_fitting_table/bagpipes/{run_name}', serialize_meta=True, overwrite=True, append=True)
 
-    def plot_bagpipes_results(self, run_name, parameters=['stellar_mass', 'sfr', 'dust:Av'] ):
+    def convert_table_to_map(self, table, id_col, value_col, map, remove_log10=False):
+        changed = np.zeros(map.shape)
+        return_map = copy.deepcopy(map)
+        for row in table:
+            id = row[id_col]
+            value = row[value_col]
+            return_map[map == float(id)] = value if not remove_log10 else 10**value
+            changed[map == float(id)] = 1
+        #print(f'changed {np.sum(changed)} pixels out of {len(map.flatten())} pixels')
+        map[changed == 0] = float('nan')
+        return return_map
+
+    def param_unit(self, param):
+        param_dict = {
+            'stellar_mass':u.Msun,
+            'stellar_mass density':u.Msun/u.kpc**2,
+            'sfr':u.Msun/u.yr,
+            'sfr density':u.Msun/u.yr/u.kpc**2,
+            'dust:Av':u.mag,
+            'UV_colour':u.mag,
+            'chisq_phot-': u.dimensionless_unscaled,
+        }
+        return param_dict[param]
+
+    def plot_bagpipes_results(self, run_name, parameters=['stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False):
         
-        cmaps = ['cmr.ember', 'cmr.cosmic', 'cmr.lilac']
-        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys():
+        cmaps = ['cmr.ember', 'cmr.cosmic', 'cmr.lilac', 'cmr.eclipse', 'cmr.sapphire', 'cmr.dusk', 'cmr.emerald']
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys() or reload_from_cat:
             self.load_bagpipes_results(run_name)
             
         if not hasattr(self, 'pixedfit_map'):
             raise Exception("Need to run pixedfit_binning first")
 
         table = self.sed_fitting_table['bagpipes'][run_name]
-        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4))
+        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4), constrained_layout=True, backgroundcolor='white')
 
         axes[0].imshow(self.pixedfit_map, origin='lower', interpolation='none')
 
+        redshift = self.sed_fitting_table['bagpipes'][run_name]['input_redshift'][0]
         
         for i, param in enumerate(parameters):
             ax_divider = make_axes_locatable(axes[i+1])
             cax = ax_divider.append_axes('top', size='5%', pad='2%')
-            map = np.zeros_like(self.pixedfit_map)
-            changed = np.zeros_like(self.pixedfit_map)
-    
-            for row in table:
-                id = row['#ID']
-                value = row[f'{param}_50']
-            
-                map[self.pixedfit_map == float(id)] = value
-                changed[self.pixedfit_map == float(id)] = 1
-            
-            map[changed == 0] = float('nan')
 
+            map = self.convert_table_to_map(table, '#ID', f'{param[:-1]}' if param.endswith('-') else f'{param}_50', self.pixedfit_map, remove_log10=param.startswith('stellar_mass'))
+
+            log = ''
+                
+            if param in ['stellar_mass', 'sfr']:
+                map = self.map_to_density_map(map, redshift = redshift, logmap = True) 
+                log = '$\log_{10}$ '
+                param = f'{param} density'
+
+            map = map 
             mappable = axes[i+1].imshow(map, origin='lower', interpolation='none', cmap=cmaps[i])
             cbar = fig.colorbar(mappable, cax=cax, orientation='horizontal')
-            
-            cbar.set_label(param)
+            unit = f' ({log}{self.param_unit(param):latex})' if self.param_unit(param) != u.dimensionless_unscaled else ''
+            cbar.set_label(f'{param.replace("_", " ")}{unit}', labelpad=10)
             cbar.ax.xaxis.set_ticks_position('top')
             cbar.ax.xaxis.set_label_position('top')
             cbar.ax.tick_params(labelsize=8)
@@ -990,8 +1040,83 @@ class ResolvedGalaxy:
         fig.savefig(f'/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/{run_name}_maps.png')
         return fig, axes
 
+    def map_to_density_map(self, map, cosmo = FlatLambdaCDM(H0=70, Om0=0.3), redshift = None, logmap = False):
+        pixel_scale = self.im_pixel_scales[self.bands[0]]
+        density_map = copy.deepcopy(map)
+        map[map == np.nan] = -1
+        unique = np.unique(map)
+        # Remove -1
+        unique = unique[unique != -1]
+        for id in unique:
+            
+            if id == 0:
+                continue
+            mask = map == id
+            if redshift is None:
+                z = self.redshift
+            else:
+                z = redshift
 
+            re_as = pixel_scale 
+            d_A = cosmo.angular_diameter_distance(z) #Angular diameter distance in Mpc
+            pix_kpc = (re_as * d_A).to(u.kpc, u.dimensionless_angles()) # re of galaxy in kpc
+            pix_area = np.sum(mask) * pix_kpc**2 #Area of pixels with id in kpc^2
+            value = np.sum(map[mask]) / pix_area
+            if logmap:
+                value = np.log10(value.value)
+            
+            density_map[mask] = value
 
+        return density_map
+    
+    def plot_bagpipes_sed(self, run_name, run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/', bins_to_show='all'):
+        sys.path.insert(1, '/nvme/scratch/work/tharvey/bagpipes')
+        from plotpipes import PipesFit
+
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys():
+            raise Exception("Need to run bagpipes first")
+
+        table = self.sed_fitting_table['bagpipes'][run_name]
+        
+        # Plot map next to SED plot
+
+        fig = plt.figure(constrained_layout=True, figsize=(8, 3))
+        gs = fig.add_gridspec(2, 3)
+        ax_map = fig.add_subplot(gs[:, 0])
+        ax_sed = fig.add_subplot(gs[:, 1:])
+
+        
+        ax_divider = make_axes_locatable(ax_map)
+        cax = ax_divider.append_axes('top', size='5%', pad='2%')
+        
+        # Make cmap for map
+        cmap = plt.cm.get_cmap('cmr.cosmic', len(table['#ID']))
+        color = {table['#ID'][i]:cmap(i) for i in range(len(table['#ID']))}
+
+        mappable = ax_map.imshow(self.pixedfit_map, origin='lower', interpolation='none', cmap='cmr.cosmic')
+        cbar = fig.colorbar(mappable, cax=cax, orientation='horizontal')
+        cbar.ax.xaxis.set_ticks_position('top')
+        cbar.ax.xaxis.set_label_position('top')
+        cbar.ax.tick_params(labelsize=8)
+        cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+
+        
+        if bins_to_show == 'all':
+            bins_to_show = table['#ID']
+        else:
+            bins_to_show = bins_to_show
+
+        for bin in bins_to_show:
+            h5_path = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+
+            pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
+                 load_spectrum=False, filter_path='/nvme/scratch/work/tharvey/bagpipes/inputs/filters/',
+                 ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
+            pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
+                            y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
+                            label=None,  marker="o", rerun_fluxes=False)
+            
+        
 
 if __name__ == "__main__":
     # Test the Galaxy class
@@ -1031,4 +1156,10 @@ if __name__ == "__main__":
 
     
           
-    
+'''
+TODO:
+    1. Don't run Bagpipes if already run
+    2. Convert SFR, stellar mass to surface density (/kpc^2)
+    3. Plotting SEDs, PDFs, Corner plots?
+
+'''
