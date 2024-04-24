@@ -3,6 +3,7 @@ from astropy.io.fits import Header
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py as h5
+from io import BytesIO
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.nddata import Cutout2D
@@ -24,7 +25,6 @@ from astropy.io.misc.hdf5 import write_table_hdf5, read_table_hdf5
 import copy
 import cmasher as cm
 import sys
-from piXedfit.piXedfit_bin import pixel_binning
 # import make_axis_locatable
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 #import ScalarFormatter
@@ -49,8 +49,8 @@ class ResolvedGalaxy:
                 phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, 
                 psf_matched_data = None, psf_matched_rms_err = None, pixedfit_map = None, voronoi_map = None, 
                 binned_flux_map = None, binned_flux_err_map = None, photometry_table = None, sed_fitting_table = None, cutout_size=64, 
-                h5_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/',
-                psf_kernel_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/psfs/', 
+                h5_folder = 'galaxies/',
+                psf_kernel_folder = 'psfs/', 
                 psf_type = 'webbpsf', overwrite = False):
 
         self.galaxy_id = galaxy_id
@@ -119,7 +119,7 @@ class ResolvedGalaxy:
     @classmethod
     def init(cls, galaxy_id, survey, version, instruments = ['NIRCam'], 
                             excl_bands = [], cutout_size=64, forced_phot_band = ["F277W", "F356W", "F444W"], 
-                            aper_diams = [0.32] * u.arcsec, output_flux_unit = u.uJy, h5folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
+                            aper_diams = [0.32] * u.arcsec, output_flux_unit = u.uJy, h5folder = 'galaxies/'):
         if os.path.exists(f'{h5folder}{galaxy_id}.h5'):
             return cls.init_from_h5(galaxy_id, h5_folder = h5folder)
         else:
@@ -130,7 +130,7 @@ class ResolvedGalaxy:
     @classmethod
     def init_from_galfind(cls, galaxy_id, survey, version, instruments = ['NIRCam'], 
                             excl_bands = [], cutout_size=64, forced_phot_band = ["F277W", "F356W", "F444W"], 
-                            aper_diams = [0.32] * u.arcsec, output_flux_unit = u.uJy, h5folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
+                            aper_diams = [0.32] * u.arcsec, output_flux_unit = u.uJy, h5folder = 'galaxies/'):
         # Imports here so only used if needed
         from galfind import Data
         from galfind import Catalogue
@@ -227,10 +227,13 @@ class ResolvedGalaxy:
                     phot_imgs,phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, cutout_size, overwrite=True)
     
     @classmethod
-    def init_from_h5(cls, h5_name, h5_folder = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
+    def init_from_h5(cls, h5_name, h5_folder = 'galaxies/'):
         '''Load a galaxy from an .h5 file'''
-        h5path = f'{h5_folder}{h5_name}.h5'
-        hfile = h5.File(h5path, 'r')
+        if type(h5_name) == BytesIO:
+            hfile = h5.File(h5_name, 'r')
+        else:
+            h5path = f'{h5_folder}{h5_name}.h5'
+            hfile = h5.File(h5path, 'r')
         # Load meta data
         galaxy_id = int(hfile['meta']['galaxy_id'][()].decode('utf-8'))
         survey = hfile['meta']['survey'][()].decode('utf-8')
@@ -325,17 +328,17 @@ class ResolvedGalaxy:
                         sed_fitting_table[tool][run] = None
                         possible_sed_keys.append(f'sed_fitting_table/{tool}/{run}')
 
-        hfile.close()
+        #hfile.close()
         # Read in photometry table(s)
         if len(possible_phot_keys) > 0:
             for key in possible_phot_keys:
-                table = read_table_hdf5(h5path, key)
+                table = read_table_hdf5(hfile, key)
                 psf_type, binmap_type = key.split('/')[1:]
                 photometry_table[psf_type][binmap_type] = table
 
         if len(possible_sed_keys) > 0:
             for key in possible_sed_keys:
-                table = read_table_hdf5(h5path, key)
+                table = read_table_hdf5(hfile, key)
                 tool, run = key.split('/')[1:]
                 sed_fitting_table[tool][run] = table
 
@@ -348,7 +351,7 @@ class ResolvedGalaxy:
                     cutout_size, h5_folder)
 
 
-    def dump_to_h5(self, h5folder='/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
+    def dump_to_h5(self, h5folder='galaxies/'):
         '''Dump the galaxy data to an .h5 file'''
         # for strings
 
@@ -563,7 +566,7 @@ class ResolvedGalaxy:
             plt.show()
 
     def pixedfit_processing(self, use_galfind_seg = True, seg_combine = None,
-            dir_images = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/', psf_type = 'webbpsf'):
+            dir_images = 'galaxies/', psf_type = 'webbpsf'):
         from piXedfit.piXedfit_images import images_processing
 
         if not os.path.exists(dir_images):
@@ -1037,7 +1040,7 @@ class ResolvedGalaxy:
             cbar.ax.tick_params(labelsize=8)
             cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
 
-        fig.savefig(f'/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/{run_name}_maps.png')
+        fig.savefig(f'galaxies/{run_name}_maps.png')
         return fig, axes
 
     def map_to_density_map(self, map, cosmo = FlatLambdaCDM(H0=70, Om0=0.3), redshift = None, logmap = False):
