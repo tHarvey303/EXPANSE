@@ -348,7 +348,7 @@ class ResolvedGalaxy:
                     cutout_size, h5_folder)
 
 
-    def dump_to_h5(self, h5folder='/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
+    def dump_to_h5(self, mode='append', h5folder='/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/'):
         '''Dump the galaxy data to an .h5 file'''
         # for strings
 
@@ -367,19 +367,22 @@ class ResolvedGalaxy:
         # 'aperture_photometry'
         # 'auto_photometry'
         # 'sed_fitting'[tool] =
-        hfile = h5.File(self.h5_path, 'w')
+        if mode == 'append':
+            file_mode = 'a'
+        elif mode == 'overwrite':
+            file_mode = 'w'
+        hfile = h5.File(self.h5_path, file_mode)
 
-        # Create groups
-        hfile.create_group('meta')
-        hfile.create_group('paths')
-        hfile.create_group('raw_data')
-        hfile.create_group('aperture_photometry')
-        hfile.create_group('headers')
-        hfile.create_group('bin_maps')
-        hfile.create_group('bin_fluxes')
-        hfile.create_group('bin_flux_err')
-
+        groups = ['meta', 'paths', 'raw_data', 'aperture_photometry', 'headers', 'bin_maps', 'bin_fluxes', 'bin_flux_err']
+        for group in groups:
+            hfile.create_group(group) if hfile.get(group) is None else None
+        
         # Save meta data
+        keys_to_check = ['galaxy_id', 'survey', 'sky_coord', 'bands', 'cutout_size', 'zps', 'pixel_scales', 'phot_pix_unit']
+        for key in keys_to_check:
+            if hfile.get(f'meta/{key}') is not None:
+                del hfile[f'meta/{key}']
+
         hfile['meta'].create_dataset('galaxy_id', data=str(self.galaxy_id), dtype=str_dt)
         hfile['meta'].create_dataset('survey', data=self.survey, dtype=str_dt)
         hfile['meta'].create_dataset('sky_coord', data=self.sky_coord.to_string(), dtype=str_dt)
@@ -392,6 +395,11 @@ class ResolvedGalaxy:
             for band, pix_unit in self.phot_pix_unit.items()}), dtype=str_dt)
 
         # Save paths and exts
+        keys_to_check = ['im_paths', 'seg_paths', 'rms_err_paths', 'im_exts', 'rms_err_exts']
+        for key in keys_to_check:
+            if hfile.get(f'paths/{key}') is not None:
+                del hfile[f'paths/{key}']
+
         hfile['paths'].create_dataset('im_paths', data=str(self.im_paths), dtype=str_dt)
         hfile['paths'].create_dataset('seg_paths', data=str(self.seg_paths), dtype=str_dt)
         hfile['paths'].create_dataset('rms_err_paths', data=str(self.rms_err_paths), dtype=str_dt)
@@ -399,48 +407,79 @@ class ResolvedGalaxy:
         hfile['paths'].create_dataset('rms_err_exts', data=str(self.rms_err_exts), dtype=str_dt)
 
         for aper in self.aperture_dict.keys():
-            hfile['aperture_photometry'].create_group(aper)
+            if hfile.get(f'aperture_photometry/{aper}') is None:
+                hfile['aperture_photometry'].create_group(aper)
             for key in self.aperture_dict[aper].keys():
                 data = self.aperture_dict[aper][key]
                 #if type(data) == np.ma.core.MaskedArray:
                 #    data = data.data[~data.mask]
                 #if type(data) == type(Masked(u.Quantity(1))):
                     #data = data.value[~data.mask]
-                    
+                if hfile.get(f'aperture_photometry/{aper}/{key}') is not None:
+                    del hfile[f'aperture_photometry/{aper}/{key}']
                 hfile['aperture_photometry'][aper].create_dataset(f'{key}', data=data)
         
         # Save raw data
         for band in self.bands:
+            if hfile.get(f'raw_data/phot_{band}') is not None:
+                del hfile[f'raw_data/phot_{band}']
             hfile['raw_data'].create_dataset(f'phot_{band}', data=self.phot_imgs[band])
+            if hfile.get(f'raw_data/rms_err_{band}') is not None:
+                del hfile[f'raw_data/rms_err_{band}']
             hfile['raw_data'].create_dataset(f'rms_err_{band}', data=self.rms_err_imgs[band])
+            if hfile.get(f'raw_data/seg_{band}') is not None:
+                del hfile[f'raw_data/seg_{band}']
             hfile['raw_data'].create_dataset(f'seg_{band}', data=self.seg_imgs[band])
 
         # Save headers
         for band in self.bands:
+            if hfile.get(f'headers/{band}') is not None:
+                del hfile[f'headers/{band}']
             hfile['headers'].create_dataset(f'{band}', data=str(self.phot_img_headers[band]), dtype=str_dt)
 
         if self.psf_matched_data is not None:
-            hfile.create_group('psf_matched_data')
+            if hfile.get('psf_matched_data') is None:
+                hfile.create_group('psf_matched_data')
             for psf_type in self.psf_matched_data.keys():
-                hfile['psf_matched_data'].create_group(psf_type)
+                if hfile[f'psf_matched_data/{psf_type}'] is None:
+                    hfile['psf_matched_data'].create_group(psf_type)
                 for band in self.bands:
+                    if hfile[f'psf_matched_data/{psf_type}/{band}'] is not None:
+                        del hfile[f'psf_matched_data/{psf_type}/{band}']
                     hfile['psf_matched_data'][psf_type].create_dataset(band, data=self.psf_matched_data[psf_type][band])
 
         if self.psf_matched_rms_err is not None:
-            hfile.create_group('psf_matched_rms_err')
+            if hfile.get('psf_matched_rms_err') is None:
+                hfile.create_group('psf_matched_rms_err')
             for psf_type in self.psf_matched_rms_err.keys():
-                hfile['psf_matched_rms_err'].create_group(psf_type)
+                if hfile[f'psf_matched_rms_err/{psf_type}'] is None:
+                    hfile['psf_matched_rms_err'].create_group(psf_type)
                 for band in self.bands:
+                    if hfile[f'psf_matched_rms_err/{psf_type}/{band}'] is not None:
+                        del hfile[f'psf_matched_rms_err/{psf_type}/{band}']
                     hfile['psf_matched_rms_err'][psf_type].create_dataset(band, data=self.psf_matched_rms_err[psf_type][band])
-        # Save binned maps
+        
 
+        # Save galaxy region
+         
+        # Save binned maps
         if self.voronoi_map is not None:
+            if hfile.get(f'bin_maps/voronoi') is not None:
+                del hfile['bin_maps/voronoi']
             hfile['bin_maps'].create_dataset('voronoi', data=self.voronoi_map)
-        if self.pixedfit_map is not None:   
+            
+        if self.pixedfit_map is not None: 
+            if hfile.get(f'bin_maps/pixedfit') is not None:
+                del hfile['bin_maps/pixedfit'] 
             hfile['bin_maps'].create_dataset('pixedfit', data=self.pixedfit_map)
         if self.binned_flux_map is not None:
+            if hfile.get(f'bin_fluxes/pixedfit') is not None:
+                del hfile['bin_fluxes/pixedfit']
             hfile['bin_fluxes'].create_dataset('pixedfit', data=self.binned_flux_map)
+
         if self.binned_flux_err_map is not None:
+            if hfile.get(f'bin_flux_err/pixedfit') is not None:
+                del hfile['bin_flux_err/pixedfit']
             hfile['bin_flux_err'].create_dataset('pixedfit', data=self.binned_flux_err_map)
 
         hfile.close()
@@ -550,20 +589,29 @@ class ResolvedGalaxy:
         '''Plot the cutouts for the galaxy'''
         if bands is None:
             bands = self.bands
-        fig, axes = plt.subplots(2, len(bands), figsize=(4*len(bands), 8))
+        
+        nrows = len(self.bands)//6 + 1
+        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows), sharex=True, sharey=True)
+        axes = axes.flatten()
+
+        for i in range(len(self.bands), len(axes)):
+            fig.delaxes(axes[i])
+
         for i, band in enumerate(bands):
             axes[0, i].imshow(self.phot_imgs[band], origin='lower', interpolation='none')
             axes[0, i].set_title(f'{band} Phot')
             axes[1, i].imshow(self.rms_err_imgs[band], origin='lower', interpolation='none')
             axes[1, i].set_title(f'{band} RMS Err')
         plt.tight_layout()
+        plt.subplots_adjust(hspace=0.1, wspace=0.1)
         if save:
             plt.savefig(save_path)
         else:
             plt.show()
 
     def pixedfit_processing(self, use_galfind_seg = True, seg_combine = None,
-            dir_images = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/', psf_type = 'webbpsf'):
+            dir_images = '/nvme/scratch/work/tharvey/resolved_sedfitting/galaxies/', psf_type = 'webbpsf',
+            use_all_pixels = False):
         from piXedfit.piXedfit_images import images_processing
 
         if not os.path.exists(dir_images):
@@ -626,10 +674,21 @@ class ResolvedGalaxy:
                         flag_psfmatch=flag_psfmatch, flag_reproject=flag_reproject, 
                         flag_crop=flag_crop, kernels=None, gal_z=gal_z, remove_files=remove_files)
         
-        
+        seg_type = 'galfind'
         # Get galaxy region from segmentation map
         if not use_galfind_seg:
+            print('Making segmentation maps')
             img_process.segmentation_sep()
+            self.seg_imgs = img_process.seg_maps
+            seg_type = 'pixedfit_sep'
+            #self.add_to_h5(img_process.segm_maps, 'seg_maps', 'pixedfit', ext='SEG_MAPS')
+
+
+        if use_all_pixels:
+            segm_maps = [np.ones_like(self.seg_imgs[band]) for band in self.bands]
+            img_process.segm_maps = segm_maps
+            segm_maps_ids = None
+            seg_type = 'all_pixels'
         else:
             segm_maps = []
             for band in self.bands:
@@ -644,11 +703,10 @@ class ResolvedGalaxy:
 
             img_process.segm_maps = segm_maps
 
-
-        if seg_combine is not None:
-            segm_maps_ids = np.argwhere(np.array([band in seg_combine for band in self.bands])).flatten()
-        else:
-            segm_maps_ids = None
+            if seg_combine is not None:
+                segm_maps_ids = np.argwhere(np.array([band in seg_combine for band in self.bands])).flatten()
+            else:
+                segm_maps_ids = None
 
         self.gal_region = img_process.galaxy_region(segm_maps_ids=segm_maps_ids)
 
@@ -668,13 +726,72 @@ class ResolvedGalaxy:
         self.flux_map_path = flux_maps_fits
         self.img_process = img_process
 
-        self.add_to_h5(flux_maps_fits, 'galaxy_region', 'pixedfit',  ext = 'GALAXY_REGION')
+        meta_dict = {'stacked_bands':'+'.join(seg_combine), 'seg_type':seg_type}
+
+        self.add_to_h5(flux_maps_fits, 'galaxy_region', 'pixedfit', meta=meta_dict)
 
         # Copy flux map to h5 file - TODO
         self.dir_images = dir_images
 
         return img_process
 
+    def plot_voronoi_map(self):
+        if self.voronoi_map is None:
+            print('No Voronoi map found')
+            return
+
+        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+        mappable = ax.imshow(self.voronoi_map, origin='lower', interpolation='none', cmap = 'nipy_spectral_r')   
+        fig.colorbar(mappable, ax=ax)
+        ax.set_title('Voronoi Map')
+        plt.show()
+
+    def plot_snr_map(self, psf_type = 'webbpsf'):
+
+        nrows = len(self.bands)//6 + 1
+        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows))
+        axes = axes.flatten()
+        # Remove empty axes
+        for i in range(len(self.bands), len(axes)):
+            fig.delaxes(axes[i])
+        
+        for i, band in enumerate(self.bands):
+            snr_map = self.psf_matched_data[psf_type][band] / self.psf_matched_rms_err[psf_type][band]
+            mappable = axes[i].imshow(snr_map, origin='lower', interpolation='none')
+            fig.colorbar(mappable, ax=axes[i])
+            axes[i].set_title(f'{band} SNR Map')
+
+    def voronoi_binning(self, SNR_reqs=10, ref_band='F277W', plot=True, psf_type='webbpsf'):
+        from vorbin.voronoi_2d_binning import voronoi_2d_binning
+
+        # x - x coordinates of pixels
+        # y - y coordinates of pixels
+        # signal - fluxes of pixels
+        # noise - 
+        # target SN - 
+
+        x = np.arange(self.cutout_size)
+        y = np.arange(self.cutout_size)
+        x, y = np.meshgrid(x, y)
+        x = x.flatten()
+        y = y.flatten()
+    
+        signal = self.psf_matched_data[psf_type][ref_band].flatten()
+        noise = self.psf_matched_rms_err[psf_type][ref_band].flatten()
+       
+        #sn_func = lambda index, flux, flux_err: print(index) #flux[index] / flux_err[index]
+        bin_number, x_gen, y_gen, x_bar, y_bar, sn, nPixels, scale = voronoi_2d_binning(
+                        x, y, signal, noise, SNR_reqs,
+                        #pixelsize = self.im_pixel_scales[ref_band].to(u.arcsec).value, 
+                        plot=plot)# sn_func = sn_func)
+        
+        # Reshape bin_number to 2D
+        bin_number = bin_number.reshape(self.cutout_size, self.cutout_size)
+        self.voronoi_map = bin_number
+        meta_dict = {'ref_band':ref_band, 'SNR_reqs':SNR_reqs}
+        self.add_to_h5(bin_number, 'bin_maps', 'voronoi', setattr_gal='voronoi_map', meta=meta_dict)
+
+        
 
     def pixedfit_binning(self, SNR_reqs=10, ref_band='F277W', Dmin_bin=5, redc_chi2_limit=5.0, del_r=2.0):
         '''
@@ -683,12 +800,16 @@ class ResolvedGalaxy:
         : Dmin_bin: minimum diameter between pixels in binning (should be ~ FWHM of PSF)
         '''
         from piXedfit.piXedfit_bin import pixel_binning     
+
+        if not hasattr(self, 'img_process'):
+            raise ValueError('No image processing done. Run pixedfit_processing() first')
+
         SNR = np.zeros(len(self.bands))
         ref_band_pos = np.argwhere(np.array([band == ref_band for band in self.bands])).flatten()[0]
         # Should calculate SNR requirements intelligently based on redshift
         SNR[2:] = SNR_reqs
         name_out_fits = f'{self.dir_images}/{self.survey}_{self.galaxy_id}_binned.fits'
-        
+
         pixel_binning(self.flux_map_path, ref_band=ref_band_pos, Dmin_bin=Dmin_bin, SNR=SNR, redc_chi2_limit=redc_chi2_limit, del_r=del_r,  name_out_fits=name_out_fits)
         
         self.pixedfit_binmap_path = name_out_fits
@@ -698,7 +819,13 @@ class ResolvedGalaxy:
 
 
     def plot_image_stamps(self):
-        fig, axes = plt.subplots(1, len(self.bands), figsize=(4*len(self.bands), 4))
+        nrows = len(self.bands)//6 + 1
+        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows))
+        axes = axes.flatten()
+        # Remove empty axes
+        for i in range(len(self.bands), len(axes)):
+            fig.delaxes(axes[i])
+
         for i, band in enumerate(self.bands):
             axes[i].imshow(np.log10(self.phot_imgs[band]), origin='lower', interpolation='none')
             axes[i].set_title(f'{band} Image')
@@ -706,7 +833,13 @@ class ResolvedGalaxy:
 
     def plot_gal_region(self):
         gal_region = self.gal_region
-        fig, axes = plt.subplots(1, len(self.bands), figsize=(4*len(self.bands), 4))
+        nrows = len(self.bands)//6 + 1
+        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows))
+        axes = axes.flatten()
+        # Remove empty axes
+        for i in range(len(self.bands), len(axes)):
+            fig.delaxes(axes[i])
+
         for i, band in enumerate(self.bands):
             rows, cols = np.where(gal_region==0)
             gal_region[rows,cols] = float('nan')
@@ -715,7 +848,7 @@ class ResolvedGalaxy:
             axes[i].imshow(gal_region, origin='lower', interpolation='none', alpha=0.5, cmap='copper')
         plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.95, hspace=0.1, wspace=0.15)
 
-    def add_to_h5(self, data, group, name, ext=0, setattr_gal=None, overwrite=False):
+    def add_to_h5(self, data, group, name, ext=0, setattr_gal=None, overwrite=False, meta=None):
         
 
         if type(data) == str:
@@ -732,6 +865,9 @@ class ResolvedGalaxy:
                 return
 
         hfile[group].create_dataset(name, data=data)
+        if meta is not None:
+            for key in meta.keys():
+                hfile[group][name].attrs[key] = meta[key]
         print('added to ', hfile, group, name)
         hfile.close()
         if setattr_gal is not None:
@@ -743,6 +879,23 @@ class ResolvedGalaxy:
         for i, band in enumerate(self.bands):
             axes[i].imshow(np.log10(self.rms_err_imgs[band]), origin='lower', interpolation='none')
             axes[i].set_title(f'{band} Error')
+
+    def plot_seg_stamps(self, show_pixedfit=False):
+        # Split ax over rows - max 6 per row
+        nrows = len(self.bands)//6 + 1
+        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows))
+        axes = axes.flatten()
+        # Remove empty axes
+        for i in range(len(self.bands), len(axes)):
+            fig.delaxes(axes[i])
+
+        for i, band in enumerate(self.bands):
+            if show_pixedfit:
+                mappable = axes[i].imshow(self.img_process.segm_maps[i], origin='lower', interpolation='none')
+
+            mappable = axes[i].imshow(self.seg_imgs[band], origin='lower', interpolation='none')
+            fig.colorbar(mappable, ax=axes[i])
+            axes[i].set_title(f'{band} Segmentation')
 
     def pixedfit_plot_map_fluxes(self):
         from piXedfit.piXedfit_images import plot_maps_fluxes
@@ -1008,7 +1161,7 @@ class ResolvedGalaxy:
             raise Exception("Need to run pixedfit_binning first")
 
         table = self.sed_fitting_table['bagpipes'][run_name]
-        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4), constrained_layout=True, backgroundcolor='white')
+        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4), constrained_layout=True, facecolor='white')
 
         axes[0].imshow(self.pixedfit_map, origin='lower', interpolation='none')
 
@@ -1105,18 +1258,33 @@ class ResolvedGalaxy:
             bins_to_show = table['#ID']
         else:
             bins_to_show = bins_to_show
+        
 
         for bin in bins_to_show:
+            print(bin)
             h5_path = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
 
             pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
                  load_spectrum=False, filter_path='/nvme/scratch/work/tharvey/bagpipes/inputs/filters/',
                  ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
-            pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
-                            y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
-                            label=None,  marker="o", rerun_fluxes=False)
+            # This plots the observed SED
+            #pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
+            #                y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
+            #                label=None,  marker="o", rerun_fluxes=False)
+            # This plots the best fit SED
+            pipes_obj.plot_best_fit(ax_sed, colour=color[bin],  wav_units=u.um, flux_units=u.ABmag, lw=1, fill_uncertainty=False,zorder=5,)
+
+        # Set x-axis limits
+        ax_sed.set_xlim(0.5, 5)
+        # Set y-axis limits
+        ax_sed.set_ylim(33, 28)
+
+        # Set x-axis label
+        ax_sed.set_xlabel('Wavelength ($\mu$m)')
+        # Set y-axis label
+        ax_sed.set_ylabel('AB Mag')
+    
             
-        
 
 if __name__ == "__main__":
     # Test the Galaxy class
