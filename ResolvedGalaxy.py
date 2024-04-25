@@ -549,11 +549,11 @@ class ResolvedGalaxy:
     def __repr__(self):
         return self.__str__()
 
-    def plot_cutouts(self, bands = None, save = False, save_path = None):
+    def plot_cutouts(self, bands = None, save = False, save_path = None, show = False, facecolor='white'):
         '''Plot the cutouts for the galaxy'''
         if bands is None:
             bands = self.bands
-        fig, axes = plt.subplots(2, len(bands), figsize=(4*len(bands), 8))
+        fig, axes = plt.subplots(2, len(bands), figsize=(4*len(bands), 8), facecolor=facecolor)
         for i, band in enumerate(bands):
             axes[0, i].imshow(self.phot_imgs[band], origin='lower', interpolation='none')
             axes[0, i].set_title(f'{band} Phot')
@@ -562,8 +562,9 @@ class ResolvedGalaxy:
         plt.tight_layout()
         if save:
             plt.savefig(save_path)
-        else:
+        if show:
             plt.show()
+        return fig
 
     def pixedfit_processing(self, use_galfind_seg = True, seg_combine = None,
             dir_images = 'galaxies/', psf_type = 'webbpsf'):
@@ -1001,8 +1002,13 @@ class ResolvedGalaxy:
         }
         return param_dict[param]
 
-    def plot_bagpipes_results(self, run_name, parameters=['stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False):
-        
+    def plot_bagpipes_results(self, run_name=None, parameters=['stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white'):
+        if run_name is None:
+            run_name = list(self.sed_fitting_table['bagpipes'].keys())
+            if len(run_name) > 1:
+                raise Exception("Multiple runs found, please specify run_name")
+            else:
+                run_name = run_name[0]
         cmaps = ['cmr.ember', 'cmr.cosmic', 'cmr.lilac', 'cmr.eclipse', 'cmr.sapphire', 'cmr.dusk', 'cmr.emerald']
         if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys() or reload_from_cat:
             self.load_bagpipes_results(run_name)
@@ -1011,7 +1017,7 @@ class ResolvedGalaxy:
             raise Exception("Need to run pixedfit_binning first")
 
         table = self.sed_fitting_table['bagpipes'][run_name]
-        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4), constrained_layout=True, backgroundcolor='white')
+        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4), constrained_layout=True, facecolor=facecolor)
 
         axes[0].imshow(self.pixedfit_map, origin='lower', interpolation='none')
 
@@ -1039,9 +1045,9 @@ class ResolvedGalaxy:
             cbar.ax.xaxis.set_label_position('top')
             cbar.ax.tick_params(labelsize=8)
             cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
-
-        fig.savefig(f'galaxies/{run_name}_maps.png')
-        return fig, axes
+        if save:
+            fig.savefig(f'galaxies/{run_name}_maps.png')
+        return fig
 
     def map_to_density_map(self, map, cosmo = FlatLambdaCDM(H0=70, Om0=0.3), redshift = None, logmap = False):
         pixel_scale = self.im_pixel_scales[self.bands[0]]
@@ -1118,6 +1124,8 @@ class ResolvedGalaxy:
             pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
                             y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
                             label=None,  marker="o", rerun_fluxes=False)
+    
+
             
         
 
