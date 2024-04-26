@@ -352,7 +352,7 @@ class ResolvedGalaxy:
 
 
 
-    def dump_to_h5(self, h5folder='galaxies/'):
+    def dump_to_h5(self, h5folder='galaxies/', mode='append'):
 
         '''Dump the galaxy data to an .h5 file'''
         # for strings
@@ -363,7 +363,7 @@ class ResolvedGalaxy:
 
         str_dt = h5.string_dtype(encoding='utf-8')
         # Convert most dictionaries to strings
-        # 'meta' - galaxy ID, survey, sky_coord, version, instruments, excl_bands, cutout_size, zps, pixel_scales, phot_pix_unit
+        # 'meta' - galaxy ID, survey, sky_coord,    version, instruments, excl_bands, cutout_size, zps, pixel_scales, phot_pix_unit
         # 'paths' - im_paths, seg_paths, rms_err_paths
         # 'raw_data' - phot_imgs, rms_err_imgs, seg_imgs
         # 'headers' - phot_img_headers
@@ -603,10 +603,10 @@ class ResolvedGalaxy:
             fig.delaxes(axes[i])
             
         for i, band in enumerate(bands):
-            axes[0, i].imshow(self.phot_imgs[band], origin='lower', interpolation='none')
-            axes[0, i].set_title(f'{band} Phot')
-            axes[1, i].imshow(self.rms_err_imgs[band], origin='lower', interpolation='none')
-            axes[1, i].set_title(f'{band} RMS Err')
+            axes[i].imshow(self.phot_imgs[band], origin='lower', interpolation='none')
+            axes[i].set_title(f'{band} Cutout')
+            #axes[].imshow(self.rms_err_imgs[band], origin='lower', interpolation='none')
+            #axes[].set_title(f'{band} RMS Err')
         plt.tight_layout()
         plt.subplots_adjust(hspace=0.1, wspace=0.1)
         if save:
@@ -1157,6 +1157,44 @@ class ResolvedGalaxy:
         }
         return param_dict[param]
 
+    def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'all', save=False, facecolor='white', marker_color='black'):
+        if run_name is None:
+            run_name = list(self.sed_fitting_table['bagpipes'].keys())
+            if len(run_name) > 1:
+                raise Exception("Multiple runs found, please specify run_name")
+            else:
+                run_name = run_name[0]
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys():
+            self.load_bagpipes_results(run_name)
+        table = self.sed_fitting_table['bagpipes'][run_name]
+
+
+        fig, axes = plt.subplots(1, 1, figsize=(8, 4), constrained_layout=True, facecolor=facecolor)
+        if bins_to_show == 'all':
+            bins_to_show = np.unique(table['bin'])
+
+        for bin in bins_to_show:
+            print(bin)
+            h5_path = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+
+            pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
+                 load_spectrum=False, filter_path='/nvme/scratch/work/tharvey/bagpipes/inputs/filters/',
+                 ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
+
+            # This plots the observed SED
+            #pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
+            #                y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
+            #                label=None,  marker="o", rerun_fluxes=False)
+            # This plots the best fit SED
+            pipes_obj.plot_sfh(ax, color, modify_ax = True, add_zaxis=True, timescale='Gyr', plottype='lookback', logify=False, cosmo=None)
+
+        #cbar.set_label('Age (Gyr)', labelpad=10)
+        #cbar.ax.xaxis.set_ticks_position('top')
+        #cbar.ax.xaxis.set_label_position('top')
+        #cbar.ax.tick_params(labelsize=8)
+        cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+
+
     def plot_bagpipes_results(self, run_name=None, parameters=['stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white'):
         if run_name is None:
             run_name = list(self.sed_fitting_table['bagpipes'].keys())
@@ -1235,8 +1273,8 @@ class ResolvedGalaxy:
 
         return density_map
     
-    def plot_bagpipes_sed(self, run_name, run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/', bins_to_show='all'):
-        sys.path.insert(1, '/nvme/scratch/work/tharvey/bagpipes')
+    def plot_bagpipes_sed(self, run_name, run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/', bins_to_show='all', plotpipes_dir = '/nvme/scratch/work/tharvey/bagpipes'):
+        sys.path.insert(1, plotpipes_dir)
         from plotpipes import PipesFit
 
         if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys():
