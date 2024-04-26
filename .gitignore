@@ -7,3 +7,5 @@ stamp_*
 galaxies/temp/*.fits
 galaxies/*.fits
 pipes/*
+MinViable.py
+.DS_Store
