@@ -17,7 +17,9 @@ from pathlib import Path
 import os
 from astropy.table import Table, QTable
 import typing
+import matplotlib as mpl
 from astropy.utils.exceptions import AstropyWarning
+from astropy.visualization import make_lupton_rgb
 import warnings
 from astropy.utils.masked import Masked
 from astropy.wcs import WCS
@@ -146,9 +148,13 @@ class ResolvedGalaxy:
     def init(cls, galaxy_id, survey, version, instruments = ['NIRCam'], 
                             excl_bands = [], cutout_size=64, forced_phot_band = ["F277W", "F356W", "F444W"], 
                             aper_diams = [0.32] * u.arcsec, output_flux_unit = u.uJy, h5folder = 'galaxies/'):
-        if os.path.exists(f'{h5folder}{galaxy_id}.h5'):
-            return cls.init_from_h5(galaxy_id, h5_folder = h5folder)
+        
+        galaxy_name = f'{survey}_{galaxy_id}'
+        if os.path.exists(f'{h5folder}{galaxy_name}.h5'):
+            print('Loading from .h5')
+            return cls.init_from_h5(galaxy_name, h5_folder = h5folder)
         else:
+            print('Loading from GALFIND')
             return cls.init_from_galfind(galaxy_id, survey, version, instruments = instruments, 
                             excl_bands = excl_bands, cutout_size=cutout_size, forced_phot_band = forced_phot_band, 
                             aper_diams = aper_diams, output_flux_unit = output_flux_unit, h5folder = h5folder)
@@ -375,6 +381,7 @@ class ResolvedGalaxy:
                 tool, run = key.split('/')[1:]
                 sed_fitting_table[tool][run] = table
 
+        hfile.close()
         
         return cls(galaxy_id, sky_coord, survey, bands, im_paths, im_exts, im_zps,
                     seg_paths, rms_err_paths, rms_err_exts, im_pixel_scales, 
@@ -647,6 +654,36 @@ class ResolvedGalaxy:
         if show:
             plt.show()
         return fig
+
+    def plot_lupton_rgb(self, red = [], blue = [], green = [], q = 1, stretch = 1, use_psf_matched=False, psf_type = 'webbpsf', return_array = True, save = False, save_path = None, show = False):
+        '''Plot the galaxy in Lupton RGB'''
+        if use_psf_matched:
+            img = self.psf_matched_data[psf_type]
+        else:
+            img = self.phot_imgs
+        if len(red) == 0:
+            r = np.zeros((self.cutout_size, self.cutout_size))
+        else:
+            r = np.sum([img[band] for band in red], axis=0)
+        if len(green) == 0:
+            g = np.zeros((self.cutout_size, self.cutout_size))
+        else:
+            g = np.sum([img[band] for band in green], axis=0)
+        
+        if len(blue) == 0:
+            b = np.zeros((self.cutout_size, self.cutout_size))
+        else: 
+            b = np.sum([img[band] for band in blue], axis=0)
+
+        rgb = make_lupton_rgb(r, g, b, Q=q, stretch=stretch)
+        if return_array:
+            return rgb
+        
+        plt.imshow(rgb, origin='lower')
+        if save:
+            plt.savefig(save_path)
+        if show:
+            plt.show()
 
     def pixedfit_processing(self, use_galfind_seg = True, seg_combine = None,
             dir_images = 'galaxies/', psf_type = 'webbpsf', use_all_pixels = False):

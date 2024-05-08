@@ -12,6 +12,7 @@ from ResolvedGalaxy import ResolvedGalaxy
 import h5py
 from io import BytesIO
 import sys
+import matplotlib as mpl
 from astropy import units as u
 sys.path.append('/usr/local/texlive/')
 
@@ -68,15 +69,15 @@ def possible_runs_select(sed_fitting_tool):
 def update_sidebar(active_tab, sidebar):
     sidebar.clear()
     settings_sidebar = pn.Column(pn.layout.Divider(), "### Settings", name='settings_sidebar')
-    
+
     if active_tab == 0:
-        
-        settings_sidebar.append('Red Channel')
+        settings_sidebar.append('#### RGB Image')
+        settings_sidebar.append(psf_mode_select)
         settings_sidebar.append(red_select)
-        settings_sidebar.append('Green Channel') 
         settings_sidebar.append(green_select)
-        settings_sidebar.append('Blue Channel')
         settings_sidebar.append(blue_select)
+        settings_sidebar.append(stretch_slider)
+        settings_sidebar.append(q_slider)
    
     elif active_tab == 1:
         settings_sidebar.append('#### Pixel Binning')
@@ -91,7 +92,6 @@ def update_sidebar(active_tab, sidebar):
 
         pn.bind(update_image, which_map.param.value, watch=True)
         
-
     sidebar.append(settings_sidebar)
 
 def handle_map_click(x, y, galaxy, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, mode='sed'):
@@ -121,6 +121,15 @@ def handle_map_click(x, y, galaxy, cmap, which_map_param, which_sed_fitter_param
     return obj 
     #except Exception as e:
     #    pn.state.notifications.error(f'Error: {e}', duration=2000)
+
+def plot_rgb(galaxy, red, green, blue, scale, q, psf_mode):
+    if psf_mode == 'Original':
+        use_psf_matched = False
+    elif psf_mode == 'PSF Matched':
+        use_psf_matched = True
+    rgb = galaxy.plot_lupton_rgb(red, green, blue, scale, q, use_psf_matched=use_psf_matched)
+    rgb_img = hv.RGB(rgb, bounds=(0, 0, galaxy.cutout_size, galaxy.cutout_size)).opts(xaxis=None, yaxis=None)
+    return pn.pane.HoloViews(rgb_img, sizing_mode='stretch_both', min_height=250, min_width=250, max_height=300, max_width=300)
 
 def plot_sed(galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, x_unit = u.micron):
     
@@ -272,6 +281,12 @@ def handle_file_upload(value, components):
     global which_flux_unit
     global multi_choice_bins
     global which_run
+    global red_select
+    global green_select
+    global blue_select
+    global stretch_slider
+    global q_slider
+    global psf_mode_select
 
     which_map = pn.widgets.RadioButtonGroup(options=['pixedfit', 'voronoi'], value='pixedfit', name='Pixel Binning')
 
@@ -291,12 +306,17 @@ def handle_file_upload(value, components):
     id = resolved_galaxy.galaxy_id
     survey = resolved_galaxy.survey
 
-    cutout_grid = GridStack(sizing_mode='stretch_both', allow_resize=True, allow_drag=True, min_height=400)
+    cutout_grid = GridStack(sizing_mode='stretch_both', allow_resize=True, allow_drag=True, max_height=500, nrows=4)
+
+    cutout_grid = pn.Column()
 
     sed_results_grid = GridStack(sizing_mode='stretch_both', allow_resize=True, allow_drag=True, min_height=800, mode='override')
 
-    cutout_grid[0:2, :] = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, max_height=400,  tight=True, format="svg", sizing_mode="stretch_width"))
+    #cutout_grid[0, :6] = 
     
+    row = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, height=200,  tight=True, format="svg", sizing_mode="stretch_width"))
+    cutout_grid.append(row)
+
     cmap = 'nipy_spectral_r'
  
     hvplot_bins = plot_bins('pixedfit', cmap)
@@ -324,13 +344,20 @@ def handle_file_upload(value, components):
     green_select = pn.widgets.MultiChoice(name='Green Channel', options = resolved_galaxy.bands, value = ['F277W'])
     blue_select = pn.widgets.MultiChoice(name='Blue Channel', options = resolved_galaxy.bands, value = ['F150W'])
 
+    stretch_slider = pn.widgets.EditableFloatSlider(name='Stretch', start=0.001, end=10, value=6, step=0.001)
+    q_slider = pn.widgets.EditableFloatSlider(name='Q', start=0.000001, end=0.01, value=0.001, step=0.000001)
+    psf_mode_select = pn.widgets.Select(name='PSF Mode', options=['PSF Matched', 'Original'], value='PSF Matched')
+    
+    # Show RGB cutout
+    cutout_grid.append(pn.Row(pn.bind(plot_rgb, resolved_galaxy, red_select.param.value, green_select.param.value, blue_select.param.value, stretch_slider.param.value, q_slider.param.value, psf_mode_select.param.value)))
+
     #obj = pn.bind(plot_sed, bin_map.param.tap.x, bin_map.param.tap.y, resolved_galaxy, cmap, shown_bins, watch=True)
 
     sed_results_grid[0, :2] = bin_map
     sed_results_grid[0, 2:] = sed_obj
     sed_results_grid[2, :3] = sfh_obj
     sed_results_grid[3:5, :3] = corner_obj
-    sed_results =  pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=['stellar_mass', 'sfr'], max_on_row=3), dpi=144, tight=True, format="svg", sizing_mode="stretch_width"))
+    sed_results = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=['stellar_mass', 'sfr'], max_on_row=3), dpi=144, tight=True, format="svg"))
     sed_results_grid[2, 3:5] = sed_results
     
     galaxy_tabs = pn.Tabs(('Cutouts', cutout_grid), ('SED Results', sed_results_grid), dynamic=True)
@@ -339,15 +366,10 @@ def handle_file_upload(value, components):
 
     # Only show sidebar if tab is SED Results
     #@pn.depends(which_map.param.value)
+    update_sidebar(0, sidebar)
 
     pn.bind(update_sidebar, galaxy_tabs.param.active, sidebar, watch=True)
 
-def plot_rgb(galaxy, red, green, blue, scale):
-    fig, ax = plt.subplots(figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
-    ax.imshow(galaxy.rgb_image(red, green, blue, scale), origin='lower')
-    ax.axis('off')
-    return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="stretch_width")
-    
 
 def resolved_sed_interface():
 
