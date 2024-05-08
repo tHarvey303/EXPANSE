@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import h5py as h5
 from io import BytesIO
 import astropy.units as u
+import matplotlib
 from astropy.coordinates import SkyCoord
 from astropy.nddata import Cutout2D
 import ast
@@ -38,6 +39,29 @@ warnings.simplefilter('ignore', category=AstropyWarning)
         2. Pixel binning.
         3. Does ERR map need to be convolved with PSF?
 '''
+
+def update_mpl(tex_on=True):
+    mpl.rcParams["lines.linewidth"] = 2.
+    mpl.rcParams["axes.linewidth"] = 1.5
+    mpl.rcParams["axes.labelsize"] = 18.
+    mpl.rcParams["xtick.top"] = True
+    mpl.rcParams["xtick.labelsize"] = 14
+    mpl.rcParams["xtick.direction"] = "in"
+    mpl.rcParams["ytick.right"] = True
+    mpl.rcParams["ytick.labelsize"] = 14
+    mpl.rcParams["ytick.direction"] = "in"
+    mpl.rcParams["figure.facecolor"] = '#f7f7f7'
+    #mpl.rcParams["figure.edgecolor"] = 'k'
+    mpl.rcParams["savefig.bbox"] = 'tight'
+
+
+    if tex_on:
+        #mpl.rc('font', **{'family': 'sans-serif', 'sans-serif': ['Helvetica']})
+        mpl.rc('text', usetex=True)
+        mpl.rcParams["text.usetex"] = True
+
+    else:
+        mpl.rcParams["text.usetex"] = False
 
 
 class ResolvedGalaxy:
@@ -79,6 +103,8 @@ class ResolvedGalaxy:
         if os.path.exists(self.h5_path) and overwrite:
             os.remove(self.h5_path)
         
+        update_mpl(tex_on=True)
+
         # Check sizes of images
         for band in self.bands:
             assert self.phot_imgs[band].shape == (self.cutout_size, self.cutout_size), f"Image shape for {band} is {self.phot_imgs[band].shape}, not {(self.cutout_size, self.cutout_size)}"
@@ -139,7 +165,6 @@ class ResolvedGalaxy:
         # Make cat creator
         cat_creator = GALFIND_Catalogue_Creator("loc_depth", aper_diams[0], 10)
         # Load catalogue and populate galaxies
-        #SED_fit_params = {"code": EAZY(), "templates": "fsps_larson", "zlowz_zmax": None}
         cat = Catalogue.from_pipeline(survey = survey, version = version, instruments = instruments,
             aper_diams = aper_diams, cat_creator = cat_creator, 
             forced_phot_band = forced_phot_band, excl_bands = excl_bands, loc_depth_min_flux_pc_errs = [10])
@@ -185,12 +210,8 @@ class ResolvedGalaxy:
         z = SED_results.z
 
         print(f'Redshift is {z}')
-
         # aperture_dict
-        aperture_dict = {str(0.32*u.arcsec): {'flux': flux_aper, 'flux_err': flux_err_aper, 'depths': depths, 'wave': wave}}
-        
-        # 
-
+        aperture_dict = {str(0.32*u.arcsec): {'flux': flux_aper, 'flux_err': flux_err_aper, 'depths': depths, 'wave': wave}}      
         phot_imgs = {}
         phot_pix_unit = {}
         rms_err_imgs = {}
@@ -231,8 +252,6 @@ class ResolvedGalaxy:
             rms_err_imgs[band] = rms_data
             seg_imgs[band] = hdu['SEG'].data
             phot_img_headers[band] = str(hdu['SCI'].header)
-             
-        
         return cls(galaxy_id = galaxy_id, sky_coord = galaxy_skycoord, survey = survey, bands = bands, 
                         im_paths = im_paths, im_exts = im_exts, im_zps = im_zps, seg_paths = seg_paths,
                         rms_err_paths = err_paths, rms_err_exts = err_exts, im_pixel_scales = im_pixel_scales,
@@ -357,11 +376,12 @@ class ResolvedGalaxy:
                 sed_fitting_table[tool][run] = table
 
         
-        return cls(galaxy_id = galaxy_id, sky_coord = sky_coord, survey = survey, bands = bands, im_paths = im_paths, im_exts = im_exts, im_zps = im_zps, seg_paths = seg_paths,
-        rms_err_paths = rms_err_paths, rms_err_exts = rms_err_exts, im_pixel_scales = im_pixel_scales, phot_imgs = phot_imgs, phot_pix_unit = phot_pix_unit,
-        phot_img_headers = phot_img_headers, rms_err_imgs = rms_err_imgs, seg_imgs = seg_imgs, aperture_dict = aperture_dict, psf_matched_data = psf_matched_data,
-        psf_matched_rms_err = psf_matched_rms_err, pixedfit_map = pixedfit_map, voronoi_map = voronoi_map, binned_flux_map = binned_flux_map, binned_flux_err_map = binned_flux_err_map,
-        photometry_table = photometry_table, sed_fitting_table = sed_fitting_table, cutout_size = cutout_size, h5_folder = h5_folder)
+        return cls(galaxy_id, sky_coord, survey, bands, im_paths, im_exts, im_zps,
+                    seg_paths, rms_err_paths, rms_err_exts, im_pixel_scales, 
+                    phot_imgs, phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, 
+                    aperture_dict, psf_matched_data, psf_matched_rms_err, pixedfit_map, voronoi_map,
+                    binned_flux_map, binned_flux_err_map, photometry_table, sed_fitting_table,
+                    cutout_size, h5_folder)
 
 
 
@@ -1155,22 +1175,118 @@ class ResolvedGalaxy:
             return_map[map == float(id)] = value if not remove_log10 else 10**value
             changed[map == float(id)] = 1
         #print(f'changed {np.sum(changed)} pixels out of {len(map.flatten())} pixels')
-        map[changed == 0] = float('nan')
+        return_map[changed == 0] = np.nan
         return return_map
 
     def param_unit(self, param):
         param_dict = {
             'stellar_mass':u.Msun,
-            'stellar_mass density':u.Msun/u.kpc**2,
+            'stellar_mass_density':u.Msun/u.kpc**2,
             'sfr':u.Msun/u.yr,
-            'sfr density':u.Msun/u.yr/u.kpc**2,
+            'sfr_density':u.Msun/u.yr/u.kpc**2,
             'dust:Av':u.mag,
             'UV_colour':u.mag,
             'chisq_phot-': u.dimensionless_unscaled,
         }
         return param_dict[param]
 
-    def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'all', save=False, facecolor='white', marker_color='black'):
+
+    def plot_bagpipes_corner(self, run_name=None, bins_to_show = 'all', save=False, corner_bins=25, facecolor='white', colors='black', cache=None,
+                            plotpipes_dir='/Users/user/Documents/PhD/bagpipes_dir/',run_dir = f'pipes/'):
+        
+        if run_name is None:
+            run_name = list(self.sed_fitting_table['bagpipes'].keys())
+            if len(run_name) > 1:
+                raise Exception("Multiple runs found, please specify run_name")
+            else:
+                run_name = run_name[0]
+
+        if bins_to_show == 'all':
+            bins_to_show = np.unique(table['bin'])
+
+        if type(colors) == str:
+            colors = [colors for i in range(len(bins_to_show))]
+
+        if cache is None:
+            cache = {}
+        
+        fig = None
+
+        for bin, color, in zip(bins_to_show, colors):
+            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+
+            if bin in cache.keys():
+                pipes_obj = cache[bin]
+            else:
+                pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
+                    load_spectrum=False, filter_path='/Users/user/Documents/PhD/bagpipes_dir/inputs/filters/',
+                    ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
+
+                cache[bin] = pipes_obj
+
+            fig = pipes_obj.plot_corner_plot(show=False, save=save, bins=corner_bins, type="fit_params", fig=fig, color=color, facecolor=facecolor)
+        
+        return fig, cache
+
+    def plot_bagpipes_fit(self, run_name=None, axes = None, fig=None, bins_to_show = 'all', save=False, 
+                        facecolor='white', marker_colors='black', wav_units=u.um, plotpipes_dir='/Users/user/Documents/PhD/bagpipes_dir/',
+                        flux_units=u.ABmag, lw=1,fill_uncertainty=False,zorder=5, run_dir = f'pipes/', cache=None):
+        sys.path.insert(1, plotpipes_dir)
+        from plotpipes import PipesFit
+        
+        if run_name is None:
+            run_name = list(self.sed_fitting_table['bagpipes'].keys())
+            if len(run_name) > 1:
+                raise Exception("Multiple runs found, please specify run_name")
+            else:
+                run_name = run_name[0]
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys():
+            self.load_bagpipes_results(run_name)
+        table = self.sed_fitting_table['bagpipes'][run_name]
+
+        if axes is None:
+            fig, axes = plt.subplots(1, 1, figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
+        if bins_to_show == 'all':
+            bins_to_show = np.unique(table['bin'])
+
+        if type(marker_colors) == str:
+            marker_colors = [marker_colors for i in range(len(bins_to_show))]
+
+        if cache is None:
+            cache = {}
+        for bin, color, in zip(bins_to_show, marker_colors):
+            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+
+            if bin in cache.keys():
+                pipes_obj = cache[bin]
+            else:
+                pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
+                    load_spectrum=False, filter_path='/Users/user/Documents/PhD/bagpipes_dir/inputs/filters/',
+                    ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
+
+                cache[bin] = pipes_obj
+
+            
+            
+            pipes_obj.plot_best_fit(axes, color, wav_units=wav_units, flux_units=flux_units, lw=lw, fill_uncertainty=fill_uncertainty, zorder=zorder)
+
+        #cbar.set_label('Age (Gyr)', labelpad=10)
+        #cbar.ax.xaxis.set_ticks_position('top')
+        #cbar.ax.xaxis.set_label_position('top')
+        #cbar.ax.tick_params(labelsize=8)
+        #cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+        return fig, cache
+
+        
+
+
+    def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'all', save=False, 
+                        facecolor='white', marker_colors='black', time_unit='Gyr',
+                        plotpipes_dir='/Users/user/Documents/PhD/bagpipes_dir/', 
+                        run_dir = f'pipes/', cache=None):
+        sys.path.insert(1, plotpipes_dir)
+        from plotpipes import PipesFit
+        
         if run_name is None:
             run_name = list(self.sed_fitting_table['bagpipes'].keys())
             if len(run_name) > 1:
@@ -1182,40 +1298,54 @@ class ResolvedGalaxy:
         table = self.sed_fitting_table['bagpipes'][run_name]
 
 
-        fig, axes = plt.subplots(1, 1, figsize=(8, 4), constrained_layout=True, facecolor=facecolor)
+        fig, axes = plt.subplots(1, 1, figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
         if bins_to_show == 'all':
             bins_to_show = np.unique(table['bin'])
 
-        for bin in bins_to_show:
-            print(bin)
-            h5_path = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+        if type(marker_colors) == str:
+            marker_colors = [marker_colors for i in range(len(bins_to_show))]
 
-            pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
-                 load_spectrum=False, filter_path='/nvme/scratch/work/tharvey/bagpipes/inputs/filters/',
-                 ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
+        if cache is None:
+            cache = {}
+        for bin, color, in zip(bins_to_show, marker_colors):
+            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
 
+            if bin in cache.keys():
+                pipes_obj = cache[bin]
+            else:
+                pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
+                    load_spectrum=False, filter_path='/Users/user/Documents/PhD/bagpipes_dir/inputs/filters/',
+                    ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
+
+                cache[bin] = pipes_obj
+            
             # This plots the observed SED
             #pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
             #                y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
             #                label=None,  marker="o", rerun_fluxes=False)
             # This plots the best fit SED
-            pipes_obj.plot_sfh(ax, color, modify_ax = True, add_zaxis=True, timescale='Gyr', plottype='lookback', logify=False, cosmo=None)
+            
+            pipes_obj.plot_sfh(axes, color, modify_ax = True, add_zaxis=True, timescale=time_unit, plottype='lookback', logify=False, cosmo=None)
 
         #cbar.set_label('Age (Gyr)', labelpad=10)
         #cbar.ax.xaxis.set_ticks_position('top')
         #cbar.ax.xaxis.set_label_position('top')
         #cbar.ax.tick_params(labelsize=8)
-        cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+        #cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+        if len(bins_to_show) == 0:
+            fig = plt.figure(facecolor=facecolor)
+
+        return fig, cache
 
 
-    def plot_bagpipes_results(self, run_name=None, parameters=['stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white'):
+    def plot_bagpipes_results(self, run_name=None, parameters=['bin_map', 'stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white', max_on_row=4):
         if run_name is None:
             run_name = list(self.sed_fitting_table['bagpipes'].keys())
             if len(run_name) > 1:
                 raise Exception("Multiple runs found, please specify run_name")
             else:
                 run_name = run_name[0]
-        cmaps = ['cmr.ember', 'cmr.cosmic', 'cmr.lilac', 'cmr.eclipse', 'cmr.sapphire', 'cmr.dusk', 'cmr.emerald']
+        cmaps = ['magma','RdYlBu', 'cmr.ember', 'cmr.cosmic', 'cmr.lilac', 'cmr.eclipse', 'cmr.sapphire', 'cmr.dusk', 'cmr.emerald']
         if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys() or reload_from_cat:
             self.load_bagpipes_results(run_name)
             
@@ -1224,16 +1354,23 @@ class ResolvedGalaxy:
 
         table = self.sed_fitting_table['bagpipes'][run_name]
 
-        fig, axes = plt.subplots(1, len(parameters)+1, figsize=(4*len(parameters), 4), constrained_layout=True, facecolor=facecolor)
+        #fig, axes = plt.subplots(1, len(parameters), figsize=(4*len(parameters), 4), constrained_layout=True, facecolor=facecolor)
+        fig, axes = plt.subplots(len(parameters)//max_on_row + 1, max_on_row, figsize=(2.5*max_on_row, 2.5*(len(parameters)//max_on_row + 1)), constrained_layout=True, facecolor=facecolor, sharex=True, sharey=True)
 
-
-        axes[0].imshow(self.pixedfit_map, origin='lower', interpolation='none')
+        axes = axes.flatten()
+        # Remove empty axes
+        for i in range(len(parameters), len(axes)):
+            fig.delaxes(axes[i])
 
         redshift = self.sed_fitting_table['bagpipes'][run_name]['input_redshift'][0]
         
         for i, param in enumerate(parameters):
-            ax_divider = make_axes_locatable(axes[i+1])
+            ax_divider = make_axes_locatable(axes[i])
             cax = ax_divider.append_axes('top', size='5%', pad='2%')
+
+            if param == 'bin_map':
+                map = self.pixedfit_map
+                log = ''
 
             map = self.convert_table_to_map(table, '#ID', f'{param[:-1]}' if param.endswith('-') else f'{param}_50', self.pixedfit_map, remove_log10=param.startswith('stellar_mass'))
 
@@ -1242,13 +1379,14 @@ class ResolvedGalaxy:
             if param in ['stellar_mass', 'sfr']:
                 map = self.map_to_density_map(map, redshift = redshift, logmap = True) 
                 log = '$\log_{10}$ '
-                param = f'{param} density'
+                param = f'{param}_density'
 
             map = map 
-            mappable = axes[i+1].imshow(map, origin='lower', interpolation='none', cmap=cmaps[i])
+            mappable = axes[i].imshow(map, origin='lower', interpolation='none', cmap=cmaps[i])
             cbar = fig.colorbar(mappable, cax=cax, orientation='horizontal')
             unit = f' ({log}{self.param_unit(param):latex})' if self.param_unit(param) != u.dimensionless_unscaled else ''
-            cbar.set_label(f'{param.replace("_", " ")}{unit}', labelpad=10)
+            param_str = param.replace("_", r"\ ")
+            cbar.set_label(rf'$\rm{{{param_str}}}${unit}', labelpad=10, fontsize=10)
             cbar.ax.xaxis.set_ticks_position('top')
             cbar.ax.xaxis.set_label_position('top')
             cbar.ax.tick_params(labelsize=8)
@@ -1325,11 +1463,10 @@ class ResolvedGalaxy:
         
 
         for bin in bins_to_show:
-            print(bin)
-            h5_path = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
 
             pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
-                 load_spectrum=False, filter_path='/nvme/scratch/work/tharvey/bagpipes/inputs/filters/',
+                 load_spectrum=False, filter_path='/Users/user/Documents/PhD/bagpipes_dir/inputs/filters/',
                  ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
 
             # This plots the observed SED
