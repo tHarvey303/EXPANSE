@@ -139,10 +139,10 @@ class ResolvedGalaxy:
         # Make cat creator
         cat_creator = GALFIND_Catalogue_Creator("loc_depth", aper_diams[0], 10)
         # Load catalogue and populate galaxies
+        #SED_fit_params = {"code": EAZY(), "templates": "fsps_larson", "zlowz_zmax": None}
         cat = Catalogue.from_pipeline(survey = survey, version = version, instruments = instruments,
-            aper_diams = aper_diams, cat_creator = cat_creator, code_names = [], lowz_zmax = [], 
-            forced_phot_band = forced_phot_band, excl_bands = excl_bands, loc_depth_min_flux_pc_errs = [10], 
-            templates_arr = [])
+            aper_diams = aper_diams, cat_creator = cat_creator, 
+            forced_phot_band = forced_phot_band, excl_bands = excl_bands, loc_depth_min_flux_pc_errs = [10])
         # Make cutouts - this may not work currently as data.wht_types doesn't appear to be defined.
         cat.make_cutouts(galaxy_id, cutout_size = cutout_size)
     
@@ -178,9 +178,19 @@ class ResolvedGalaxy:
         depths = galaxy.phot.depths[~bands_mask]
         # Get the wavelegnths
         wave = galaxy.phot.wav#[~bands_mask]
+
+        # Get redshift
+        SED_fit_params = cat.SED_fit_params_arr[-1]
+        SED_results = galaxy.phot.SED_results[SED_fit_params["code"].label_from_SED_fit_params(SED_fit_params)]
+        z = SED_results.z
+
+        print(f'Redshift is {z}')
+
         # aperture_dict
         aperture_dict = {str(0.32*u.arcsec): {'flux': flux_aper, 'flux_err': flux_err_aper, 'depths': depths, 'wave': wave}}
         
+        # 
+
         phot_imgs = {}
         phot_pix_unit = {}
         rms_err_imgs = {}
@@ -221,10 +231,14 @@ class ResolvedGalaxy:
             rms_err_imgs[band] = rms_data
             seg_imgs[band] = hdu['SEG'].data
             phot_img_headers[band] = str(hdu['SCI'].header)
-
-        return cls(galaxy_id, galaxy_skycoord, survey, bands, im_paths, im_exts,
-                    im_zps, seg_paths, err_paths, err_exts, im_pixel_scales,
-                    phot_imgs,phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, cutout_size, overwrite=True)
+             
+        
+        return cls(galaxy_id = galaxy_id, sky_coord = galaxy_skycoord, survey = survey, bands = bands, 
+                        im_paths = im_paths, im_exts = im_exts, im_zps = im_zps, seg_paths = seg_paths,
+                        rms_err_paths = err_paths, rms_err_exts = err_exts, im_pixel_scales = im_pixel_scales,
+                        phot_imgs = phot_imgs, phot_pix_unit = phot_pix_unit, phot_img_headers = phot_img_headers, 
+                        rms_err_imgs = rms_err_imgs, seg_imgs = seg_imgs, aperture_dict = aperture_dict, 
+                        cutout_size = cutout_size, overwrite=True)
     
     @classmethod
     def init_from_h5(cls, h5_name, h5_folder = 'galaxies/'):
@@ -343,12 +357,11 @@ class ResolvedGalaxy:
                 sed_fitting_table[tool][run] = table
 
         
-        return cls(galaxy_id, sky_coord, survey, bands, im_paths, im_exts, im_zps,
-                    seg_paths, rms_err_paths, rms_err_exts, im_pixel_scales, 
-                    phot_imgs, phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, 
-                    aperture_dict, psf_matched_data, psf_matched_rms_err, pixedfit_map, voronoi_map,
-                    binned_flux_map, binned_flux_err_map, photometry_table, sed_fitting_table,
-                    cutout_size, h5_folder)
+        return cls(galaxy_id = galaxy_id, sky_coord = sky_coord, survey = survey, bands = bands, im_paths = im_paths, im_exts = im_exts, im_zps = im_zps, seg_paths = seg_paths,
+        rms_err_paths = rms_err_paths, rms_err_exts = rms_err_exts, im_pixel_scales = im_pixel_scales, phot_imgs = phot_imgs, phot_pix_unit = phot_pix_unit,
+        phot_img_headers = phot_img_headers, rms_err_imgs = rms_err_imgs, seg_imgs = seg_imgs, aperture_dict = aperture_dict, psf_matched_data = psf_matched_data,
+        psf_matched_rms_err = psf_matched_rms_err, pixedfit_map = pixedfit_map, voronoi_map = voronoi_map, binned_flux_map = binned_flux_map, binned_flux_err_map = binned_flux_err_map,
+        photometry_table = photometry_table, sed_fitting_table = sed_fitting_table, cutout_size = cutout_size, h5_folder = h5_folder)
 
 
 

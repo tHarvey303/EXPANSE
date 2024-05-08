@@ -37,7 +37,12 @@ def get_h5(url):
     return h5py.File(BytesIO(response.content), 'r')
 
 
-
+def plot_rgb(galaxy, red, green, blue, scale):
+    fig, ax = plt.subplots(figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
+    ax.imshow(galaxy.rgb_image(red, green, blue, scale), origin='lower')
+    ax.axis('off')
+    return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="stretch_width")
+    
 
 def update_image(value):
     #global shown_bins
@@ -60,28 +65,39 @@ def possible_runs_select(sed_fitting_tool):
     return which_run
 
 def update_sidebar(active_tab, sidebar):
+    sidebar.clear()
     settings_sidebar = pn.Column(pn.layout.Divider(), "### Settings", name='settings_sidebar')
     
-    settings_sidebar.append('#### Pixel Binning')
-    settings_sidebar.append(which_map)
-    settings_sidebar.append('#### SED Fitting Tool')
-    settings_sidebar.append(which_sed_fitter)
-    settings_sidebar.append(pn.bind(possible_runs_select, which_sed_fitter.param.value, watch=True))
+    if active_tab == 0:
+        
+        settings_sidebar.append('Red Channel')
+        settings_sidebar.append(red_select)
+        settings_sidebar.append('Green Channel') 
+        settings_sidebar.append(green_select)
+        settings_sidebar.append('Blue Channel')
+        settings_sidebar.append(blue_select)
+   
+    elif active_tab == 1:
+        settings_sidebar.append('#### Pixel Binning')
+        settings_sidebar.append(which_map)
+        settings_sidebar.append('#### SED Fitting Tool')
+        settings_sidebar.append(which_sed_fitter)
+        settings_sidebar.append(pn.bind(possible_runs_select, which_sed_fitter.param.value, watch=True))
 
-    settings_sidebar.append('#### SED Plot Config')
-    settings_sidebar.append(which_flux_unit)
-    settings_sidebar.append(multi_choice_bins)
+        settings_sidebar.append('#### SED Plot Config')
+        settings_sidebar.append(which_flux_unit)
+        settings_sidebar.append(multi_choice_bins)
 
-    pn.bind(update_image, which_map.param.value, watch=True)
-    
+        pn.bind(update_image, which_map.param.value, watch=True)
+        
 
-    if active_tab == 1:
-        sidebar.append(settings_sidebar)
-    else:
-        # Check if already in sidebar
-        for item in sidebar:
-            if item.name == 'settings_sidebar':
-                sidebar.remove(item)
+    sidebar.append(settings_sidebar)
+
+
+    ''' # Check if already in sidebar
+    for item in sidebar:
+        if item.name == 'settings_sidebar':
+            sidebar.remove(item)'''
 
 def handle_map_click(x, y, galaxy, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, mode='sed'):
 
@@ -205,7 +221,10 @@ def handle_file_upload(value, components):
     global which_flux_unit
     global multi_choice_bins
     global which_run
-
+    global red_select
+    global green_select
+    global blue_select
+    
     which_map = pn.widgets.RadioButtonGroup(options=['pixedfit', 'voronoi'], value='pixedfit', name='Pixel Binning')
 
     which_sed_fitter = pn.widgets.Select(name='SED Fitter', value='bagpipes', options=['bagpipes'])
@@ -215,6 +234,11 @@ def handle_file_upload(value, components):
     multi_choice_bins = pn.widgets.MultiChoice(name='Bins', options=[], delete_button=True, placeholder='Click on bin map to add bins')
 
     which_run = pn.widgets.Select(name='Run', value=None, options=[])
+
+    red_select = pn.widgets.MultiChoice(name='Red Channel', options = resolved_galaxy.bands, value = ['F444W'])
+    green_select = pn.widgets.MultiChoice(name='Green Channel', options = resolved_galaxy.bands, value = ['F277W'])
+    blue_select = pn.widgets.MultiChoice(name='Blue Channel', options = resolved_galaxy.bands, value = ['F150W'])
+
 
     file = BytesIO(value)
     resolved_galaxy = ResolvedGalaxy.init_from_h5(file)
