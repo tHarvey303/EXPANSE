@@ -374,8 +374,8 @@ class ResolvedGalaxy:
                         possible_sed_keys.append(f'sed_fitting_table/{tool}/{run}')
         
         rms_background = None
-        if hfile.get('rms_background') is not None:
-            rms_background = ast.literal_eval(hfile['rms_background'][()].decode('utf-8'))
+        if hfile.get('meta/rms_background') is not None:
+            rms_background = ast.literal_eval(hfile['meta/rms_background'][()].decode('utf-8'))
 
 
         #hfile.close()
@@ -403,10 +403,20 @@ class ResolvedGalaxy:
 
     def estimate_rms_from_background(self, cutout_size = 250, object_distance = 20, overwrite=True, plot=False):
         '''Estimate the RMS error from the background'''
+        import cv2
 
         if self.rms_background is None or overwrite:
             self.rms_background = {}
-            for band in self.bands:
+            if plot:
+                update_mpl(tex_on=False)
+                max_in_row = 4
+                fig, axs = plt.subplots(nrows = len(self.bands)//max_in_row + 1, ncols = max_in_row, figsize = (20, 20))
+                axs = axs.flatten()
+                # Delete extra axes
+                for i in range(len(self.bands), len(axs)):
+                    fig.delaxes(axs[i])
+
+            for pos, band in enumerate(self.bands):
                 image_path = self.im_paths[band]
                 hdu = fits.open(image_path)
                 ra, dec = self.sky_coord.ra.deg, self.sky_coord.dec.deg
@@ -421,21 +431,30 @@ class ResolvedGalaxy:
                 # Dilate the segmentation map to be more than 20 pixels from 
                 seg_data[seg_data != 0] = 1
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (object_distance, object_distance))
-        
+                seg_data = seg_data.astype(np.uint8)
                 seg_mask = cv2.dilate(seg_data, kernel, iterations = 1)
                 seg_mask = seg_mask.astype(bool)
                 # Get RMS of background
                 rms = np.sqrt(np.nanmean(data[~seg_mask]**2))
                 if plot:
                     # Plot histogram of background
-                    fig, ax = plt.subplots()
+                    # Don't use latex
+                    ax = axs[pos]
                     ax.hist(data[~seg_mask].flatten(), bins = 30, histtype = 'step', color = 'k')
                     ax.axvline(rms, color = 'r', linestyle = '--')
-                    ax.set_xlabel('Background')
-                    return fig
+                    #ax.set_xlabel('Background')
+                    ax.set_title(f'{band} bckg RMS = {rms:.4f} MJy/sr')
+                    
+                    err_data = hdu[self.rms_err_exts[band]].section[int(y_cent - cutout_size/2):int(y_cent + cutout_size/2), int(x_cent - cutout_size/2):int(x_cent + cutout_size/2)]
+                    ax.hist(err_data[~seg_mask].flatten(), bins = 30, histtype = 'step', color = 'b')
+
+
             # In MJy/sr - need to convert?
             self.rms_background[band] = rms
-
+            self.add_to_h5(self.rms_background, 'meta', 'rms_background')
+            
+        #if plot:
+        #    return fig
 
     def dump_to_h5(self, h5folder='galaxies/', mode='append'):
 
@@ -573,9 +592,10 @@ class ResolvedGalaxy:
             hfile['bin_flux_err'].create_dataset('pixedfit', data=self.binned_flux_err_map)
 
         if self.rms_background is not None:
-            if hfile.get('rms_background') is not None:
-                del hfile['rms_background']
-            hfile.create_dataset('rms_background', data=str(self.rms_background))
+            if hfile.get('meta/rms_background') is not None:
+                del hfile['meta/rms_background']
+            hfile.create_dataset('meta/rms_background', data=str(self.rms_background))
+
 
         hfile.close()
         # Write photometry table(s)
