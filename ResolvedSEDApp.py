@@ -94,16 +94,16 @@ def update_sidebar(active_tab, sidebar):
         
     sidebar.append(settings_sidebar)
 
-def handle_map_click(x, y, galaxy, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, mode='sed'):
+def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, mode='sed'):
 
     use = True
     if x == None or y == None:
         use = False
     if use:
-        if not (0 < x < galaxy.cutout_size and 0 < y < galaxy.cutout_size):
+        if not (0 < x < resolved_galaxy.cutout_size and 0 < y < resolved_galaxy.cutout_size):
             use = False
     
-    map = galaxy.pixedfit_map
+    map = resolved_galaxy.pixedfit_map
     if use:
         # Need logic here to know which map to use
         bin = map[int(np.ceil(y)), int(np.ceil(x))]
@@ -112,33 +112,44 @@ def handle_map_click(x, y, galaxy, cmap, which_map_param, which_sed_fitter_param
     
     multi_choice_bins_param_safe = [int(i) for i in multi_choice_bins_param]
     if mode == 'sed':
-        obj = plot_sed(galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param_safe, which_run_param)
+        obj = plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param_safe, which_run_param)
     if mode == 'sfh':
-        obj = plot_sfh(galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param_safe, which_run_param)
+        obj = plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param_safe, which_run_param)
     if mode == 'corner':
-        obj = plot_corner(galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param_safe, which_run_param)
+        obj = plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param_safe, which_run_param)
 
     return obj 
     #except Exception as e:
     #    pn.state.notifications.error(f'Error: {e}', duration=2000)
 
-def plot_rgb(galaxy, red, green, blue, scale, q, psf_mode):
+def plot_rgb(resolved_galaxy, red, green, blue, scale, q, psf_mode):
     if psf_mode == 'Original':
         use_psf_matched = False
     elif psf_mode == 'PSF Matched':
         use_psf_matched = True
-    rgb = galaxy.plot_lupton_rgb(red, green, blue, scale, q, use_psf_matched=use_psf_matched)
-    rgb_img = hv.RGB(rgb, bounds=(0, 0, galaxy.cutout_size, galaxy.cutout_size)).opts(xaxis=None, yaxis=None)
-    return pn.pane.HoloViews(rgb_img, sizing_mode='stretch_both', min_height=250, min_width=250, max_height=300, max_width=300)
+    rgb = resolved_galaxy.plot_lupton_rgb(red, green, blue, scale, q, use_psf_matched=use_psf_matched)
+    rgb_img = hv.RGB(rgb, bounds=(0, 0, resolved_galaxy.cutout_size, resolved_galaxy.cutout_size)).opts(xaxis=None, yaxis=None)
 
-def plot_sed(galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, x_unit = u.micron):
+    any_band = resolved_galaxy.bands[0]
+    # Add scale bar
+    scale_bar_label = hv.Text(17.5, 10, '1\'', fontsize=15).opts(color='white')
+    scale_bar_size = resolved_galaxy.im_pixel_scales[any_band].to(u.arcsec).value # 1 pixel in arcsec
+    scale_bar_10as = hv.Rectangles([(3, 3, 3+1/scale_bar_size, 4)]).opts(color='white', line_color='white')
+
     
-    table = resolved_galaxy.photometry_table['webbpsf'][which_map_param]
-    # filter table to ID
+    rgb_img = rgb_img * scale_bar_label
+    rgb_img = rgb_img * scale_bar_10as
+    # Add PSF sized circle
+    if use_psf_matched:
+        circle = hv.Ellipse(7, 15, 5).opts(color='white', line_color='white')
+        rgb_img = rgb_img * circle
+
+    return pn.pane.HoloViews(rgb_img, sizing_mode='stretch_both', min_height=250, min_width=250, max_height=300, max_width=300, aspect_equal=True)
+
+def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, x_unit = u.micron):
 
     fig, ax = plt.subplots(figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
-
-        #ax.text(0.5, 0.5, f"SED bin: {bin}", fontsize=20, ha='center', va='center', color=color)
+    
     if which_flux_unit_param == 'uJy':
         y_unit = u.uJy
     elif which_flux_unit_param == 'ABmag':
@@ -146,7 +157,11 @@ def plot_sed(galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_f
     elif which_flux_unit_param == 'ergscma':
         y_unit = u.erg/u.s/u.cm**2/u.AA
 
-    # Plot integrated SED
+    if len(resolved_galaxy.photometry_table) > 0:
+        #return pn.pane.Markdown('No photometry table found')
+        table = resolved_galaxy.photometry_table['webbpsf'][which_map_param]
+    else:
+        table = None
     bands = resolved_galaxy.bands
    
     aper_dict = resolved_galaxy.aperture_dict[str(0.32*u.arcsec)]
@@ -164,37 +179,39 @@ def plot_sed(galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_f
     # pad legend down and left
     list_of_markers = ['o', 's', 'v', '^', '<', '>', '1', '2', '3', '4', '8', 'p', 'P', '*', 'h', 'H', '+', 'x', 'X', 'D', 'd', '|', '_']
     colors = []
-    for bin_pos, bin in enumerate(multi_choice_bins_param):
-        cmap = cm.get_cmap(cmap)
-        color = cmap(bin/np.nanmax(map))
-        colors.append(color)
-        table_row = table[table['ID'] == bin]
-        # loop through markers
-        if bin_pos > len(list_of_markers) - 1:
-            bin_pos = bin_pos % len(list_of_markers)
+    if table is not None:
+        for bin_pos, bin in enumerate(multi_choice_bins_param):
+            cmap = cm.get_cmap(cmap)
+            color = cmap(bin/np.nanmax(map))
+            colors.append(color)
+            table_row = table[table['ID'] == bin]
+            # loop through markers
+            if bin_pos > len(list_of_markers) - 1:
+                bin_pos = bin_pos % len(list_of_markers)
 
-        marker = list_of_markers[bin_pos]
+            marker = list_of_markers[bin_pos]
 
-        for pos, (wav, band) in enumerate(zip(wave, resolved_galaxy.bands)):
-            flux = table_row[band]
-            flux_err = table_row[f"{band}_err"]
+            for pos, (wav, band) in enumerate(zip(wave, resolved_galaxy.bands)):
+                flux = table_row[band]
+                flux_err = table_row[f"{band}_err"]
+                
+                if len(flux) == 0:
+                    continue
+                if flux[0] > 0:
+                    if flux_err[0]/flux[0] < 0.1:
+                        flux_err = 0.1 * flux
+
             
-            if len(flux) == 0:
-                continue
-            if flux[0] > 0:
-                if flux_err[0]/flux[0] < 0.1:
-                    flux_err = 0.1 * flux
-
-           
-            if y_unit == u.ABmag:
-                # Assymmetric error bars
-                yerr = [[2.5*np.log10(flux.value/(flux[0].value - flux_err[0].value))], [2.5*np.log10(1 + flux_err[0].value/flux[0].value)]]
-            else:
-                 yerr = flux_err.to(y_unit, equivalencies = u.spectral_density(wav)).value
-            
-            ax.errorbar(wav.to(x_unit).value, flux.to(y_unit, equivalencies = u.spectral_density(wav)).value, yerr=yerr, fmt=marker, linestyle='none', color=color, label = int(bin) if pos == 0 else '')
-    
+                if y_unit == u.ABmag:
+                    # Assymmetric error bars
+                    yerr = [[2.5*np.log10(flux.value/(flux[0].value - flux_err[0].value))], [2.5*np.log10(1 + flux_err[0].value/flux[0].value)]]
+                else:
+                    yerr = flux_err.to(y_unit, equivalencies = u.spectral_density(wav)).value
+                
+                ax.errorbar(wav.to(x_unit).value, flux.to(y_unit, equivalencies = u.spectral_density(wav)).value, yerr=yerr, fmt=marker, linestyle='none', color=color, label = int(bin) if pos == 0 else '')
+        
     fig.legend(loc='upper right', bbox_to_anchor=(0.99, 0.99), frameon=False)    
+    
     if y_unit == u.ABmag:
         ax.invert_yaxis()
     ax.set_xlabel(rf"$\rm{{Wavelength}}$ ({x_unit:latex})", fontsize='large')
@@ -202,12 +219,15 @@ def plot_sed(galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_f
     ax.set_xlim(ax.get_xlim())
     ax.set_ylim(ax.get_ylim())
 
+
     if which_sed_fitter_param == 'bagpipes' and which_run_param != None:
-        if which_run_param not in cache_pipes:
-            cache_pipes[which_run_param] = {}
-        cache = cache_pipes.get(which_run_param)
-        fig, cache == resolved_galaxy.plot_bagpipes_fit(which_run_param, ax, fig, bins_to_show=multi_choice_bins_param, marker_colors=colors, wav_units=x_unit, flux_units=y_unit, cache=cache)
-        cache_pipes[which_run_param] = cache
+        # Check if bagpipes run exists
+        if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and which_run_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys():
+            if which_run_param not in cache_pipes:
+                cache_pipes[which_run_param] = {}
+            cache = cache_pipes.get(which_run_param)
+            fig, cache == resolved_galaxy.plot_bagpipes_fit(which_run_param, ax, fig, bins_to_show=multi_choice_bins_param, marker_colors=colors, wav_units=x_unit, flux_units=y_unit, cache=cache)
+            cache_pipes[which_run_param] = cache
 
  
     return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="scale_height")
@@ -215,6 +235,9 @@ def plot_sed(galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_f
 
 def plot_bins(bin_type, cmap):
     array = getattr(resolved_galaxy, f"{bin_type}_map")
+    if array is None:
+        # Empty plot
+        return None
     array[array == 0] = np.nan
     dimensions = np.linspace(0, resolved_galaxy.cutout_size, resolved_galaxy.cutout_size)
     im_array = xr.DataArray(array, dims=['y', 'x'], name=f'{bin_type} bins', coords={'x': dimensions, 'y': dimensions})
@@ -222,51 +245,57 @@ def plot_bins(bin_type, cmap):
     multi_choice_bins.options = list(np.unique(array))
     return hvplot
 
-def plot_sfh(galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, x_unit = 'Gyr', facecolor='#f7f7f7'):
+def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, x_unit = 'Gyr', facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
     colors = [cmap(bin/np.nanmax(map)) for bin in multi_choice_bins_param]
 
-    if which_sed_fitter_param == 'bagpipes':
-        if which_run_param not in cache_pipes:
-            cache_pipes[which_run_param] = {}
+    if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and which_run_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys():   
+        if which_sed_fitter_param == 'bagpipes':
+            if which_run_param not in cache_pipes:
+                cache_pipes[which_run_param] = {}
 
-        bins_to_show = [int(i) for i in multi_choice_bins_param]
-        cache = cache_pipes.get(which_run_param)
-        fig, cache = resolved_galaxy.plot_bagpipes_sfh(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, marker_colors=colors, time_unit=x_unit, run_dir=run_dir, plotpipes_dir=plotpipes_dir, cache=cache) 
-        cache_pipes[which_run_param] = cache
+            bins_to_show = [int(i) for i in multi_choice_bins_param]
+            cache = cache_pipes.get(which_run_param)
+            fig, cache = resolved_galaxy.plot_bagpipes_sfh(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, marker_colors=colors, time_unit=x_unit, run_dir=run_dir, plotpipes_dir=plotpipes_dir, cache=cache) 
+            cache_pipes[which_run_param] = cache
 
-        if len(fig.get_axes()) != 0:
-            ax = fig.get_axes()[0]
-            ax.set_xlim(0, 1)
-    
+            if len(fig.get_axes()) != 0:
+                ax = fig.get_axes()[0]
+                ax.set_xlim(0, 1)
+        
 
-    return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="stretch_width")
+            return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="stretch_width")
+    else:
+        return pn.pane.Markdown('No Bagpipes results found.')
 
-def plot_corner(galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, facecolor='#f7f7f7'):
+def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
     colors = [cmap(bin/np.nanmax(map)) for bin in multi_choice_bins_param]
 
-    if which_sed_fitter_param == 'bagpipes':
-        if which_run_param not in cache_pipes:
-            cache_pipes[which_run_param] = {}
+    if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and which_run_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys():   
 
-        bins_to_show = [int(i) for i in multi_choice_bins_param]
-        cache = cache_pipes.get(which_run_param)
-        fig, cache = resolved_galaxy.plot_bagpipes_corner(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, colors=colors, run_dir=run_dir, plotpipes_dir=plotpipes_dir, cache=cache) 
-        cache_pipes[which_run_param] = cache
-        #ax = fig.get_axes()[0]
-        #ax.set_xlim(0, 1)
-        if fig == None:
-            fig = plt.figure()
+        if which_sed_fitter_param == 'bagpipes':
+            if which_run_param not in cache_pipes:
+                cache_pipes[which_run_param] = {}
 
-        fig.set_facecolor(facecolor)
+            bins_to_show = [int(i) for i in multi_choice_bins_param]
+            cache = cache_pipes.get(which_run_param)
+            fig, cache = resolved_galaxy.plot_bagpipes_corner(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, colors=colors, run_dir=run_dir, plotpipes_dir=plotpipes_dir, cache=cache) 
+            cache_pipes[which_run_param] = cache
+            #ax = fig.get_axes()[0]
+            #ax.set_xlim(0, 1)
+            if fig == None:
+                fig = plt.figure()
 
-        return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="stretch_width")
+            fig.set_facecolor(facecolor)
 
-    
-    
+            return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="stretch_width")
+
+        
+    else:
+        return pn.pane.Markdown('No Bagpipes results found.')
 
     
 
@@ -306,7 +335,7 @@ def handle_file_upload(value, components):
     id = resolved_galaxy.galaxy_id
     survey = resolved_galaxy.survey
 
-    cutout_grid = GridStack(sizing_mode='stretch_both', allow_resize=True, allow_drag=True, max_height=500, nrows=4)
+    #cutout_grid = GridStack(sizing_mode='stretch_both', allow_resize=True, allow_drag=True, max_height=500, nrows=4)
 
     cutout_grid = pn.Column()
 
@@ -314,7 +343,7 @@ def handle_file_upload(value, components):
 
     #cutout_grid[0, :6] = 
     
-    row = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, height=200,  tight=True, format="svg", sizing_mode="stretch_width"))
+    row = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, max_width=950,  tight=True, format="svg"))
     cutout_grid.append(row)
 
     cmap = 'nipy_spectral_r'
@@ -357,7 +386,13 @@ def handle_file_upload(value, components):
     sed_results_grid[0, 2:] = sed_obj
     sed_results_grid[2, :3] = sfh_obj
     sed_results_grid[3:5, :3] = corner_obj
-    sed_results = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=['stellar_mass', 'sfr'], max_on_row=3), dpi=144, tight=True, format="svg"))
+
+    sed_results_plot = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=['stellar_mass', 'sfr'], max_on_row=3)
+    if sed_results_plot is not None:
+        sed_results = pn.Row(pn.pane.Matplotlib(sed_results_plot, dpi=144, tight=True, format="svg"))
+    else:
+        sed_results = pn.pane.Markdown('No Bagpipes results found.')
+
     sed_results_grid[2, 3:5] = sed_results
     
     galaxy_tabs = pn.Tabs(('Cutouts', cutout_grid), ('SED Results', sed_results_grid), dynamic=True)

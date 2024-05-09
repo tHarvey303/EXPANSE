@@ -74,8 +74,10 @@ class ResolvedGalaxy:
                 rms_err_paths, rms_err_exts, im_pixel_scales, phot_imgs, phot_pix_unit, 
                 phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, 
                 psf_matched_data = None, psf_matched_rms_err = None, pixedfit_map = None, voronoi_map = None, 
-                binned_flux_map = None, binned_flux_err_map = None, photometry_table = None, sed_fitting_table = None, cutout_size=64, 
-                h5_folder = 'galaxies/',
+                binned_flux_map = None, binned_flux_err_map = None, photometry_table = None, sed_fitting_table = None,
+                rms_background = None,
+                cutout_size=64, 
+                h5_folder = 'galaxies/', 
                 psf_kernel_folder = 'psfs/', 
                 psf_type = 'webbpsf', overwrite = False):
 
@@ -92,6 +94,7 @@ class ResolvedGalaxy:
         self.im_pixel_scales = im_pixel_scales
         self.cutout_size = cutout_size
         self.aperture_dict = aperture_dict
+        self.rms_background = rms_background
 
         # Actual cutouts
         self.phot_imgs = phot_imgs
@@ -140,6 +143,9 @@ class ResolvedGalaxy:
         if self.psf_matched_data in [None, {}] or self.psf_matched_rms_err in [None, {}]:  
             print('Convolving images with PSF')
             self.convolve_with_psf(psf_type = psf_type)
+
+        #if self.rms_background is None:
+        #    self.estimate_rms_from_background()
 
         self.dump_to_h5()
          # Save to .h5
@@ -366,6 +372,11 @@ class ResolvedGalaxy:
                     if not '__' in run:
                         sed_fitting_table[tool][run] = None
                         possible_sed_keys.append(f'sed_fitting_table/{tool}/{run}')
+        
+        rms_background = None
+        if hfile.get('rms_background') is not None:
+            rms_background = ast.literal_eval(hfile['rms_background'][()].decode('utf-8'))
+
 
         #hfile.close()
         # Read in photometry table(s)
@@ -387,9 +398,43 @@ class ResolvedGalaxy:
                     seg_paths, rms_err_paths, rms_err_exts, im_pixel_scales, 
                     phot_imgs, phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, 
                     aperture_dict, psf_matched_data, psf_matched_rms_err, pixedfit_map, voronoi_map,
-                    binned_flux_map, binned_flux_err_map, photometry_table, sed_fitting_table,
+                    binned_flux_map, binned_flux_err_map, photometry_table, sed_fitting_table, rms_background,
                     cutout_size, h5_folder)
 
+    def estimate_rms_from_background(self, cutout_size = 250, object_distance = 20, overwrite=True, plot=False):
+        '''Estimate the RMS error from the background'''
+
+        if self.rms_background is None or overwrite:
+            self.rms_background = {}
+            for band in self.bands:
+                image_path = self.im_paths[band]
+                hdu = fits.open(image_path)
+                ra, dec = self.sky_coord.ra.deg, self.sky_coord.dec.deg
+                wcs = WCS(hdu[self.im_exts[band]].header)
+                x_cent, y_cent = wcs.all_world2pix(ra, dec, 0)
+                data = hdu[self.im_exts[band]].section[int(y_cent - cutout_size/2):int(y_cent + cutout_size/2), int(x_cent - cutout_size/2):int(x_cent + cutout_size/2)]
+                # Open seg
+                seg_path = self.seg_paths[band]
+                seg_hdu = fits.open(seg_path)
+                seg_data = seg_hdu[0].data[int(y_cent - cutout_size/2):int(y_cent + cutout_size/2), int(x_cent - cutout_size/2):int(x_cent + cutout_size/2)]
+
+                # Dilate the segmentation map to be more than 20 pixels from 
+                seg_data[seg_data != 0] = 1
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (object_distance, object_distance))
+        
+                seg_mask = cv2.dilate(seg_data, kernel, iterations = 1)
+                seg_mask = seg_mask.astype(bool)
+                # Get RMS of background
+                rms = np.sqrt(np.nanmean(data[~seg_mask]**2))
+                if plot:
+                    # Plot histogram of background
+                    fig, ax = plt.subplots()
+                    ax.hist(data[~seg_mask].flatten(), bins = 30, histtype = 'step', color = 'k')
+                    ax.axvline(rms, color = 'r', linestyle = '--')
+                    ax.set_xlabel('Background')
+                    return fig
+            # In MJy/sr - need to convert?
+            self.rms_background[band] = rms
 
 
     def dump_to_h5(self, h5folder='galaxies/', mode='append'):
@@ -526,6 +571,11 @@ class ResolvedGalaxy:
             if hfile.get(f'bin_flux_err/pixedfit') is not None:
                 del hfile['bin_flux_err/pixedfit']
             hfile['bin_flux_err'].create_dataset('pixedfit', data=self.binned_flux_err_map)
+
+        if self.rms_background is not None:
+            if hfile.get('rms_background') is not None:
+                del hfile['rms_background']
+            hfile.create_dataset('rms_background', data=str(self.rms_background))
 
         hfile.close()
         # Write photometry table(s)
@@ -1376,6 +1426,10 @@ class ResolvedGalaxy:
 
 
     def plot_bagpipes_results(self, run_name=None, parameters=['bin_map', 'stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white', max_on_row=4):
+        
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys():
+            return None
+
         if run_name is None:
             run_name = list(self.sed_fitting_table['bagpipes'].keys())
             if len(run_name) > 1:
@@ -1388,6 +1442,9 @@ class ResolvedGalaxy:
             
         if not hasattr(self, 'pixedfit_map'):
             raise Exception("Need to run pixedfit_binning first")
+        # If it still isn't there, return None
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys() or run_name not in self.sed_fitting_table['bagpipes'].keys() or reload_from_cat:
+            return None
 
         table = self.sed_fitting_table['bagpipes'][run_name]
 
