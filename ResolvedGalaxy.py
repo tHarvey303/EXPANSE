@@ -75,7 +75,7 @@ class ResolvedGalaxy:
                 phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, 
                 psf_matched_data = None, psf_matched_rms_err = None, pixedfit_map = None, voronoi_map = None, 
                 binned_flux_map = None, binned_flux_err_map = None, photometry_table = None, sed_fitting_table = None,
-                rms_background = None,
+                rms_background = None, psfs = None, psfs_meta = None,
                 cutout_size=64, 
                 h5_folder = 'galaxies/', 
                 psf_kernel_folder = 'psfs/', 
@@ -95,7 +95,6 @@ class ResolvedGalaxy:
         self.cutout_size = cutout_size
         self.aperture_dict = aperture_dict
         self.rms_background = rms_background
-
         # Actual cutouts
         self.phot_imgs = phot_imgs
         self.phot_pix_unit = phot_pix_unit
@@ -120,6 +119,8 @@ class ResolvedGalaxy:
         self.pixedfit_map = pixedfit_map
         self.psf_matched_data = psf_matched_data
         self.psf_matched_rms_err = psf_matched_rms_err
+        self.psfs = psfs
+        self.psfs_meta = psfs_meta
 
         self.binned_flux_map = binned_flux_map
         self.binned_flux_err_map = binned_flux_err_map
@@ -128,19 +129,23 @@ class ResolvedGalaxy:
 
         self.sed_fitting_table = sed_fitting_table
 
+        self.psf_kernel_folder = psf_kernel_folder
         self.psf_kernels = {psf_type: {}}
         # Assume bands is in wavelength order, and that the largest PSF is in the last band
-        print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
         for band in self.bands[:-1]:
-            files = glob.glob(f'{psf_kernel_folder}/*{band}*{self.bands[-1]}.fits')
+            files = glob.glob(f'{psf_kernel_folder}/{self.survey}_{self.galaxy_id}/*{band}*{self.bands[-1]}.fits')
             if len(files) == 0:
-                raise Exception(f"No PSF kernel found between {band} and {bands[-1]}")
+                print(f"No PSF kernel found between {band} and {bands[-1]}")
+                self.get_webbpsf()
+                files = glob.glob(f'{psf_kernel_folder}/{self.survey}_{self.galaxy_id}/*{band}*{self.bands[-1]}.fits')
             elif len(files) > 1:
                 raise Exception(f"Multiple PSF kernels found between {band} and {bands[-1]}")
-            else:
-                self.psf_kernels[psf_type][band] = files[0]
+            
+            self.psf_kernels[psf_type][band] = files[0]
 
-        if self.psf_matched_data in [None, {}] or self.psf_matched_rms_err in [None, {}]:  
+        if self.psf_matched_data in [None, {}] or self.psf_matched_rms_err in [None, {}]: 
+            print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
+    
             print('Convolving images with PSF')
             self.convolve_with_psf(psf_type = psf_type)
 
@@ -170,7 +175,7 @@ class ResolvedGalaxy:
                             excl_bands = [], cutout_size=64, forced_phot_band = ["F277W", "F356W", "F444W"], 
                             aper_diams = [0.32] * u.arcsec, output_flux_unit = u.uJy, h5folder = 'galaxies/'):
         # Imports here so only used if needed
-        from galfind import Data
+        #from galfind import Data
         from galfind import Catalogue
         from galfind.Catalogue_Creator import GALFIND_Catalogue_Creator
 
@@ -377,6 +382,20 @@ class ResolvedGalaxy:
         if hfile.get('meta/rms_background') is not None:
             rms_background = ast.literal_eval(hfile['meta/rms_background'][()].decode('utf-8'))
 
+        # Get PSFs
+        psfs = {}
+        psfs_meta = {}
+        if hfile.get('psfs') is not None:
+            for psf_type in hfile['psfs'].keys():
+                psfs[psf_type] = {}
+                for band in bands:
+                    psfs[psf_type][band] = hfile['psfs'][psf_type][band][()]
+        
+        if hfile.get('psfs_meta') is not None:
+            for psf_type in hfile['psfs_meta'].keys():
+                psfs_meta[psf_type] = {}
+                for band in bands:
+                    psfs_meta[psf_type][band] = hfile['psfs_meta'][psf_type][band][()]
 
         #hfile.close()
         # Read in photometry table(s)
@@ -399,6 +418,7 @@ class ResolvedGalaxy:
                     phot_imgs, phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, 
                     aperture_dict, psf_matched_data, psf_matched_rms_err, pixedfit_map, voronoi_map,
                     binned_flux_map, binned_flux_err_map, photometry_table, sed_fitting_table, rms_background,
+                    psfs, psfs_meta,
                     cutout_size, h5_folder)
 
     def estimate_rms_from_background(self, cutout_size = 250, object_distance = 20, overwrite=True, plot=False):
@@ -447,11 +467,12 @@ class ResolvedGalaxy:
                     
                     err_data = hdu[self.rms_err_exts[band]].section[int(y_cent - cutout_size/2):int(y_cent + cutout_size/2), int(x_cent - cutout_size/2):int(x_cent + cutout_size/2)]
                     ax.hist(err_data[~seg_mask].flatten(), bins = 30, histtype = 'step', color = 'b')
-
+                
+                self.rms_background[band] = rms
 
             # In MJy/sr - need to convert?
-            self.rms_background[band] = rms
-            self.add_to_h5(self.rms_background, 'meta', 'rms_background')
+           
+            self.add_to_h5(str(self.rms_background), 'meta', 'rms_background', overwrite=True)
             
         #if plot:
         #    return fig
@@ -596,6 +617,28 @@ class ResolvedGalaxy:
                 del hfile['meta/rms_background']
             hfile.create_dataset('meta/rms_background', data=str(self.rms_background))
 
+        # Save PSFs
+        if self.psfs is not None and self.psfs != {}:
+            if hfile.get('psfs') is None:
+                hfile.create_group('psfs')
+            for psf_type in self.psfs.keys():
+                if hfile[f'psfs/{psf_type}'] is None:
+                    hfile['psfs'].create_group(psf_type)
+                for band in self.bands:
+                    if hfile[f'psfs/{psf_type}/{band}'] is not None:
+                        del hfile[f'psfs/{psf_type}/{band}']
+                    hfile['psfs'][psf_type].create_dataset(band, data=self.psfs[psf_type][band])
+
+        if self.psfs_meta is not None and self.psfs_meta != {}:
+            if hfile.get('psfs_meta') is None:
+                hfile.create_group('psfs_meta')
+            for psf_type in self.psfs.keys():
+                if hfile[f'psfs_meta/{psf_type}'] is None:
+                    hfile['psfs_meta'].create_group(psf_type)
+                for band in self.bands:
+                    if hfile[f'psfs_meta/{psf_type}/{band}'] is not None:
+                        del hfile[f'psfs_meta/{psf_type}/{band}']
+                    hfile['psfs_meta'][psf_type].create_dataset(band, data=str(self.psfs_meta[psf_type][band]), dtype=str_dt)
 
         hfile.close()
         # Write photometry table(s)
@@ -689,6 +732,7 @@ class ResolvedGalaxy:
                 h5file.close()
             else:
                 print('not running')
+ 
     def __str__(self):
         str = f"Resolved Galaxy {self.galaxy_id} from {self.survey} survey\n"
         str += f"SkyCoord: {self.sky_coord}\n"
@@ -725,6 +769,137 @@ class ResolvedGalaxy:
             plt.show()
         return fig
 
+    def get_webbpsf(self, plot=False, overwrite=False):
+        skip = False
+        if getattr(self, 'psfs', None) in [None, {}]:
+            skip = True
+        if 'webbpsf' in self.psfs.keys():
+            skip = True
+
+        if not skip or overwrite:
+            import webbpsf
+            self.psfs['webbpsf'] = {}
+            self.psfs_meta['webbpsf'] = {}
+            psfs = {}
+            psf_headers = {}
+            for band in self.bands:
+                # Get dimensions from header
+                header = fits.open(self.im_paths[band])[self.im_exts[band]].header
+                header_0 = fits.open(self.im_paths[band])[0].header
+                # Get dimensions
+                print(header['NAXIS'])
+                xdim = header['NAXIS1']
+                ydim = header['NAXIS2']
+               
+                
+                if 10000 < xdim < 10400 & 4200 < ydim < 4400:
+                    print('Dimensions consistent with a single NIRCam pointing')
+
+                x_pos, y_pos = WCS(header).all_world2pix(self.sky_coord.ra.deg, self.sky_coord.dec.deg, 0)
+                # Calculate which NIRCam detector the galaxy is on
+                if float(band[1:-1]) < 240:
+                    wav = 'SW'
+                else:
+                    wav = 'LW'
+
+                if wav == 'LW' and  x_pos < 10244/2:
+                    det = 'A5'
+                else:
+                    det = 'B5'
+                
+                if wav == 'SW':
+                    if x_pos < 10244/2:
+                        det = 'A'
+                        center_rot = (2190, 2190)
+                    else:
+                        det = 'B'
+                        center_rot = (8000, 2250)
+
+                    # Calculate rotation angle from vertical
+                    rot = np.arctan((y_pos - center_rot[1])/(x_pos - center_rot[0]))
+                    rot = rot * 180/np.pi
+                    if 0 < rot < 90:
+                        det += '1'
+                    elif 90 < rot < 180:
+                        det += '3'
+                    elif -90 < rot < 0:
+                        det += '2'
+                    elif -180 < rot < -90:
+                        det += '4'
+                    
+                    print(f'Galaxy at {self.sky_coord.ra.deg} ({x_pos}), {self.sky_coord.dec.deg} ({y_pos}) is on NIRCam {wav} detector {det}')
+                # dog
+                # If consistent with a single NIRCam pointing
+                nircam = webbpsf.NIRCam()
+                date = header_0['DATE-OBS']
+                nircam.load_wss_opd_by_date(date,plot=False)
+                #nircam = webbpsf.setup_sim_to_match_file(self.im_paths[band])
+                nircam.options['detector'] = f'NRC{det}'
+                # Can set nircam.options['source_offset_theta'] = position_angle if not oriented vertical
+                '''
+                if band.endswith('M'):
+                    if wav == 'SW':
+                        nircam.filter = 'F150W2'
+                        nircam.pupil = band
+                    else:
+                        nircam.filter = 'F277W2'
+                        nircam.pupil = band
+                else:
+                    nircam.pupil = None
+                '''
+                nircam.filter = band
+                nircam.options['output_mode'] = 'detector sampled'
+                print('Calculating PSF')
+                size = self.cutout_size*self.im_pixel_scales[band].to(u.arcsec).value
+                print(f'Size: {size} arcsec')
+
+                nircam.pixel_scale = self.im_pixel_scales[band].to(u.arcsec).value
+                print(self.im_pixel_scales[band].to(u.arcsec).value)
+                psf = nircam.calc_psf(fov_arcsec=size, normalize='exit_pupil')
+                # Drop the first element from the HDU
+                
+                psfs[band] = psf[1].data
+                psf_headers[band] = str(psf[1].header)
+                if plot:
+                    webbpsf.display_psf(psf)
+                    #plt.show()
+                psf = fits.PrimaryHDU(psf[1].data, header=psf[1].header)
+                
+                dir = f'{self.psf_kernel_folder}/{self.survey}_{self.galaxy_id}/'
+                os.makedirs(dir, exist_ok=True)
+                psf.writeto(f'{dir}/webbpsf_{band}.fits', overwrite=True)
+
+                self.add_to_h5(psf.data, 'psfs/webbpsf/', band, overwrite=True)
+                self.add_to_h5(str(psf.header), 'psfs_meta/webbpsf/', band, overwrite=True)
+            
+                self.psfs['webbpsf'][band] = psf.data
+                self.psfs_meta['webbpsf'][band] = str(psf.header)
+     
+
+        else:
+            print('Webbpsf PSFs already calculated')
+            print('Saving to run pypher')
+            for band in self.bands:
+                dir = f'{self.psf_kernel_folder}/{self.survey}_{self.galaxy_id}/'
+                hdu = fits.ImageHDU(self.psfs['webbpsf'][band], header=fits.Header.fromstring(self.psfs_meta['webbpsf'][band], sep='\n'))
+                hdu.writeto(f'{dir}/webbpsf_{band}.fits', overwrite=True)
+
+    
+        match_band = self.bands[-1]
+        command = ['addpixscl', f'{dir}/webbpsf_{match_band}.fits', f'{self.im_pixel_scales[match_band].to(u.arcsec).value}']
+        os.system(' '.join(command))
+        print('Computing kernels for PSF matching to ', match_band)
+        for band in self.bands[:-1]:
+            # Need ! pip install pypher first if not installed
+            dir = f'{self.psf_kernel_folder}/{self.survey}_{self.galaxy_id}/'
+            command = ['addpixscl', f'{dir}/webbpsf_{band}.fits', f'{self.im_pixel_scales[band].to(u.arcsec).value}']
+            os.system(' '.join(command))
+
+            command = ['pypher', f'"{dir}/webbpsf_{band}.fits"', f"'{dir}/webbpsf_{match_band}.fits'", f'"{dir}/kernel_{band}to{match_band}.fits"', '-e', '3e-3']
+            os.system(' '.join(command))
+            self.psf_kernels['webbpsf'][band] = f'{dir}/kernel_{band}to{match_band}.fits'
+
+      
     def plot_lupton_rgb(self, red = [], blue = [], green = [], q = 1, stretch = 1, use_psf_matched=False, psf_type = 'webbpsf', return_array = True, save = False, save_path = None, show = False):
         '''Plot the galaxy in Lupton RGB'''
         if use_psf_matched:
@@ -937,8 +1112,6 @@ class ResolvedGalaxy:
         meta_dict = {'ref_band':ref_band, 'SNR_reqs':SNR_reqs}
         self.add_to_h5(bin_number, 'bin_maps', 'voronoi', setattr_gal='voronoi_map', meta=meta_dict)
 
-        
-
     def pixedfit_binning(self, SNR_reqs=10, ref_band='F277W', Dmin_bin=5, redc_chi2_limit=5.0, del_r=2.0):
         '''
         : SNR_reqs: list of SNR requirements for each band
@@ -962,7 +1135,6 @@ class ResolvedGalaxy:
         self.add_to_h5(name_out_fits, 'bin_maps', 'pixedfit', ext='BIN_MAP', setattr_gal='pixedfit_map')
         self.add_to_h5(name_out_fits, 'bin_fluxes', 'pixedfit', ext='BIN_FLUX', setattr_gal='binned_flux_map')
         self.add_to_h5(name_out_fits, 'bin_flux_err', 'pixedfit', ext='BIN_FLUXERR', setattr_gal='binned_flux_err_map')
-
 
     def plot_image_stamps(self):
         nrows = len(self.bands)//6 + 1
@@ -996,7 +1168,6 @@ class ResolvedGalaxy:
 
     def add_to_h5(self, data, group, name, ext=0, setattr_gal=None, overwrite=False, meta=None):
         
-
         if type(data) == str:
             if data.endswith('.fits'):
                 data = fits.open(data)[ext].data
@@ -1008,6 +1179,7 @@ class ResolvedGalaxy:
             if overwrite:
                 del hfile[group][name]
             else:
+                print(f'{name} already exists in {group} group and overwrite is set to False')
                 return
 
         hfile[group].create_dataset(name, data=data)
@@ -1018,7 +1190,6 @@ class ResolvedGalaxy:
         hfile.close()
         if setattr_gal is not None:
             setattr(self, setattr_gal, data)
-
 
     def plot_err_stamps(self):
         fig, axes = plt.subplots(1, len(self.bands), figsize=(4*len(self.bands), 4))
@@ -1297,7 +1468,6 @@ class ResolvedGalaxy:
         }
         return param_dict[param]
 
-
     def plot_bagpipes_corner(self, run_name=None, bins_to_show = 'all', save=False, corner_bins=25, facecolor='white', colors='black', cache=None,
                             plotpipes_dir='/Users/user/Documents/PhD/bagpipes_dir/',run_dir = f'pipes/'):
         
@@ -1384,9 +1554,6 @@ class ResolvedGalaxy:
         #cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
         return fig, cache
 
-        
-
-
     def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'all', save=False, 
                         facecolor='white', marker_colors='black', time_unit='Gyr',
                         plotpipes_dir='/Users/user/Documents/PhD/bagpipes_dir/', 
@@ -1443,7 +1610,6 @@ class ResolvedGalaxy:
             fig = plt.figure(facecolor=facecolor)
 
         return fig, cache
-
 
     def plot_bagpipes_results(self, run_name=None, parameters=['bin_map', 'stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white', max_on_row=4):
         
@@ -1600,9 +1766,6 @@ class ResolvedGalaxy:
         # Set y-axis label
         ax_sed.set_ylabel('AB Mag')
     
-
-            
-
 if __name__ == "__main__":
     # Test the Galaxy class
     #galaxy = ResolvedGalaxy.init_from_galfind(645, 'NGDEEP2', 'v11', excl_bands = ['F435W', 'F775W', 'F850LP'])
