@@ -1331,6 +1331,61 @@ class ResolvedGalaxy:
         final = np.vstack((np.array(flux), np.array(err))).T
 
         return final
+
+    def run_dense_basis(self, db_atlas_name, db_dir='/nvme/scratch/work/tharvey/dense_basis/pregrids/', overwrite=False, use_emcee=False, emcee_samples=10000, plot = False):
+        
+
+        import dense_basis as db
+        import glob
+
+
+        if not hasattr(self, 'photometry_table'):
+            raise Exception("Need to run measure_flux_in_bins first")
+        if hasattr(self, 'use_psf_type'):
+            psf_type = self.use_psf_type
+        else:
+            psf_type = 'webbpsf'
+
+        if hasattr(self, 'use_binmap_type'):
+            binmap_type = self.use_binmap_type
+        else:
+            binmap_type = 'pixedfit'
+
+        if hasattr(self, 'sed_fitting_table'):
+            if 'dense_basis' in self.sed_fitting_table.keys():
+                if db_atlas_name in self.sed_fitting_table['dense_basis'].keys():
+                    if not overwrite:
+                        print(f'Run {db_atlas_name} already exists')
+                        return
+
+        flux_table = self.photometry_table[psf_type][binmap_type]
+
+
+        path = glob.glob(f'{db_dir}/{db_atlas_name}*.dbatlas')[0]
+        N_param = int(atlas_path.split('N_param_')[1].split('.dbatlas')[0])
+        N_pregrid = int(atlas_path.split('N_pregrid_')[1].split('_N_param')[0])
+        atlas = db.load_atlas(atlas_path, N_pregrid = N_pregrid, N_param = N_param, path = db_dir)
+
+        # Need to generate obs_sed, obs_err, and fit_mask based on the input filter files
+       
+        if use_emcee:
+            import emcee
+            sampler = db.run_emceesampler(obs_sed, obs_err, atlas, epochs=emcee_samples, plot_posteriors=plot)
+
+
+        else:
+             # pass the atlas and the observed SED + uncertainties into the fitter,
+            sedfit = db.SedFit(obs_sed, obs_err, atlas, fit_mask=[])
+
+            # evaluate_likelihood returns the likelihood for each SED in the atlas and the norm value to
+            # best match the observed SED with the atlas.
+            sedfit.evaluate_likelihood()
+
+            # evaluate_posterior_percentiles calculates the 16,50,84th percentiles for
+            # the physical parameters - stellar mass, SFR, tx, dust, metallicity and redshift
+            sedfit.evaluate_posterior_percentiles()
+
+
     
     def run_bagpipes(self, bagpipes_config, filt_dir = '/nvme/scratch/work/tharvey/bagpipes/inputs/filters',
     run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/', overwrite=False):
