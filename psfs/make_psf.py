@@ -60,7 +60,7 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
     img_pixel_scale (float): The pixel scale of the images in arcseconds per pixel.
     psf_fov (float): The field of view (FOV) of the PSF in arcseconds.
     filters (list): A list of filters for which the PSF needs to be generated.
-    phot_zp (float): The photometric zero point for the images.
+    phot_zp (float or dict of bands): The photometric zero point for the images.
     match_band (str): The reference band for matching the PSFs.
     skyext (str): The extension of the sky background in the FITS file.
     outdir (str): The directory where the PSF files will be saved.
@@ -88,20 +88,29 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
     
     image_path = img_paths[target_filter]
 
-    hdr = fits.getheader(image_path)
+    if type(image_path) != list:
+        image_path = [image_path]
+    
+    #for i, path in enumerate(image_path):
+        
+
+    hdr = fits.getheader(image_path[0])
     
     use_filters = [match_band] + [f for f in filters if f != match_band]
     if type(phot_zp) == float:
         phot_zp = {f:phot_zp for f in filters}
+        
 
     for pfilt in use_filters:
     
         print(f'Finding stars for {pfilt}...')
-        filename = img_paths[pfilt]
-        suffix = '.fits' + filename.split('.fits')[-1]
+        filenames = img_paths[pfilt]
+        if type(filenames) != list:
+            filenames = [filenames]
+        suffix = '.fits' + filenames[0].split('.fits')[-1]
         # Get path before the filename
-        path = os.path.dirname(filename)
-        starname = filename.replace(suffix, '_star_cat.fits').replace(path, outdir)
+        path = os.path.dirname(filenames[0])
+        starname = filenames[0].replace(suffix, '_star_cat.fits').replace(path, outdir)
         outname = os.path.join(outdir, f'{pfilt}.fits')
 
         if len(glob.glob(outdir+'*'+pfilt+'*'+'psf.fits')) > 0:
@@ -110,26 +119,37 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
                 target_psf = fits.getdata(glob.glob(outdir+'*'+target_filter+'*'+'psf.fits')[0])
             continue
 
-        print(filename)
+        #print(filename)
         print(starname)
+        # Run in loop
 
-        peaks, stars = find_stars(filename, outdir=outdir, plotdir=plotdir, label=pfilt, zp=phot_zp[pfilt])
-
-        print(f'Found {len(peaks)} bright sources')
 
         snr_lim = 1000
         sigma = 2.8 #if pfilt in ['f090w'] else 4.0
         showme=True
 
-        ok = (peaks['mag'] > maglim[0]) & ( peaks['mag'] < maglim[1] )
-        ra, dec, ids = peaks['ra'][ok], peaks['dec'][ok], peaks['id'][ok]
+        peaks_all, stars_all = [], []
+        ra_all, dec_all, ids_all = [], [], []
+        for i, filename in enumerate(filenames):
+            peaks, stars = find_stars(filename, outdir=outdir, plotdir=plotdir, label=pfilt, zp=phot_zp[pfilt])
+            peaks_all.append(peaks)
+            stars_all.append(stars)
+            print(f'Found {len(peaks)} bright sources in {filename}')
+            
 
-        print(f'Found {len(ra)} sources with {maglim[0]} < mag < {maglim[1]} in {pfilt}...')
+            ok = (peaks['mag'] > maglim[0]) & ( peaks['mag'] < maglim[1] )
+            ra, dec, ids = peaks['ra'][ok], peaks['dec'][ok], peaks['id'][ok]
+            ra_all.append(ra)
+            dec_all.append(dec)
+            ids_all.append(ids)
+
+
+        print(f'Found {np.sum([len(i) for i in peaks_all])} sources with {maglim[0]} < mag < {maglim[1]} in {pfilt}...')
         print(f'Processing PSF...')
         # Define the PSF object
         pixsize = int(psf_fov/img_pixel_scale)
         print(f'PSF model dimensions: {pixsize} pix = {pixsize*img_pixel_scale} arcsec ({psf_fov} arcsec requested)')
-        psf = PSF(image=filename, x=ra, y=dec, ids=ids, pixsize=pixsize, pixelscale=img_pixel_scale)#101)
+        psf = PSF(images=filenames, all_x=ra_all, all_y=dec_all, all_ids=ids_all, pixsize=pixsize, pixelscale=img_pixel_scale)#101)
         # Center PSF model and measure
         psf.center()
         psf.measure()
@@ -424,46 +444,51 @@ class SquareRootScale(mscale.ScaleBase):
 mscale.register_scale(SquareRootScale)
 
 
-def find_stars(filename=None, block_size=5, npeaks=1000, size=20, radii=np.array([0.5,1.,2.,4.,7.5]), range=[0,4], mag_lim = 24.0,
+def find_stars(filenames=None, block_size=5, npeaks=1000, size=20, radii=np.array([0.5,1.,2.,4.,7.5]), range=[0,4], mag_lim = 24.0,
                threshold_min = -0.5, threshold_mode=[-0.2,0.2], shift_lim=2, zp=28.08, instars=None, showme=True, label='',
                outdir='./', plotdir='./'):
 
-    img, hdr = fits.getdata(filename, header=True)
-    wcs = WCS(hdr)
+    if type(filenames) != list:
+        filenames = [filenames]
 
-    imgb = block_reduce(img, block_size, func=np.sum)
-    sig = mad_std(imgb[imgb>0], ignore_nan=True)/block_size
-
-    peaks = find_peaks(img, threshold=10*sig, npeaks=npeaks)
-    # print(peaks)
-    peaks.rename_column('x_peak','x')
-    peaks.rename_column('y_peak','y')
-    ra,dec = wcs.all_pix2world(peaks['x'], peaks['y'], 0)
-    peaks['ra'] = ra
-    peaks['dec'] = dec
-    peaks['x0'] = 0.0
-    peaks['y0'] = 0.0
-    peaks['minv'] = 0.0
-    for ir in np.arange(len(radii)): peaks['r'+str(ir)] = 0.
-    for ir in np.arange(len(radii)): peaks['p'+str(ir)] = 0.
-
-    t0 = time.time()
     stars = []
-    for ip,p in enumerate(peaks):
-        co = Cutout2D(img, (p['x'], p['y']), size, mode='partial')
-        # measure offset, feed it to measure cog
-        # if offset > 3 pixels -> skip
-        position = centroid_com(co.data)
-        peaks['x0'][ip] = position[0] - size//2
-        peaks['y0'][ip] = position[1] - size//2
-        peaks['minv'][ip] = np.nanmin(co.data)
-        _ , cog, profile = measure_curve_of_growth(co.data, radii=np.array(radii), position=position, rnorm=None, rbg=None)
-        for ir in np.arange(len(radii)): peaks['r'+str(ir)][ip] = cog[ir]
-        for ir in np.arange(len(radii)): peaks['p'+str(ir)][ip] = profile[ir]
-        co.radii = np.array(radii)
-        co.cog = cog
-        co.profile = profile
-        stars.append(co)
+    for filename in filenames:
+        img, hdr = fits.getdata(filename, header=True)
+        wcs = WCS(hdr)
+
+        imgb = block_reduce(img, block_size, func=np.sum)
+        sig = mad_std(imgb[imgb>0], ignore_nan=True)/block_size
+
+        peaks = find_peaks(img, threshold=10*sig, npeaks=npeaks)
+        # print(peaks)
+        peaks.rename_column('x_peak','x')
+        peaks.rename_column('y_peak','y')
+        ra,dec = wcs.all_pix2world(peaks['x'], peaks['y'], 0)
+        peaks['ra'] = ra
+        peaks['dec'] = dec
+        peaks['x0'] = 0.0
+        peaks['y0'] = 0.0
+        peaks['minv'] = 0.0
+        for ir in np.arange(len(radii)): peaks['r'+str(ir)] = 0.
+        for ir in np.arange(len(radii)): peaks['p'+str(ir)] = 0.
+
+        t0 = time.time()
+        
+        for ip,p in enumerate(peaks):
+            co = Cutout2D(img, (p['x'], p['y']), size, mode='partial')
+            # measure offset, feed it to measure cog
+            # if offset > 3 pixels -> skip
+            position = centroid_com(co.data)
+            peaks['x0'][ip] = position[0] - size//2
+            peaks['y0'][ip] = position[1] - size//2
+            peaks['minv'][ip] = np.nanmin(co.data)
+            _ , cog, profile = measure_curve_of_growth(co.data, radii=np.array(radii), position=position, rnorm=None, rbg=None)
+            for ir in np.arange(len(radii)): peaks['r'+str(ir)][ip] = cog[ir]
+            for ir in np.arange(len(radii)): peaks['p'+str(ir)][ip] = profile[ir]
+            co.radii = np.array(radii)
+            co.cog = cog
+            co.profile = profile
+            stars.append(co)
 
     stars = np.array(stars)
 
@@ -567,26 +592,50 @@ def find_stars(filename=None, block_size=5, npeaks=1000, size=20, radii=np.array
     return peaks[ok], stars[ok]
 
 class PSF():
-    def __init__(self, image=None, x=None, y=None, ids=None, pixsize=101, pixelscale=0.03):
-        if type(image) == np.ndarray:
-            img = image
-            xx=x
-            yy=y
-            self.filename = None
+    def __init__(self, images=None, all_x=None, all_y=None, all_ids=None, pixsize=101, pixelscale=0.03):
+        
+        if type(images) != list:
+            images = [images]
+        
+        assert len(images) == len(all_x) == len(all_y) == len(all_ids)
+
+        cats, datas = [], []
+        for i, image in enumerate(images):
+            x = all_x[i]
+            y = all_y[i]
+            ids = all_ids[i]
+            
+            if type(image) == np.ndarray:
+                img = image
+                xx=x[i]
+                yy=y[i]
+                
+                self.filename = None
+            else:
+                img, hdr = fits.getdata(image, header=True)
+                wcs = WCS(hdr)
+                xx,yy = wcs.all_world2pix(x, y, 0)
+                self.filename  = images
+
+            if type(ids) == type(None):
+                ids = np.arange(1,len(x)+1)
+
+            self.nx = pixsize
+            self.c0 = self.nx//2
+            #print([ids,xx,yy,x,y, i*np.ones(len(ids))])
+            
+            cat = Table([ids,xx,yy,x,y, i*np.ones(len(xx))],names=['id','x','y','ra','dec', 'img_pos'])
+            cats.append(cat)
+
+            data = np.array([Cutout2D(img, (xx[i],yy[i]), (pixsize, pixsize),mode='partial').data for i in np.arange(len(x))])
+            datas.append(data)
+
+        if len(cats) > 1:
+            self.cat = vstack(cats)
         else:
-            img, hdr = fits.getdata(image, header=True)
-            wcs = WCS(hdr)
-            xx,yy = wcs.all_world2pix(x, y, 0)
-            self.filename  = image
-
-        if type(ids) == type(None):
-            ids = np.arange(1,len(x)+1)
-
-        self.nx = pixsize
-        self.c0 = self.nx//2
-        self.cat = Table([ids,xx,yy,x,y],names=['id','x','y','ra','dec'])
-
-        data = np.array([Cutout2D(img, (xx[i],yy[i]), (pixsize, pixsize),mode='partial').data for i in np.arange(len(x))])
+            self.cat = cats[0]
+        
+        self.data = np.ndarray.flatten(np.array(datas))
         self.data = np.ma.array(data,mask = ~np.isfinite(data) | (data == 0) )
         self.data_orig = self.data.copy()
         self.ok = np.ones(len(self.cat))
@@ -1186,7 +1235,10 @@ def psf_comparison(bands, psf_dir_dict, max_cols=5, cmap = 'cmr.torch', match_ba
             filename = glob.glob(f'{psf_dir}/*{band}*.fits')
             if len(filename) > 1:
                 try:
-                    filename = [f for f in filename if 'norm' in f][0]
+                    filename = [f for f in filename if 'orig' not in f]
+                    if len(filename) > 1:
+                        filename = [f for f in filename if 'norm' in f]
+                    filename = filename[0]
                 except:
                     filename = filename[0]
             elif len(filename) == 0:
@@ -1348,7 +1400,8 @@ def get_webbpsf(filt, field='uncover', angle=None, fov=4, og_fov=10, pixscl=None
         angle = angles[field]
     nc = webbpsf.NIRCam()
     nc.options['parity'] = 'odd'
-
+    if not os.path.exists(output):
+        os.makedirs(output)
     outname = os.path.join(output, 'psf_'+field+'_'+filt+'_'+str(fov)+'arcsec_'+str(angle)) # what to save as?
 
     if jitter_sigma is not None:
@@ -1408,46 +1461,65 @@ def psf_correction_factor(match_band, psf_dir, apersize=0.32, pixel_scale = 0.03
     return corr
 
 if __name__ == '__main__':
-    survey = 'JADES-Deep-GS'
-    version = 'v9'
+    surveys = ['JOF'] #['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
+    version = 'v11'
     instruments = ['ACS_WFC', 'NIRCam']
     match_band = 'F444W'
-    outdir = '/nvme/scratch/work/tharvey/PSFs/JADES-Deep-GS/'
-    outdir_webbpsf = '/nvme/scratch/work/tharvey/PSFs/webbpsf/'
-    kernel_dir = '/nvme/scratch/work/tharvey/PSFs/kernels/JADES-Deep-GS/'
+    outdir = f'/nvme/scratch/work/tharvey/PSFs/{"+".join(surveys)}/'
+    outdir_webbpsf = '/nvme/scratch/work/tharvey/PSFs/webbpsf/morishita_jitter/'
+    kernel_dir = f'/nvme/scratch/work/tharvey/PSFs/kernels/{"+".join(surveys)}/'
+    maglim = (18.0, 25.0) # Mag limit for stars to stack
     #data = Data.from_pipeline(survey, version = version, instruments = instruments)
     
     #im_paths = data.im_paths
     #bands = data.instrument.band_names
-    bands = ['F606W', 'F090W', 'F115W', 'F150W', 'F200W', 'F277W', 'F335M', 'F356W', 'F410M', 'F444W']
-    folder = '/raid/scratch/data/jwst/JADES-Deep-GS/mosaic_1084_wisptemp2/'
-    outdir_matched_images = f'{folder}psf_matched/'
-
-    im_paths = {band:f'{folder}jw01180-o007_t007_nircam_clear-{band.lower()}_i2dnobg.fits' for band in bands}
+    bands = ['F090W', 'F115W', 'F150W', 'F162M', 'F182M', 'F200W', 'F210M', 'F250M', 'F277W', 'F300M', 'F335M', 'F356W', 'F410M', 'F444W']
+    folders = [f'/raid/scratch/data/jwst/{survey}/mosaic_1084_wispnathan/' for survey in surveys]
+    outdir_matched_images = [f'{folder}psf_matched/' for folder in folders]
+    print(folders)
+    im_paths = {band:[glob.glob(f'{folder}/*{band.lower()}*.fits')[0] for folder in folders] for band in bands}
     wht_paths = copy(im_paths) # Placeholder
     err_paths = copy(im_paths) # Placeholder
+    phot_zp = {band:28.08 for band in bands}
 
-    im_paths['F606W'] = '/raid/scratch/data/hst/JADES-Deep-GS/ACS_WFC/30mas/ACS_WFC_f606W_JADES-Deep-GS_drz.fits'
-    wht_paths['F606W'] = '/raid/scratch/data/hst/JADES-Deep-GS/ACS_WFC/30mas/ACS_WFC_f606W_JADES-Deep-GS_wht.fits'
+    '''
+    # Add HST seperately
+    bands.insert(0, 'F606W')
+    im_paths['F606W'] = '/raid/scratch/data/hst/NEP-1/ACS_WFC/30mas/aligned_full/ACS_WFC_f606W_NEP-1_drz.fits'
+    wht_paths['F606W'] = '/raid/scratch/data/hst/NEP-1/ACS_WFC/30mas/aligned_full/ACS_WFC_f606W_NEP-1_wht.fits'
     err_paths['F606W'] = ''
     
+    for band in ['F850LP', 'F814W', 'F775W', 'F606W', 'F435W']:
+        bands.insert(0, band)
+        im_paths[band] = f'/raid/scratch/data/hst/{field}/ACS_WFC/30mas/aligned_full/ACS_WFC_{band.lower()}_NEP-1_drz.fits'
+
+    hdr = fits.getheader(im_paths['F606W'])
+    phot_zp['F606W'] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+
+    '''
     #kernel_dir_dict = {'aperpy': kernel_dir, 'WebbPSF':'/nvme/scratch/work/tharvey/resolved_sedfitting/psfs/'}
-    psf_dir_dict = {'JADES-Deep-GS':outdir, 'WebbPSF':'/nvme/scratch/work/tharvey/resolved_sedfitting/psfs/webbpsf/',
-    'UNCOVER DR3':'/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/'}
+    psf_dir_dict = {'+'.join(surveys):outdir,
+    'UNCOVER DR3':'/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', 'WebbPSF Default':'/nvme/scratch/work/tharvey/PSFs/webbpsf/default_jitter/', 'WebbPSF\n$\sigma$=22(SW)/34(LW) mas':'/nvme/scratch/work/tharvey/PSFs/webbpsf/morishita_jitter/'}
     # Rederived 'NEW Webbpsf models have no difference to ours! 
     #'New webbpsf':'/nvme/scratch/work/tharvey/PSFs/webbpsf/'}
-    pixelscale = {'JADES-Deep-GS':0.03, 'WebbPSF':0.03, 'UNCOVER DR3':0.04}# 'New webbpsf':0.03}
+    pixelscale = {'+'.join(surveys):0.03, 'WebbPSF Default':0.03, 'UNCOVER DR3':0.04, 'WebbPSF\n$\sigma$=22(SW)/34(LW) mas':0.03}# 'New webbpsf':0.03}
 
     # Make PSF model and kernels from stacking stars 
    
-    #make_psf(bands, im_paths, outdir, kernel_dir, match_band = match_band)
+    #make_psf(bands, im_paths, outdir, kernel_dir, match_band = match_band, phot_zp = phot_zp, maglim=maglim)
 
     # Generate WebbPSF model for bands - only for comparison!
-    #for band in bands:
-    #    get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=outdir_webbpsf, jitter_kernel='gaussian', jitter_sigma=None)
+    for band in bands:
+        if int(band[1:-1]) > 240:
+            jitter_sigma = 0.034
+        else:
+            jitter_sigma = 0.022
+        print(band, jitter_sigma)
+        
+        #get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=outdir_webbpsf, jitter_kernel='gaussian', jitter_sigma=jitter_sigma)
 
     # Compare EE for different models
-    psf_comparison(bands, psf_dir_dict, match_band=match_band, pixelscale=pixelscale)
+    #psf_comparison(bands, psf_dir_dict, match_band=match_band, pixelscale=pixelscale)
 
     # Convolve images with bands
     #convolve_images(bands, im_paths, wht_paths, err_paths, outdir_matched_images, kernel_dir, match_band, overwrite=True)

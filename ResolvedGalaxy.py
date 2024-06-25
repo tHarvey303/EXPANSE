@@ -1384,8 +1384,6 @@ class ResolvedGalaxy:
             # evaluate_posterior_percentiles calculates the 16,50,84th percentiles for
             # the physical parameters - stellar mass, SFR, tx, dust, metallicity and redshift
             sedfit.evaluate_posterior_percentiles()
-
-
     
     def run_bagpipes(self, bagpipes_config, filt_dir = '/nvme/scratch/work/tharvey/bagpipes/inputs/filters',
     run_dir = f'/nvme/scratch/work/tharvey/resolved_sedfitting/pipes/', overwrite=False):
