@@ -14,6 +14,7 @@ from io import BytesIO
 import sys
 import matplotlib as mpl
 from astropy import units as u
+import functools
 sys.path.append('/usr/local/texlive/')
 
 mpl.use('macOsX')
@@ -41,6 +42,41 @@ MAX_SIZE_MB = 150
 
 stream = hv.streams.Tap(transient=True)
 
+def make_hashable(args):
+    """Converts unhashable types to hashable types."""
+    hashable_args = []
+    for arg in args:
+        #print(type(arg))
+        if isinstance(arg, list):
+            hashable_args.append(tuple(arg))
+        elif isinstance(arg, str) or arg is None:
+            hashable_args.append(arg)
+        else:
+            hashable_args.append('Placeholder')
+
+    #print([type(i) for i in hashable_args])
+    #sys.exit()
+    hashable_args = tuple(hashable_args)
+
+    return hashable_args
+
+def cached_function(func):
+    cache = {}
+
+    def wrapper(*args):
+        hashable_args = make_hashable(args)
+        if hashable_args in cache:
+            #print(f"Using cached result for {hashable_args}...")
+            return cache[hashable_args]
+        else:
+            #print(f"Computing result for {hashable_args}...")
+            result = func(*args)
+            cache[hashable_args] = result
+            return result
+
+    return wrapper
+
+
 @pn.cache
 def get_h5(url):
     response = requests.get(url)
@@ -59,7 +95,13 @@ def possible_runs_select(sed_fitting_tool):
 
     if sed_fitting_tool == None:
         return None 
-    options = list(resolved_galaxy.sed_fitting_table[sed_fitting_tool].keys())
+
+    options = resolved_galaxy.sed_fitting_table.get(sed_fitting_tool, None)
+    if options is None:
+        options = ['No runs found']
+        
+    else:
+        options = list(options.keys())
     
     which_run.options = options
     which_run.value = options[0]
@@ -71,6 +113,8 @@ def update_sidebar(active_tab, sidebar):
     settings_sidebar = pn.Column(pn.layout.Divider(), "### Settings", name='settings_sidebar')
 
     if active_tab == 0:
+        settings_sidebar.append('#### File Upload')
+        settings_sidebar.append(file_input)
         settings_sidebar.append('#### RGB Image')
         settings_sidebar.append(psf_mode_select)
         settings_sidebar.append(red_select)
@@ -93,6 +137,7 @@ def update_sidebar(active_tab, sidebar):
         pn.bind(update_image, which_map.param.value, watch=True)
         
     sidebar.append(settings_sidebar)
+
 
 def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, mode='sed'):
 
@@ -144,8 +189,9 @@ def plot_rgb(resolved_galaxy, red, green, blue, scale, q, psf_mode):
         circle = hv.Ellipse(7, 15, 5).opts(color='white', line_color='white')
         rgb_img = rgb_img * circle
 
-    return pn.pane.HoloViews(rgb_img, sizing_mode='stretch_both', min_height=250, min_width=250, max_height=300, max_width=300, aspect_equal=True)
+    return pn.pane.HoloViews(rgb_img, height=400, width=430)
 
+@cached_function
 def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, x_unit = u.micron):
 
     fig, ax = plt.subplots(figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
@@ -245,6 +291,7 @@ def plot_bins(bin_type, cmap):
     multi_choice_bins.options = list(np.unique(array))
     return hvplot
 
+@cached_function
 def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, x_unit = 'Gyr', facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
@@ -269,6 +316,7 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
     else:
         return pn.pane.Markdown('No Bagpipes results found.')
 
+@cached_function
 def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
@@ -297,7 +345,20 @@ def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_pa
     else:
         return pn.pane.Markdown('No Bagpipes results found.')
 
-    
+def do_other_plot(plot_option):
+    if plot_option == 'Galaxy Region':
+        fig = resolved_galaxy.plot_gal_region(facecolor=facecolor)
+    elif plot_option == 'Fluxes':
+        fig = resolved_galaxy.pixedfit_plot_map_fluxes()
+    elif plot_option == 'Segmentation Map':
+        fig = resolved_galaxy.plot_seg_stamps()
+    elif plot_option == 'Radial SNR':
+        resolved_galaxy.pixedfit_plot_radial_SNR()
+
+    return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", height = 350, width = 350)
+
+def do_snr_plot(band):
+    return pn.pane.Matplotlib(resolved_galaxy.plot_snr_map(band=band), dpi=144, tight=True, format="svg", width=300, height=300)
 
 def handle_file_upload(value, components):
     global bin_map
@@ -343,14 +404,14 @@ def handle_file_upload(value, components):
 
     #cutout_grid[0, :6] = 
     
-    row = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, max_width=950,  tight=True, format="svg"))
+    row = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, max_width=2000,  tight=True, format="svg"))
     cutout_grid.append(row)
 
     cmap = 'nipy_spectral_r'
  
     hvplot_bins = plot_bins('pixedfit', cmap)
     
-    bin_map = pn.pane.HoloViews(hvplot_bins, sizing_mode='stretch_height')
+    bin_map = pn.pane.HoloViews(hvplot_bins, height=300, width = 400, aspect_ratio=1)
     # set stream off holoviews object instead
     stream.source = bin_map.object
 
@@ -377,25 +438,39 @@ def handle_file_upload(value, components):
     q_slider = pn.widgets.EditableFloatSlider(name='Q', start=0.000001, end=0.01, value=0.001, step=0.000001)
     psf_mode_select = pn.widgets.Select(name='PSF Mode', options=['PSF Matched', 'Original'], value='PSF Matched')
     
+    band_select = pn.widgets.Select(name='Band', options=resolved_galaxy.bands, value='F444W')
+    snr_plot = pn.bind(do_snr_plot, band_select.param.value)
+
+    other_plot_select = pn.widgets.Select(name='Other Plots', options=['Galaxy Region', 'Fluxes', 'Segmentation Map', 'Radial SNR'], value='Galaxy Region')
+    other_plot = pn.bind(do_other_plot, other_plot_select.param.value)
     # Show RGB cutout
-    cutout_grid.append(pn.Row(pn.bind(plot_rgb, resolved_galaxy, red_select.param.value, green_select.param.value, blue_select.param.value, stretch_slider.param.value, q_slider.param.value, psf_mode_select.param.value)))
+    cutout_grid.append(pn.Row(pn.Column('### RGB Image', pn.bind(plot_rgb, resolved_galaxy, red_select.param.value, green_select.param.value, blue_select.param.value, stretch_slider.param.value, q_slider.param.value, psf_mode_select.param.value)),
+    pn.Column(band_select, snr_plot), pn.Column(other_plot_select, other_plot)))
 
     #obj = pn.bind(plot_sed, bin_map.param.tap.x, bin_map.param.tap.y, resolved_galaxy, cmap, shown_bins, watch=True)
-
+    '''
     sed_results_grid[0, :2] = bin_map
     sed_results_grid[0, 2:] = sed_obj
     sed_results_grid[2, :3] = sfh_obj
     sed_results_grid[3:5, :3] = corner_obj
+    '''
 
     sed_results_plot = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=['stellar_mass', 'sfr'], max_on_row=3)
     if sed_results_plot is not None:
         sed_results = pn.Row(pn.pane.Matplotlib(sed_results_plot, dpi=144, tight=True, format="svg"))
     else:
         sed_results = pn.pane.Markdown('No Bagpipes results found.')
-
+    '''
     sed_results_grid[2, 3:5] = sed_results
-    
-    galaxy_tabs = pn.Tabs(('Cutouts', cutout_grid), ('SED Results', sed_results_grid), dynamic=True)
+    '''
+
+    # Alternative to SED results grid using Columns and Rows
+    top_row = pn.Row(bin_map, sed_obj, height=350)
+    mid_row = pn.Row(sfh_obj, sed_results, height=300)
+    bot_row = pn.Row(corner_obj, height=500)
+    combined = pn.Column(top_row, mid_row, bot_row, scroll=False)
+
+    galaxy_tabs = pn.Tabs(('Cutouts', cutout_grid), ('SED Results', combined), dynamic=True, scroll=False)
     
     tabs.append((f"{id} ({survey})", galaxy_tabs))
 
@@ -407,8 +482,9 @@ def handle_file_upload(value, components):
 
 
 def resolved_sed_interface():
+    global file_input
 
-    tabs = pn.Tabs(closable=True, dynamic=True)
+    tabs = pn.Tabs(closable=True, dynamic=True, scroll=False)
     
     file_input = pn.widgets.FileInput(accept='.h5')
     

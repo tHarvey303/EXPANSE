@@ -19,7 +19,7 @@ from astropy.table import Table, QTable
 import typing
 import matplotlib as mpl
 from astropy.utils.exceptions import AstropyWarning
-from astropy.visualization import make_lupton_rgb
+from astropy.visualization import make_lupton_rgb, simple_norm
 import warnings
 from astropy.utils.masked import Masked
 from astropy.wcs import WCS
@@ -75,7 +75,7 @@ class ResolvedGalaxy:
                 phot_img_headers, rms_err_imgs, seg_imgs, aperture_dict, 
                 psf_matched_data = None, psf_matched_rms_err = None, pixedfit_map = None, voronoi_map = None, 
                 binned_flux_map = None, binned_flux_err_map = None, photometry_table = None, sed_fitting_table = None,
-                rms_background = None, psfs = None, psfs_meta = None,
+                rms_background = None, psfs = None, psfs_meta = None, galaxy_region = None,
                 cutout_size=64, 
                 h5_folder = 'galaxies/', 
                 psf_kernel_folder = 'psfs/', 
@@ -131,23 +131,26 @@ class ResolvedGalaxy:
 
         self.psf_kernel_folder = psf_kernel_folder
         self.psf_kernels = {psf_type: {}}
+
+        self.gal_region = galaxy_region
         # Assume bands is in wavelength order, and that the largest PSF is in the last band
-        for band in self.bands[:-1]:
-            files = glob.glob(f'{psf_kernel_folder}/{self.survey}_{self.galaxy_id}/*{band}*{self.bands[-1]}.fits')
-            if len(files) == 0:
-                print(f"No PSF kernel found between {band} and {bands[-1]}")
-                self.get_webbpsf()
-                files = glob.glob(f'{psf_kernel_folder}/{self.survey}_{self.galaxy_id}/*{band}*{self.bands[-1]}.fits')
-            elif len(files) > 1:
-                raise Exception(f"Multiple PSF kernels found between {band} and {bands[-1]}")
-            
-            self.psf_kernels[psf_type][band] = files[0]
 
         if self.psf_matched_data in [None, {}] or self.psf_matched_rms_err in [None, {}]: 
+            # If no PSF matched data, then we need to get PSF kernels
+            for band in self.bands[:-1]:
+                if band not in self.psf_kernels[psf_type].keys():
+                    if psf_type == 'webbpsf':
+                        files = glob.glob(f'{psf_kernel_folder}/{self.survey}_{self.galaxy_id}/*{band}*{self.bands[-1]}.fits')
+                        self.get_webbpsf()
+                    elif psf_type == 'star_stack':
+                        files = glob.glob(f'{psf_kernel_folder}/{self.survey}/*{band}*{self.bands[-1]}.fits')
+                        self.get_star_stack()
+
             print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
     
             print('Convolving images with PSF')
             self.convolve_with_psf(psf_type = psf_type)
+
 
         #if self.rms_background is None:
         #    self.estimate_rms_from_background()
@@ -390,12 +393,17 @@ class ResolvedGalaxy:
                 psfs[psf_type] = {}
                 for band in bands:
                     psfs[psf_type][band] = hfile['psfs'][psf_type][band][()]
-        
+
         if hfile.get('psfs_meta') is not None:
             for psf_type in hfile['psfs_meta'].keys():
                 psfs_meta[psf_type] = {}
                 for band in bands:
                     psfs_meta[psf_type][band] = hfile['psfs_meta'][psf_type][band][()]
+
+        galaxy_region = {}
+        if hfile.get('galaxy_region') is not None:
+            for binmap_type in hfile['galaxy_region'].keys():
+                galaxy_region[binmap_type] = hfile['galaxy_region'][binmap_type][()]
 
         #hfile.close()
         # Read in photometry table(s)
@@ -418,8 +426,10 @@ class ResolvedGalaxy:
                     phot_imgs, phot_pix_unit, phot_img_headers, rms_err_imgs, seg_imgs, 
                     aperture_dict, psf_matched_data, psf_matched_rms_err, pixedfit_map, voronoi_map,
                     binned_flux_map, binned_flux_err_map, photometry_table, sed_fitting_table, rms_background,
-                    psfs, psfs_meta,
+                    psfs, psfs_meta, galaxy_region,
                     cutout_size, h5_folder)
+
+
 
     def estimate_rms_from_background(self, cutout_size = 250, object_distance = 20, overwrite=True, plot=False):
         '''Estimate the RMS error from the background'''
@@ -750,15 +760,16 @@ class ResolvedGalaxy:
             bands = self.bands
 
         nrows = len(self.bands)//6 + 1
-        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows), sharex=True, sharey=True, facecolor=facecolor)
+        fig, axes = plt.subplots(nrows, 6, figsize=(18, 4*nrows), sharex=True, sharey=True, facecolor=facecolor)
         axes = axes.flatten()
 
         for i in range(len(self.bands), len(axes)):
             fig.delaxes(axes[i])
             
         for i, band in enumerate(bands):
-            axes[i].imshow(self.phot_imgs[band], origin='lower', interpolation='none')
-            axes[i].set_title(f'{band} Cutout')
+            norm = simple_norm(self.phot_imgs[band], stretch='log', max_percent=99.9)
+            axes[i].imshow(self.phot_imgs[band], origin='lower', interpolation='none', norm=norm)
+            axes[i].set_title(f'{band} Cutout', fontsize=20)
             #axes[].imshow(self.rms_err_imgs[band], origin='lower', interpolation='none')
             #axes[].set_title(f'{band} RMS Err')
         plt.tight_layout()
@@ -771,7 +782,7 @@ class ResolvedGalaxy:
 
     def get_webbpsf(self, plot=False, overwrite=False):
         skip = False
-        if getattr(self, 'psfs', None) in [None, {}]:
+        if getattr(self, 'psfs', None) not in [None, {}, []]:
             skip = True
         if 'webbpsf' in self.psfs.keys():
             skip = True
@@ -900,7 +911,7 @@ class ResolvedGalaxy:
             self.psf_kernels['webbpsf'][band] = f'{dir}/kernel_{band}to{match_band}.fits'
 
       
-    def plot_lupton_rgb(self, red = [], blue = [], green = [], q = 1, stretch = 1, use_psf_matched=False, psf_type = 'webbpsf', return_array = True, save = False, save_path = None, show = False):
+    def plot_lupton_rgb(self, red = [], green = [], blue = [], q = 1, stretch = 1, use_psf_matched=False, psf_type = 'webbpsf', return_array = True, save = False, save_path = None, show = False):
         '''Plot the galaxy in Lupton RGB'''
         if use_psf_matched:
             img = self.psf_matched_data[psf_type]
@@ -1067,20 +1078,24 @@ class ResolvedGalaxy:
         ax.set_title('Voronoi Map')
         plt.show()
 
-    def plot_snr_map(self, psf_type = 'webbpsf'):
-
-        nrows = len(self.bands)//6 + 1
-        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows))
+    def plot_snr_map(self, band = 'All', psf_type = 'webbpsf'):
+        
+        bands = self.bands if band == 'All' else [band]
+        nrows = len(bands)//6 + 1
+        fig, axes = plt.subplots(nrows, 6, figsize=(18, 4*nrows))
         axes = axes.flatten()
         # Remove empty axes
-        for i in range(len(self.bands), len(axes)):
+        for i in range(len(bands), len(axes)):
             fig.delaxes(axes[i])
         
-        for i, band in enumerate(self.bands):
+        for i, band in enumerate(bands):
             snr_map = self.psf_matched_data[psf_type][band] / self.psf_matched_rms_err[psf_type][band]
             mappable = axes[i].imshow(snr_map, origin='lower', interpolation='none')
-            fig.colorbar(mappable, ax=axes[i])
+            cax = make_axes_locatable(axes[i]).append_axes('right', size='5%', pad=0.05)
+            fig.colorbar(mappable, ax=axes[i], cax=cax)
             axes[i].set_title(f'{band} SNR Map')
+        
+        return fig
 
     def voronoi_binning(self, SNR_reqs=10, ref_band='F277W', plot=True, psf_type='webbpsf'):
         from vorbin.voronoi_2d_binning import voronoi_2d_binning
@@ -1149,23 +1164,24 @@ class ResolvedGalaxy:
             axes[i].set_title(f'{band} Image')
         plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.95, hspace=0.1, wspace=0.15)
 
-    def plot_gal_region(self):
-        gal_region = self.gal_region
+    def plot_gal_region(self, bin_type = 'pixedfit', facecolor='white'):
+        gal_region = self.gal_region[bin_type]
         nrows = len(self.bands)//6 + 1
-        fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows))
+        fig, axes = plt.subplots(nrows, 6, figsize=(18, 4*nrows), facecolor=facecolor)
         axes = axes.flatten()
         # Remove empty axes
         for i in range(len(self.bands), len(axes)):
             fig.delaxes(axes[i])
 
         for i, band in enumerate(self.bands):
-            rows, cols = np.where(gal_region==0)
-            gal_region[rows,cols] = float('nan')
+            #rows, cols = np.where(gal_region==0)
+            #gal_region[rows,cols] = float('nan')
             axes[i].imshow(np.log10(self.phot_imgs[band]), origin='lower', interpolation='none')
             axes[i].set_title(f'{band} Image')
-            axes[i].imshow(gal_region, origin='lower', interpolation='none', alpha=0.5, cmap='copper')
+            axes[i].imshow(gal_region[i], origin='lower', interpolation='none', alpha=0.5, cmap='copper')
         plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.95, hspace=0.1, wspace=0.15)
 
+        return fig
     def add_to_h5(self, data, group, name, ext=0, setattr_gal=None, overwrite=False, meta=None):
         
         if type(data) == str:
@@ -1488,6 +1504,8 @@ class ResolvedGalaxy:
             cache = {}
         
         fig = None
+        x_lims = []
+        y_lims = []
 
         for bin, color, in zip(bins_to_show, colors):
             h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
@@ -1500,9 +1518,25 @@ class ResolvedGalaxy:
                     ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
 
                 cache[bin] = pipes_obj
-
+            fig_xlim, fig_ylim = [], []
             fig = pipes_obj.plot_corner_plot(show=False, save=save, bins=corner_bins, type="fit_params", fig=fig, color=color, facecolor=facecolor)
+            for ax in fig.get_axes():
+                fig_xlim.append(ax.get_xlim())
+                fig_ylim.append(ax.get_ylim())
+            x_lims.append(fig_xlim)
+            y_lims.append(fig_ylim)
         
+        if fig is not None:
+            for pos, ax in enumerate(fig.get_axes()):
+                all_xlim = [x_lims[i][pos] for i in range(len(x_lims))]
+                all_ylim = [y_lims[i][pos] for i in range(len(y_lims))]
+                ax.set_xlim(np.min(all_xlim), np.max(all_xlim))
+                ax.set_ylim(np.min(all_ylim), np.max(all_ylim))
+                print(ax.get_xlabel(), np.min(all_xlim), np.max(all_xlim))
+                print(ax.get_ylabel(), np.min(all_ylim), np.max(all_ylim))
+                if len(x_lims) > 1:
+                    ax.set_title('')
+
         return fig, cache
 
     def plot_bagpipes_fit(self, run_name=None, axes = None, fig=None, bins_to_show = 'all', save=False, 
@@ -1560,7 +1594,7 @@ class ResolvedGalaxy:
                         run_dir = f'pipes/', cache=None):
         sys.path.insert(1, plotpipes_dir)
         from plotpipes import PipesFit
-        
+        print('Called')
         if run_name is None:
             run_name = list(self.sed_fitting_table['bagpipes'].keys())
             if len(run_name) > 1:
