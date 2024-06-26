@@ -17,7 +17,6 @@ from astropy.stats import mad_std
 from photutils.centroids import centroid_com
 import cmasher as cmr
 import astropy.units as u
-from astropy.nddata import block_reduce
 import time
 import matplotlib.pyplot as plt
 from photutils.detection import find_peaks
@@ -333,19 +332,18 @@ def renorm_psf(psfmodel, filt, fov=4.04, pixscl=0.03):
     encircled['F356W'] = 0.9618
     encircled['F410M'] = 0.9568
     encircled['F444W'] = 0.9546
-    '''
-    # These numbers would be useful
-    encircled['F140M'] = 
-    encircled['F162M'] = 
-    encircled['f182M'] =
-    encircled['F210M'] =
-    encircled['F250M'] =
-    encircled['F300M'] =
-    encircled['F335M'] =
-    encircled['F360M'] =
-    encircled['F430M'] = 
-    '''
-    encircled['F335M'] = 0.965 # A guess
+    
+    # These taken from the Encircled_Energy ETC numbers
+    encircled['F140M'] = 0.984
+    encircled['F162M'] = 0.982
+    encircled['f182M'] = 0.980
+    encircled['F210M'] = 0.978
+    encircled['F250M'] = 0.971
+    encircled['F300M'] = 0.967
+    encircled['F335M'] = 0.963
+    encircled['F360M'] = 0.958
+    encircled['F430M'] = 0.956
+
     # Normalize to correct for missing flux
     # Has to be done encircled! Ensquared were calibated to zero angle...
     w, h = np.shape(psfmodel)

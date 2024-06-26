@@ -9,3 +9,6 @@ galaxies/*.fits
 pipes/*
 MinViable.py
 .DS_Store
+diagnostic/*
+psfs/kernels/*
+psfs/psf_models/*
