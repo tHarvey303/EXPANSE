@@ -173,6 +173,8 @@ def plot_rgb(resolved_galaxy, red, green, blue, scale, q, psf_mode):
     elif psf_mode == 'PSF Matched':
         use_psf_matched = True
     rgb = resolved_galaxy.plot_lupton_rgb(red, green, blue, scale, q, use_psf_matched=use_psf_matched)
+    # Flip y axis to match image orientation
+    rgb = np.flipud(rgb)
     rgb_img = hv.RGB(rgb, bounds=(0, 0, resolved_galaxy.cutout_size, resolved_galaxy.cutout_size)).opts(xaxis=None, yaxis=None)
 
     any_band = resolved_galaxy.bands[0]
@@ -205,7 +207,8 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 
     if len(resolved_galaxy.photometry_table) > 0:
         #return pn.pane.Markdown('No photometry table found')
-        table = resolved_galaxy.photometry_table['webbpsf'][which_map_param]
+        psf_type = resolved_galaxy.use_psf_type
+        table = resolved_galaxy.photometry_table[psf_type][which_map_param]
     else:
         table = None
     bands = resolved_galaxy.bands
@@ -241,16 +244,20 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
                 flux = table_row[band]
                 flux_err = table_row[f"{band}_err"]
                 
-                if len(flux) == 0:
-                    continue
-                if flux[0] > 0:
-                    if flux_err[0]/flux[0] < 0.1:
+                if not flux.isscalar:
+                    flux = flux[0]
+                    flux_err = flux_err[0]
+
+                #if len(flux) == 0:
+                #    continue
+                if flux > 0:
+                    if flux_err/flux < 0.1:
                         flux_err = 0.1 * flux
 
             
                 if y_unit == u.ABmag:
                     # Assymmetric error bars
-                    yerr = [[2.5*np.log10(flux.value/(flux[0].value - flux_err[0].value))], [2.5*np.log10(1 + flux_err[0].value/flux[0].value)]]
+                    yerr = [[2.5*np.log10(flux.value/(flux.value - flux_err.value))], [2.5*np.log10(1 + flux_err.value/flux.value)]]
                 else:
                     yerr = flux_err.to(y_unit, equivalencies = u.spectral_density(wav)).value
                 
@@ -358,7 +365,7 @@ def do_other_plot(plot_option):
     return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", height = 350, width = 350)
 
 def do_snr_plot(band):
-    return pn.pane.Matplotlib(resolved_galaxy.plot_snr_map(band=band), dpi=144, tight=True, format="svg", width=300, height=300)
+    return pn.pane.Matplotlib(resolved_galaxy.plot_snr_map(band=band, facecolor = facecolor), dpi=144, tight=True, format="svg", width=300, height=300)
 
 def handle_file_upload(value, components):
     global bin_map
@@ -404,7 +411,7 @@ def handle_file_upload(value, components):
 
     #cutout_grid[0, :6] = 
     
-    row = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, max_width=2000,  tight=True, format="svg"))
+    row = pn.Row(pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor), dpi=144, max_width=1000,  tight=True, format="svg"))
     cutout_grid.append(row)
 
     cmap = 'nipy_spectral_r'
@@ -445,7 +452,7 @@ def handle_file_upload(value, components):
     other_plot = pn.bind(do_other_plot, other_plot_select.param.value)
     # Show RGB cutout
     cutout_grid.append(pn.Row(pn.Column('### RGB Image', pn.bind(plot_rgb, resolved_galaxy, red_select.param.value, green_select.param.value, blue_select.param.value, stretch_slider.param.value, q_slider.param.value, psf_mode_select.param.value)),
-    pn.Column(band_select, snr_plot), pn.Column(other_plot_select, other_plot)))
+    pn.Column(band_select, snr_plot), pn.Column(other_plot_select, other_plot), sizing_mode = 'scale_width', max_width=1000, mode='override'))
 
     #obj = pn.bind(plot_sed, bin_map.param.tap.x, bin_map.param.tap.y, resolved_galaxy, cmap, shown_bins, watch=True)
     '''

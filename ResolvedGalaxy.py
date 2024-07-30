@@ -569,7 +569,7 @@ class ResolvedGalaxy:
                 sed_fitting_table[tool][run] = table
 
         photometry_properties = {}
-        if hfile.get('photometry_properties') is not None:
+        if hfile.get('phot_properties') is not None:
             for prop in hfile['phot_properties'].keys():
                 phot_properties[prop] = hfile['phot_properties'][prop][()]
         
@@ -1041,12 +1041,13 @@ class ResolvedGalaxy:
             #axes[].imshow(self.rms_err_imgs[band], origin='lower', interpolation='none')
             #axes[].set_title(f'{band} RMS Err')
         plt.tight_layout()
-        plt.subplots_adjust(hspace=0.1, wspace=0.1)
+        plt.subplots_adjust(hspace=-0.5, wspace=0.1)
         if save:
             plt.savefig(save_path)
         if show:
             plt.show()
-        return fig
+        else:
+            return fig
 
     def get_webbpsf(self, plot=False, overwrite=False, fov=4, og_fov=10, oversample=4, PATH_SW_ENERGY = 'psfs/Encircled_Energy_SW_ETCv2.txt', PATH_LW_ENERGY = 'psfs/Encircled_Energy_LW_ETCv2.txt'):
         skip = False
@@ -1455,9 +1456,9 @@ class ResolvedGalaxy:
         mappable = ax.imshow(self.voronoi_map, origin='lower', interpolation='none', cmap = 'nipy_spectral_r')   
         fig.colorbar(mappable, ax=ax)
         ax.set_title('Voronoi Map')
-        plt.show()
+        #plt.show()
 
-    def plot_snr_map(self, band = 'All', override_psf_type = None, facecolor='white'):
+    def plot_snr_map(self, band = 'All', override_psf_type = None, facecolor='white', show = False):
         if hasattr(self, 'use_psf_type') and override_psf_type is None:
             psf_type = self.use_psf_type
         else:
@@ -1482,7 +1483,11 @@ class ResolvedGalaxy:
             axes[i].set_xticklabels([])
             axes[i].set_yticklabels([])
         
-        plt.show()
+        if show:
+            plt.show()
+        else:
+            return fig
+        #plt.show()
 
     def voronoi_binning(self, SNR_reqs=10, ref_band='F277W', plot=True, override_psf_type=None):
         if hasattr(self, 'use_psf_type') and override_psf_type is None:
@@ -1547,7 +1552,7 @@ class ResolvedGalaxy:
         self.add_to_h5(name_out_fits, 'bin_fluxes', 'pixedfit', ext='BIN_FLUX', setattr_gal='binned_flux_map', overwrite=overwrite)
         self.add_to_h5(name_out_fits, 'bin_flux_err', 'pixedfit', ext='BIN_FLUXERR', setattr_gal='binned_flux_err_map', overwrite=overwrite)
 
-    def plot_image_stamp(self, band, scale = 'log10', save=False, save_path=None, show=True, facecolor='white', sex_factor=6):
+    def plot_image_stamp(self, band, scale = 'log10', save=False, save_path=None, show=False, facecolor='white', sex_factor=6):
         fig, ax = plt.subplots(1, 1, figsize=(6, 6), facecolor=facecolor)
         if scale == 'log10':
             data = np.log10(self.phot_imgs[band])
@@ -1592,7 +1597,7 @@ class ResolvedGalaxy:
             plt.show()
         
 
-    def plot_image_stamps(self):
+    def plot_image_stamps(self, show = False):
         nrows = len(self.bands)//6 + 1
         fig, axes = plt.subplots(nrows, 6, figsize=(24, 4*nrows))
         axes = axes.flatten()
@@ -1605,10 +1610,13 @@ class ResolvedGalaxy:
             axes[i].set_title(f'{band} Image')
         plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.95, hspace=0.1, wspace=0.15)
         #return fig
-        plt.show()
+        if show:
+            plt.show()
+        else:
+            return fig
 
     
-    def plot_gal_region(self, bin_type = 'pixedfit', facecolor='white'):
+    def plot_gal_region(self, bin_type = 'pixedfit', facecolor='white', show=False):
         if self.gal_region is None:
             raise ValueError('No gal_region region found. Run pixedfit_processing() first')
         else:
@@ -1629,7 +1637,10 @@ class ResolvedGalaxy:
             axes[i].set_title(f'{band} Image')
             axes[i].imshow(gal_region, origin='lower', interpolation='none', alpha=0.5, cmap='copper')
         plt.subplots_adjust(left=0.05, right=0.95, bottom=0.05, top=0.95, hspace=0.1, wspace=0.15)
-        plt.show()
+        if show:
+            plt.show()
+        else:
+            return fig
         #return fig
 
     def add_to_h5(self, data, group, name, ext=0, setattr_gal=None, overwrite=False, meta=None):
@@ -2415,7 +2426,7 @@ class ResolvedGalaxy:
     
                     pos = np.argwhere(fmask == True)[0][0]
                     band = self.bands[pos]
-                    print(f'Using band {band} at wavelength {self.filter_wavs[band].to(u.AA)} for weighting at {obs_wav} (rest frame {wav})')
+                    #print(f'Using band {band} at wavelength {self.filter_wavs[band].to(u.AA)} for weighting at {obs_wav} (rest frame {wav})')
                 else:
                     band = weight_by_band
                 if self.use_psf_type:
