@@ -2200,7 +2200,7 @@ class ResolvedGalaxy:
         return fig, cache
 
     def plot_bagpipes_fit(self, run_name=None, axes = None, fig=None, bins_to_show = 'all', save=False, 
-                        facecolor='white', marker_colors='black', wav_units=u.um, plotpipes_dir='bagpipes_dir',
+                        facecolor='white', marker_colors='black', wav_units=u.um, plotpipes_dir='pipes_scripts/',
                         flux_units=u.ABmag, lw=1,fill_uncertainty=False,zorder=5, run_dir = f'pipes/', cache=None):
         sys.path.insert(1, plotpipes_dir)
         
@@ -2493,7 +2493,10 @@ class ResolvedGalaxy:
                                         facecolor='white', plotpipes_dir='pipes_scripts/', 
                                         bagpipes_filter_dir=bagpipes_filter_dir, n_draws = 10000,
                                         cache = None):
+        
+        plotpipes_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), plotpipes_dir)
         sys.path.insert(1, plotpipes_dir)
+
         from plotpipes import hist1d
         if run_name is None:
             run_name = list(self.sed_fitting_table['bagpipes'].keys())
