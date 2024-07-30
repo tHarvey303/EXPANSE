@@ -45,12 +45,17 @@ from scipy.ndimage import binary_dilation, binary_erosion
 from skimage.morphology import (square, rectangle, diamond, disk, cube,
                                 octahedron, ball, octagon, star)
 np.errstate(invalid='ignore')
-from astropy.visualization import (MinMaxInterval, LinearStretch, SqrtStretch, AsinhStretch,
+from astropy.visualization import (MinMaxInterval, LinearStretch, SqrtStretch, AsinhStretch, LogStretch,
                                    ImageNormalize)
 from astropy.visualization import lupton_rgb
+from regions import Regions, PointPixelRegion, PointSkyRegion
 
-
-def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf_fov = 4, phot_zp = 28.08, match_band = 'F444W', skyext = '', oversample = 3, alpha = 0.3, beta = 0.15, pypher_r = 3e-3, maglim = (18.0, 24.0), method = 'pypher'):
+def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, 
+            psf_fov = 4, phot_zp = 28.08, match_band = 'F444W', oversample = 3,
+            alpha = 0.3, beta = 0.15, pypher_r = 3e-3, maglim = (18.0, 24.0),
+            method = 'pypher', use_psf_masks = None, manual_id_remove = None, 
+            snr_lim = 1000, # 1000 normally
+            sigma = 2.8): #if pfilt in ['f090w'] else 4.0):
     '''
     Generate PSF (Point Spread Function) for a given set of images.
 
@@ -60,8 +65,7 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
     psf_fov (float): The field of view (FOV) of the PSF in arcseconds.
     filters (list): A list of filters for which the PSF needs to be generated.
     phot_zp (float or dict of bands): The photometric zero point for the images.
-    match_band (str): The reference band for matching the PSFs.
-    skyext (str): The extension of the sky background in the FITS file.
+    match_band (str): The reference band for matching the PSFs. None if no matching is required.
     outdir (str): The directory where the PSF files will be saved.
     oversample (int): The oversampling factor for the PSF. The output PSF will be sampled at
         the original pixel scale but this factor is used to derive the kernel.
@@ -70,7 +74,10 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
     pypher_r (float): The radius parameter for the PyPHER algorithm. - only used if method is 'pypher'.
     maglim (float): The magnitude limit for the PSF generation.
     method (str, optional): The method to be used for PSF generation. Defaults to 'pypher'.
-
+    use_psf_masks (dict, optional): Defaults to None. Should be a dictionary of the form {band: mask_path}.
+    manual_id_remove (list, optional): Defaults to None. A list of star IDs to be removed manually.
+    snr_lim (int, optional): Defaults to 1000. The signal-to-noise ratio limit for star selection.
+    sigma (float, optional): Defaults to 2.8. The sigma value for sigma clipping.
     Returns:
     None
     '''
@@ -85,17 +92,27 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
     target_filter = match_band
     print('target filter',target_filter)
     
-    image_path = img_paths[target_filter]
+    if target_filter is not None:
+        image_path = img_paths[target_filter]
 
-    if type(image_path) != list:
-        image_path = [image_path]
+        if type(image_path) != list:
+            image_path = [image_path]
+
+        hdr = fits.getheader(image_path[0])
     
-    #for i, path in enumerate(image_path):
+    if match_band is not None:
+        use_filters = [match_band] + [f for f in filters if f != match_band]
+    else:
+        use_filters = filters
+    '''
+    if use_psf_masks is not None:
+        assert type(use_psf_masks) == dict, 'use_psf_masks should be a dictionary of the form {band: mask_path}'
+        if match_band in use_psf_masks:
+            psf_mask = fits.getdata(use_psf_masks[match_band])
+            print(f'Using PSF mask for {match_band}...')
         
-
-    hdr = fits.getheader(image_path[0])
-    
-    use_filters = [match_band] + [f for f in filters if f != match_band]
+        psf_masks = {fits.getdata(use_psf_masks[f]) for f in use_filters}
+    '''
     if type(phot_zp) == float:
         phot_zp = {f:phot_zp for f in filters}
         
@@ -103,77 +120,119 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
     for pfilt in use_filters:
     
         print(f'Finding stars for {pfilt}...')
+        
         filenames = img_paths[pfilt]
         if type(filenames) != list:
             filenames = [filenames]
+
+        if use_psf_masks is not None:
+            if pfilt in use_psf_masks.keys():
+                psf_masks = use_psf_masks[pfilt]
+                if type(psf_masks) != list:
+                    psf_masks = [psf_masks]
+                assert len(psf_masks) == len(filenames), 'Number of masks should match number of images (put None for images without masks)'
+            else:
+                psf_masks = [None]*len(filenames)
+        else:
+            psf_masks = [None]*len(filenames)
+
         suffix = '.fits' + filenames[0].split('.fits')[-1]
         # Get path before the filename
         path = os.path.dirname(filenames[0])
         starname = filenames[0].replace(suffix, '_star_cat.fits').replace(path, outdir)
         outname = os.path.join(outdir, f'{pfilt}.fits')
-
-        if len(glob.glob(outdir+'*'+pfilt+'*'+'psf.fits')) > 0:
+        skip_psf = skip_kernel = False
+        psfname = glob.glob(outdir+'*'+pfilt+'*'+'psf.fits')
+        if len(psfname) > 0:
             print(f'PSFs already exist for {pfilt} -- skipping!')
+            print(glob.glob(outdir+'*'+pfilt+'*'+'psf.fits'))
+            skip_psf = True
             if pfilt == target_filter:
                 target_psf = fits.getdata(glob.glob(outdir+'*'+target_filter+'*'+'psf.fits')[0])
+            
+            if len(glob.glob(kernel_dir+os.path.basename(psfname[0]).replace('psf','kernel'))) > 0:
+                print(f'Kernel already exists for {pfilt} -- skipping!')
+                skip_kernel = True
+
+        if skip_psf and skip_kernel:
             continue
 
-        #print(filename)
-        print(starname)
-        # Run in loop
+        if not skip_psf:
+            #print(filename)
+            print(starname)
+            # Run in loop
 
 
-        snr_lim = 1000
-        sigma = 2.8 #if pfilt in ['f090w'] else 4.0
-        showme=True
-
-        peaks_all, stars_all = [], []
-        ra_all, dec_all, ids_all = [], [], []
-        for i, filename in enumerate(filenames):
-            peaks, stars = find_stars(filename, outdir=outdir, plotdir=plotdir, label=pfilt, zp=phot_zp[pfilt])
-            peaks_all.append(peaks)
-            stars_all.append(stars)
-            print(f'Found {len(peaks)} bright sources in {filename}')
             
+            showme=True
 
-            ok = (peaks['mag'] > maglim[0]) & ( peaks['mag'] < maglim[1] )
-            ra, dec, ids = peaks['ra'][ok], peaks['dec'][ok], peaks['id'][ok]
-            ra_all.append(ra)
-            dec_all.append(dec)
-            ids_all.append(ids)
+            peaks_all, stars_all = [], []
+            ra_all, dec_all, ids_all = [], [], []
 
+            
+            for i, (filename, psf_mask) in enumerate(zip(filenames, psf_masks)):                
+                print(psf_mask)
+                peaks, stars = find_stars(filename, outdir=outdir, plotdir=plotdir, label=pfilt, zp=phot_zp[pfilt], psf_mask=psf_mask, mag_lim = maglim[1])
+                        
+                peaks_all.append(peaks)
+                stars_all.append(stars)
+                print(f'Found {len(peaks)} bright sources in {filename}')
+                
 
-        print(f'Found {np.sum([len(i) for i in peaks_all])} sources with {maglim[0]} < mag < {maglim[1]} in {pfilt}...')
-        print(f'Processing PSF...')
-        # Define the PSF object
-        pixsize = int(psf_fov/img_pixel_scale)
-        print(f'PSF model dimensions: {pixsize} pix = {pixsize*img_pixel_scale} arcsec ({psf_fov} arcsec requested)')
-        psf = PSF(images=filenames, all_x=ra_all, all_y=dec_all, all_ids=ids_all, pixsize=pixsize, pixelscale=img_pixel_scale)#101)
-        # Center PSF model and measure
-        psf.center()
-        psf.measure()
-        psf.select(snr_lim=snr_lim, dshift_lim=3, mask_lim=0.99, showme=showme, nsig=30)
-        print(f'First selection {np.sum(psf.ok)} stars left')
-        psf.stack(sigma=sigma)
-        psf.select(snr_lim=snr_lim, dshift_lim=3, mask_lim=0.4, showme=True, nsig=30)
-        psf.save(outname.replace('.fits',''))
-        print('Final number of stars used:',np.sum(psf.ok))
-        print(psf.psf_average.shape)
-        psfmodel = renorm_psf(psf.psf_average, filt=pfilt, pixscl=img_pixel_scale, fov = pixsize*img_pixel_scale)
-        fits.writeto('_'.join([outname.replace('.fits',''), 'psf_norm.fits']), np.array(psfmodel),overwrite=True)
+                ok = (peaks['mag'] > maglim[0]) & ( peaks['mag'] < maglim[1] )
+                ra, dec, ids = peaks['ra'][ok], peaks['dec'][ok], peaks['id'][ok]
+                ra_all.append(ra)
+                dec_all.append(dec)
+                ids_all.append(ids)
+                
 
-        imshow(psf.data[psf.ok],nsig=50,title=psf.cat['id'][psf.ok])
-        plt.savefig(outname.replace('.fits','_stamps_used.pdf').replace(outdir,plotdir),dpi=300)
-        show_cogs([psf.psf_average],title=pfilt, label=['oPSF'],outname=plotdir+pfilt)
-        plots=glob.glob(outdir+'*.pdf')
-        plots+=glob.glob(outdir+'*_cat.fits')
-        for plot in plots:
-            os.rename(plot,plot.replace(outdir,plotdir))
+            print(f'Found {np.sum([len(i[ok]) for i in peaks_all])} sources with {maglim[0]} < mag < {maglim[1]} in {pfilt}...')
+            print(f'Processing PSF...')
+            # Define the PSF object
+            pixsize = int(psf_fov/img_pixel_scale)
+            print(f'PSF model dimensions: {pixsize} pix = {pixsize*img_pixel_scale} arcsec ({psf_fov} arcsec requested)')
+            
+            psf = PSF(images=filenames, all_x=ra_all, all_y=dec_all, all_ids=ids_all, pixsize=pixsize, pixelscale=img_pixel_scale)#101)
+            # Center PSF model and measure
+            psf.center()
+            psf.measure()
+            psf.select(snr_lim=snr_lim, dshift_lim=3.5, mask_lim=0.99, showme=showme, nsig=30)
+            print(f'First selection {np.sum(psf.ok)} stars left')
+            psf.stack(sigma=sigma) # Moved from between selects
 
-        filt_psf = np.array(psf.psf_average)
-        if pfilt == match_band:
-            target_psf = filt_psf
-        
+            psf.select(snr_lim=snr_lim, dshift_lim=3.5, mask_lim=0.6, showme=True, nsig=30)
+            if manual_id_remove is not None:
+                for i in manual_id_remove:
+                    psf.ok[i-1] = False
+                    print('Removing star',i)
+            psf.stack(sigma=2.8, update_ok = False)# Moved from between selects
+            if np.sum(psf.ok) == 0:
+                raise ValueError('No stars left after selection!')
+
+            psf.save(outname.replace('.fits',''))
+            print('Final number of stars used:',np.sum(psf.ok))
+            
+            print(psf.psf_average.shape)
+            psfmodel = renorm_psf(psf.psf_average, filt=pfilt, pixscl=img_pixel_scale, fov = pixsize*img_pixel_scale)
+            fits.writeto('_'.join([outname.replace('.fits',''), 'psf_norm.fits']), np.array(psfmodel),overwrite=True)
+
+            imshow(psf.data[psf.ok],nsig=30,title=psf.cat['id'][psf.ok], log = True)
+            plt.savefig(outname.replace('.fits','_stamps_used.pdf').replace(outdir,plotdir),dpi=300)
+            show_cogs([psf.psf_average],title=pfilt, label=['oPSF'],outname=plotdir+pfilt)
+            plots=glob.glob(outdir+'*.pdf')
+            plots+=glob.glob(outdir+'*_cat.fits')
+            for plot in plots:
+                os.rename(plot,plot.replace(outdir,plotdir))
+
+            filt_psf = np.array(psf.psf_average)
+            if pfilt == match_band:
+                target_psf = filt_psf
+            
+        if match_band is None or (skip_kernel and not skip_psf):
+            print(match_band, skip_psf, skip_kernel)
+            print('No matching band specified or kernels already exist -- skipping kernel generation!')
+            continue
+
         psfname = glob.glob(outdir+'*'+pfilt+'*'+'psf.fits')[0]
         outname = kernel_dir+os.path.basename(psfname).replace('psf','kernel')
 
@@ -221,6 +280,9 @@ def make_psf(filters, img_paths, outdir, kernel_dir, img_pixel_scale = 0.03, psf
 
         print(f'Writing {pfilt}-->{match_band} kernel to {outname}')
         fits.writeto(outname, np.float32(np.array(kernel/kernel.sum())),overwrite=True)
+
+    if match_band is None:
+        return
 
     nfilt = len(use_filters[1:])
     plt.figure(figsize=(30,nfilt*4))
@@ -336,7 +398,7 @@ def renorm_psf(psfmodel, filt, fov=4.04, pixscl=0.03):
     # These taken from the Encircled_Energy ETC numbers
     encircled['F140M'] = 0.984
     encircled['F162M'] = 0.982
-    encircled['f182M'] = 0.980
+    encircled['F182M'] = 0.980
     encircled['F210M'] = 0.978
     encircled['F250M'] = 0.971
     encircled['F300M'] = 0.967
@@ -366,7 +428,8 @@ def imshow(args, cross_hairs=False, log=False, **kwargs):
     if not (ncol := kwargs.get('ncol')): ncol = int(np.ceil(np.sqrt(nargs)))+1
     if not (nsig := kwargs.get('nsig')): nsig = 5
     if not (stretch := kwargs.get('stretch')): stretch = LinearStretch()
-
+    if log:
+        stretch = LogStretch()
     nrow = int(np.ceil(nargs/ncol))
     panel_width = width/ncol
     fig, ax = plt.subplots(nrows=nrow, ncols=ncol,figsize=(ncol*panel_width,nrow*panel_width))
@@ -380,7 +443,7 @@ def imshow(args, cross_hairs=False, log=False, **kwargs):
         axi.imshow(arg, norm=norm, origin='lower', interpolation='nearest')
         axi.set_axis_off()
         if cross_hairs:
-            axi.plot(50,50, color='red', marker='+', ms=10, mew=1)
+            axi.plot(arg.shape[0], arg.shape[1], color='red', marker='+', ms=10, mew=1)
     #c = n/2
     #plt.plot([n/2,n/2],[n/2-2*r,n/2-r],c=color,lw=lw)
     #plt.plot([n/2-2*r,n/2-r],[n/2,n/2],c=color,lw=lw)
@@ -444,16 +507,52 @@ mscale.register_scale(SquareRootScale)
 
 def find_stars(filenames=None, block_size=5, npeaks=1000, size=20, radii=np.array([0.5,1.,2.,4.,7.5]), range=[0,4], mag_lim = 24.0,
                threshold_min = -0.5, threshold_mode=[-0.2,0.2], shift_lim=2, zp=28.08, instars=None, showme=True, label='',
-               outdir='./', plotdir='./'):
+               outdir='./', plotdir='./', psf_mask = None):
 
     if type(filenames) != list:
         filenames = [filenames]
 
+    if psf_mask is not None:
+        if type(psf_mask) != list:
+            psf_mask = [psf_mask]
+        assert len(psf_mask) == len(filenames), 'Number of masks should match number of images (put None for images without masks)'
+    else:
+        psf_mask = [None]*len(filenames)
     stars = []
-    for filename in filenames:
+    for filename, psfmsk in zip(filenames, psf_mask):
         img, hdr = fits.getdata(filename, header=True)
         wcs = WCS(hdr)
 
+        if psfmsk is not None:
+            if psfmsk.endswith('.reg'):
+                masks = Regions.read(psfmsk, format='ds9')
+                masks = [m for i, m in enumerate(masks) if type(m) not in [PointPixelRegion, PointSkyRegion]]
+                for pos, m in enumerate(masks):
+                    
+                    if 'Sky' in str(type(m)):
+                        masks[pos] = m.to_pixel(wcs)
+                if len(masks) > 1:
+                    overall_mask = masks[0].to_mask().to_image(img.shape)
+                    for mask in masks[1:]:
+                        overall_mask += mask.to_mask().to_image(img.shape)
+                else:
+                    overall_mask = masks[0].to_mask().to_image(img.shape)
+                mask = overall_mask.astype(bool)
+
+            elif psfmsk.endswith('.fits'):
+                mask = fits.getdata(psfmsk)
+                mask = mask.astype(bool)
+                assert mask.shape == img.shape, 'Mask shape does not match image shape!'
+
+
+            print('Removing all data outside mask...')
+
+        else:
+            mask = np.ones_like(img).astype(bool)
+
+        img[~mask] = 0
+
+                                  
         imgb = block_reduce(img, block_size, func=np.sum)
         sig = mad_std(imgb[imgb>0], ignore_nan=True)/block_size
 
@@ -595,8 +694,7 @@ class PSF():
         if type(images) != list:
             images = [images]
         
-        assert len(images) == len(all_x) == len(all_y) == len(all_ids)
-
+        assert len(images) == len(all_x) == len(all_y) == len(all_ids), f'Number of images ({len(images)}) should match number of x ({len(all_x)}), y ({len(all_y)}, and ids ({len(all_ids)})'
         cats, datas = [], []
         for i, image in enumerate(images):
             x = all_x[i]
@@ -632,6 +730,8 @@ class PSF():
             self.cat = vstack(cats)
         else:
             self.cat = cats[0]
+
+        print(f'{len(self.cat)} in PSF cat')
         
         self.data = np.ndarray.flatten(np.array(datas))
         self.data = np.ma.array(data,mask = ~np.isfinite(data) | (data == 0) )
@@ -695,7 +795,7 @@ class PSF():
         self.cat['ok_snr'] = (self.cat['snr'] > snr_lim)
         self.cat['ok_frac_mask'] = (self.cat['frac_mask'] < mask_lim)
         self.cat['ok_phot_frac_mask'] = (self.cat['phot_frac_mask'] > phot_frac_mask_lim)
-
+        print(f'ok_shift: {np.sum(self.cat["ok_shift"])}, ok_snr: {np.sum(self.cat["ok_snr"])}, ok_frac_mask: {np.sum(self.cat["ok_frac_mask"])}, ok_phot_frac_mask: {np.sum(self.cat["ok_phot_frac_mask"])}')
         for c in self.cat.colnames:
             if 'id' not in c: self.cat[c].format='.3g'
 
@@ -706,7 +806,7 @@ class PSF():
             # self.cat.pprint_all()
 
 
-    def stack(self,sigma=3,maxiters=2):
+    def stack(self,sigma=3,maxiters=2, update_ok=True):
         iok = np.where(self.ok)[0]
 
         norm = self.cat['phot'][iok]
@@ -720,7 +820,10 @@ class PSF():
         # print('-',len(self.ok[self.ok]))
 
         for i in np.arange(len(data)):
-            self.ok[iok[i]] = self.ok[iok[i]] and ~self.clipped[i].mask[50,50]
+            shape = self.clipped[i].mask.shape
+            if update_ok:
+                self.ok[iok[i]] = self.ok[iok[i]] and ~self.clipped[i].mask[shape[0]//2,shape[1]//2]
+            print('dog', ~self.clipped[i].mask[shape[0]//2, shape[1]//2], np.shape(self.clipped[i].mask))
             self.data[iok[i]].mask = self.clipped[i].mask
             mask = self.data[iok[i]].mask
             self.cat['frac_mask'][iok[i]] = np.size(mask[mask]) / np.size(mask)
@@ -1027,7 +1130,7 @@ def powspace(start, stop, num=30, power=0.5, **kwargs):
 def plot_profile(psf, target):
     shape = psf.shape
     center = (shape[1]//2, shape[0]//2)
-    radii_pix = np.arange(1,40,1)
+    radii_pix = np.arange(1,67,1)
     apertures = [CircularAperture(center, r=r) for r in radii_pix] #r in pixels
 
     phot_table = aperture_photometry(psf, apertures)
@@ -1039,7 +1142,7 @@ def plot_profile(psf, target):
     return radii_pix[:-1], (flux_psf)[0:-1], (flux_target)[0:-1]
 
 
-def convolve_images(bands, im_paths, wht_paths, err_paths, outdir, kernel_dir, match_band, use_fft_conv=True, overwrite=False):
+def convolve_images(bands, im_paths, wht_paths, err_paths, outdirs, kernel_dir, match_band, use_fft_conv=True, overwrite=False):
     #kernel = fits.getdata(f'{kernel_dir}{match_band}_kernel.fits')
     
     if use_fft_conv:
@@ -1054,8 +1157,23 @@ def convolve_images(bands, im_paths, wht_paths, err_paths, outdir, kernel_dir, m
         im_filename = im_paths[band]
         wht_filename = wht_paths[band]
         err_filename = err_paths[band]
+        if type(im_filename) == list:
+            print('WARNING!, Only doing the first image')
+            im_filename = im_filename[0]
+        if type(wht_filename) == list:
+            print('WARNING!, Only doing the first weight image')
+            wht_filename = wht_filename[0]
+        if type(err_filename) == list:
+            print('WARNING!, Only doing the first error image')
+            err_filename = err_filename[0]
+        
         same_file = im_filename == wht_filename == err_filename
         outnames = []
+        outdir = outdirs[band]
+        if type(outdir) == list:
+            print('WARNING!, Only doing the first outdir')
+            outdir = outdir[0]
+        
 
         if not os.path.exists(outdir):
             os.makedirs(outdir)
@@ -1068,10 +1186,12 @@ def convolve_images(bands, im_paths, wht_paths, err_paths, outdir, kernel_dir, m
         else:
             outsciname = im_filename.replace(f'.fits', f'_sci_{match_band}-matched.fits').replace(os.path.dirname(im_filename), outdir)
             outwhtname = wht_filename.replace(f'.fits', f'_wht_{match_band}-matched.fits').replace(os.path.dirname(wht_filename), outdir)
-            outerrname = err_filename.replace(f'.fits', f'_err_{match_band}-matched.fits').replace(os.path.dirname(err_filename), outdir)
+            if err_filename != '':
+                outerrname = err_filename.replace(f'.fits', f'_err_{match_band}-matched.fits').replace(os.path.dirname(err_filename), outdir)
+                outnames.append(outerrname)
+
             outnames.append(outsciname)
             outnames.append(outwhtname)
-            outnames.append(outerrname)
 
         skip = False
         for outname in outnames:    
@@ -1160,13 +1280,13 @@ def convolve_images(bands, im_paths, wht_paths, err_paths, outdir, kernel_dir, m
             
             hdul_wht.close()
 
-            if outerrname != '' and (overwrite or not os.path.exists(outerrname)):
+            if err_filename != '' and outerrname != '' and (overwrite or not os.path.exists(outerrname)):
                 print('Running error image convolution...')
-                
-                data = convolve_func(hdul_err['ERR'].data, kernel, **convolve_kwargs).astype(np.float32)
+                extt = 0 if not same_file else 'ERR'
+                data = convolve_func(hdul_err[extt].data, kernel, **convolve_kwargs).astype(np.float32)
                 data[weight==0] = 0.
 
-                out_hdu_err = fits.PrimaryHDU(data, header=hdul_err['ERR'].header)
+                out_hdu_err = fits.PrimaryHDU(data, header=hdul_err[extt].header)
                 out_hdu_err.name = 'ERR'
                 out_hdu_err.header['HISTORY'] = f'Convolved with {match_band} kernel'
                 out_hdul.append(out_hdu_err)
@@ -1216,13 +1336,15 @@ def psf_comparison(bands, psf_dir_dict, max_cols=5, cmap = 'cmr.torch', match_ba
     tool_colors = {key:colors(i/len(psf_dir_dict)) for i, key in enumerate(psf_dir_dict.keys())}
     linestyles = ['-', '--', '-.', ':']
     fig, axs = plt.subplots(nrows = nrows, ncols = max_cols, figsize=(max_cols*2, nrows*2), sharex=True, sharey=True, constrained_layout=True)
+    
     axs = axs.flatten()
     # Remove empty axes
     for i in range(len(bands), len(axs)):
         fig.delaxes(axs[i])
     
     #assert len(kernel_dir_dict.keys()) == len(psf_dir_dict.keys()), 'PSF and kernel names must match'
-
+    # move last band to the front
+   
     for i, band in enumerate(bands):
 
 
@@ -1251,7 +1373,6 @@ def psf_comparison(bands, psf_dir_dict, max_cols=5, cmap = 'cmr.torch', match_ba
             
             radii, cog, profile = measure_curve_of_growth(psf, rnorm=None, nradii=nradii)
             
-            
             radii = radii*pixelscale if type(pixelscale) == float else radii*pixelscale[name]
             # Interpolate COG to get radii at COG = 0.8
             cog_interp = scipy.interpolate.interp1d(cog, radii, fill_value='extrapolate')
@@ -1266,7 +1387,7 @@ def psf_comparison(bands, psf_dir_dict, max_cols=5, cmap = 'cmr.torch', match_ba
 
         axs[i].text(0.8, 0.08, band, ha='center', va='center', transform=axs[i].transAxes, fontsize=12)
         #axs[i].axhline(1, c='k', alpha=0.3)
-        axs[i].axvline(0.16, c='k', alpha=0.3, linestyle='--', lw=1)
+        axs[i].axvline(0.16, c='k', alpha=0.3, linestyle=':', lw=1)
         #axs[i].axhline(0.99, c='k', alpha=0.3, linestyle=':', lw=2)
         axs[i].set_ylim(0.3, 1.)
         axs[i].set_xlim(0.05, 1.)
@@ -1284,6 +1405,98 @@ def psf_comparison(bands, psf_dir_dict, max_cols=5, cmap = 'cmr.torch', match_ba
     fig.get_layout_engine().set(wspace=-5, hspace=-3)
 
     fig.savefig('/nvme/scratch/work/tharvey/PSFs/psf_comparison.pdf', dpi=300)    
+
+def rel_cog_comparison(bands, psf_dir_dict, kernel_dir_dict, cmap = 'cmr.torch', match_band='F444W', pixelscale=0.03):
+    try:
+        plt.style.use('/nvme/scratch/work/tharvey/scripts/paper.mplstyle')
+        print('Using custom style')
+    except FileNotFoundError:
+        pass
+    nrows = 2
+    colors = plt.get_cmap(cmap)
+    band_colors = {band:colors(i/len(bands)) for i, band in enumerate(bands)}
+    tool_colors = {key:colors(i/len(psf_dir_dict)) for i, key in enumerate(psf_dir_dict.keys())}
+    linestyles = ['-', '--', '-.', ':']
+    fig, axs = plt.subplots(nrows = 2, ncols = 1, figsize=(3, 5), sharex=True, sharey=False, constrained_layout=True)
+    
+    #assert len(kernel_dir_dict.keys()) == len(psf_dir_dict.keys()), 'PSF and kernel names must match'
+    # move last band to the front
+    assert len(psf_dir_dict) == len(kernel_dir_dict) == 1
+    key = list(psf_dir_dict.keys())[0]
+    target_psf = fits.getdata(glob.glob(f'{psf_dir_dict[key]}/*{match_band}*.fits')[0])
+    target_psf /= np.sum(target_psf)
+
+    for i, band in enumerate(bands[:-1]):
+
+
+        for j, ((name_psf, psf_dir), (name_kernel, kernel_dir)) in enumerate(zip(psf_dir_dict.items(), kernel_dir_dict.items())):
+            #filename = glob.glob(f'{kernel_dir}/*{band}*.fits')[0]
+            #kernel = fits.getdata(filename)
+            #psf_dir = psf_dir_dict[name]
+            filename = glob.glob(f'{psf_dir}/*{band}*.fits')
+            assert name_psf == name_kernel, 'PSF and kernel names must match'
+            name = name_psf
+
+            if len(filename) > 1:
+                try:
+                    filename = [f for f in filename if 'orig' not in f]
+                    if len(filename) > 1:
+                        filename = [f for f in filename if 'norm' in f]
+                    filename = filename[0]
+                except:
+                    filename = filename[0]
+            elif len(filename) == 0:
+                print(f'No PSF found for {band} in {psf_dir}')
+                continue
+            else:
+                filename = filename[0]
+
+            kernel_filename = glob.glob(f'{kernel_dir}/*{band}*.fits')
+            if len(kernel_filename) > 1:
+                try:
+                    kernel_filename = [f for f in kernel_filename if 'orig' not in f]
+                    if len(kernel_filename) > 1:
+                        kernel_filename = [f for f in kernel_filename if 'norm' in f]
+                    kernel_filename = kernel_filename[0]
+                except:
+                    kernel_filename = kernel_filename[0]
+            print(kernel_filename)
+            print(band)
+            kernel = fits.getdata(kernel_filename[0])
+
+            psf = fits.getdata(filename)
+            psf /= np.sum(psf)
+
+            filt_psf_conv = convolve_fft(psf, kernel)
+            
+            r,pf,pt = plot_profile(filt_psf_conv,target_psf)
+            axs[1].plot(r*pixelscale[name], pf/pt, c = band_colors[band], label=band if j == 0 else None, linewidth = 1, zorder = 6)
+            fr,fpf,fpt = plot_profile(psf,target_psf)
+            axs[0].plot(fr*pixelscale[name], fpf/fpt, c = band_colors[band], linewidth = 1, zorder = 6)
+            
+    axs[0].set_ylim(0.90,1.10)
+    axs[1].set_ylim(0.97,1.03)
+
+    axs[0].axvline(x=0.16,ls=':', linewidth = 1)
+    axs[0].axhline(y=1,ls=':', linewidth=1, zorder = 2)
+
+    axs[0].set_ylabel(r'F$_{\rm i} (<r) / $F$_{\rm F444W} (<r)$', fontsize=8)
+    
+    axs[1].axvline(x=0.16,ls=':', linewidth = 1)
+    axs[1].axhline(y=1,ls=':', linewidth=1, zorder = 2)
+    axs[1].set_xlabel('Radius (arcsec)', fontsize = 8)
+    axs[1].set_ylabel(r'F$_{\rm i, conv} (<r) / $F$_{\rm F444W} (<r)$', fontsize=8)
+    
+    axs[0].xaxis.set_tick_params(which='both', top=True, labelsize=8)
+    axs[1].xaxis.set_tick_params(which='both', top=True, labelsize=8)
+    axs[1].yaxis.set_tick_params(which='both', right=True, labelsize=8)
+    axs[0].yaxis.set_tick_params(which='both', right=True, labelsize=8)
+
+    fig.legend(frameon=False, fontsize=7, loc='lower right', bbox_to_anchor=(0.95, 0.31),ncol=3, columnspacing=0.5, handletextpad=0.5, handlelength = 1)
+    axs[1].text(0.17, 0.84, '0.16 as', ha='center', va='center', transform=axs[1].transAxes, fontsize=8, rotation=90, alpha=0.8)
+    fig.get_layout_engine().set(wspace=-5, hspace=-3)
+
+    fig.savefig('/nvme/scratch/work/tharvey/PSFs/rel_cog_comparison.pdf', dpi=300, bbox_inches='tight')   
 
 
 def measure_cog(sci_cutout, pos):
@@ -1308,9 +1521,9 @@ def psf_cog(psfmodel, filt, nearrad=None, fix_extrapolation=True, pixel_scale=No
         LW_FILTERS = ['F250M', 'F277W', 'F300M', 'F322W2', 'F323N', 'F335M',
                     'F360M', 'F356W', 'F405N', 'F410M', 'F430M', 'F444W', 'F460M',
                     'F466N', 'F470N', 'F480M']
-
-        PATH_SW_ENERGY = '/nvme/scratch/work/tharvey/aperpy/harvey_testing/PSF/Encircled_Energy_SW_ETCv2.txt'
-        PATH_LW_ENERGY = '/nvme/scratch/work/tharvey/aperpy/harvey_testing/PSF/Encircled_Energy_LW_ETCv2.txt'
+        dir_of_this_script = os.path.dirname(os.path.abspath(__file__))
+        PATH_SW_ENERGY = f'{dir_of_this_script}/Encircled_Energy_SW_ETCv2.txt'
+        PATH_LW_ENERGY = f'{dir_of_this_script}/Encircled_Energy_LW_ETCv2.txt'
 
         from astropy.io import ascii
         # Check if filter is valid and get correction term
@@ -1445,6 +1658,14 @@ def get_webbpsf(filt, field='uncover', angle=None, fov=4, og_fov=10, pixscl=None
 
     return rotated
 
+def make_err_from_wht(path):
+    wht = fits.getdata(path)
+    outname = path.replace('wht', 'rms')
+    err = np.where(wht==0, 0, 1/np.sqrt(wht))
+    newhdu = fits.PrimaryHDU(err, header=fits.getheader(path))
+    newhdu.writeto(outname, overwrite=True)
+
+
 def psf_correction_factor(match_band, psf_dir, apersize=0.32, pixel_scale = 0.03, ):
     conv_psfmodel = fits.open(psf_dir + f'/{match_band}_psf.fits')[0].data # My modelled PSF
     #conv_psfmodel = fits.open('/raid/scratch/data/jwst/PSFs/TomPSFs/PSF_Resample_03_F444W.fits')[0].data # My WebbPSF PSF
@@ -1462,67 +1683,129 @@ if __name__ == '__main__':
     surveys = ['JOF'] #['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
     version = 'v11'
     instruments = ['ACS_WFC', 'NIRCam']
-    match_band = 'F444W'
+    match_band = 'F444W' #'F444W' or None
     outdir = f'/nvme/scratch/work/tharvey/PSFs/{"+".join(surveys)}/'
-    outdir_webbpsf = '/nvme/scratch/work/tharvey/PSFs/webbpsf/morishita_jitter/'
+    outdir_webbpsf = f'/nvme/scratch/work/tharvey/PSFs/{"+".join(surveys)}/webbpsf/'
     kernel_dir = f'/nvme/scratch/work/tharvey/PSFs/kernels/{"+".join(surveys)}/'
+    psf_mask = '/nvme/scratch/work/nadams/Ring/L2_HSTPSF_Mask.reg'
+    use_psf_masks = None #{'F606W':[psf_mask]} # None
     maglim = (18.0, 25.0) # Mag limit for stars to stack
+    psf_fov = 4 # FOV for PSF in arcsec
     #data = Data.from_pipeline(survey, version = version, instruments = instruments)
-    
+    manual_id_remove = []
     #im_paths = data.im_paths
     #bands = data.instrument.band_names
     bands = ['F090W', 'F115W', 'F150W', 'F162M', 'F182M', 'F200W', 'F210M', 'F250M', 'F277W', 'F300M', 'F335M', 'F356W', 'F410M', 'F444W']
-    folders = [f'/raid/scratch/data/jwst/{survey}/mosaic_1084_wispnathan/' for survey in surveys]
+    #NORMAL OPERATION HERE
+    #bands = ['F090W', 'F115W', 'F150W', 'F200W', 'F277W', 'F356W', 'F410M', 'F444W']
+    folders = [f'/raid/scratch/data/jwst/{survey}/NIRCam/mosaic_1084_wispnathan/' for survey in surveys]
     outdir_matched_images = [f'{folder}psf_matched/' for folder in folders]
+    outdir_matched_images = {band:[f'{folder}psf_matched/' for folder in outdir_matched_images] for band in bands}
     print(folders)
     im_paths = {band:[glob.glob(f'{folder}/*{band.lower()}*.fits')[0] for folder in folders] for band in bands}
     wht_paths = copy(im_paths) # Placeholder
     err_paths = copy(im_paths) # Placeholder
     phot_zp = {band:28.08 for band in bands}
-
-    '''
+  
+    
     # Add HST seperately
+    # Reset
+    # For Nathan
+    '''
+    name = 'NEP-3'
+    outdir = f'/nvme/scratch/work/tharvey/PSFs/{name}/'
+    bands = []
+    im_paths, wht_paths, err_paths, phot_zp = {}, {}, {}, {}
     bands.insert(0, 'F606W')
     im_paths['F606W'] = '/raid/scratch/data/hst/NEP-1/ACS_WFC/30mas/aligned_full/ACS_WFC_f606W_NEP-1_drz.fits'
     wht_paths['F606W'] = '/raid/scratch/data/hst/NEP-1/ACS_WFC/30mas/aligned_full/ACS_WFC_f606W_NEP-1_wht.fits'
     err_paths['F606W'] = ''
     
+    '''
+    #bands = []
     for band in ['F850LP', 'F814W', 'F775W', 'F606W', 'F435W']:
         bands.insert(0, band)
-        im_paths[band] = f'/raid/scratch/data/hst/{field}/ACS_WFC/30mas/aligned_full/ACS_WFC_{band.lower()}_NEP-1_drz.fits'
+        band_path =f'/raid/scratch/data/hst/JADES-Deep-GS/ACS_WFC/30mas/nadams_downloads/hlsp_hlf_hst_acs-30mas_goodss_{band.lower()}_v2.0_sci.fits'
+        band_path =f'/raid/scratch/data/hst/JOF/ACS_WFC/30mas/ACS_WFC_{band}_JOF_drz.fits'
+        
+        im_paths[band] = [band_path]
+        wht_paths[band] = [band_path.replace('sci', 'wht').replace('drz', 'wht')]
 
-    hdr = fits.getheader(im_paths['F606W'])
-    phot_zp['F606W'] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+        make_err_from_wht(wht_paths[band][0])
+        err_paths[band] = [wht_paths[band][0].replace('wht', 'rms')]
 
-    '''
-    #kernel_dir_dict = {'aperpy': kernel_dir, 'WebbPSF':'/nvme/scratch/work/tharvey/resolved_sedfitting/psfs/'}
+        outdir_matched_images[band] = [f'{os.path.dirname(band_path)}/psf_matched/']
+        outdir_matched_images[band] = ['/raid/scratch/data/hst/JOF/ACS_WFC/30mas/psf_matched/']
+
+        #im_paths[band] = [f'/raid/scratch/data/hst/{survey}/ACS_WFC/30mas/ACS_WFC_{band}_{survey}_drz.fits' for survey in surveys]
+        #wht_paths[band] = [f'/raid/scratch/data/hst/{survey}/ACS_WFC/30mas/ACS_WFC_{band}_{survey}_wht.fits' for survey in surveys]
+        print('Warning! phot_zp not set up for multiple fields for HST bands because I\'m lazy.')
+        try:
+            hdr = fits.getheader(im_paths[band][0], ext=0)
+            if 'ZEROPNT' in hdr:
+                phot_zp[band] = hdr['ZEROPNT']
+            else:
+                phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+        except KeyError:
+            hdr = fits.getheader(im_paths[band][0], ext=1)
+            phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+
+        print(band, phot_zp[band])
+    print(im_paths)
+    manual_id_remove = []
+    #maglim = [18., 25.]
+    
+    kernel_dir_dict = {'aperpy': kernel_dir, 'WebbPSF':'/nvme/scratch/work/tharvey/resolved_sedfitting/psfs/'}
     psf_dir_dict = {'+'.join(surveys):outdir,
-    'UNCOVER DR3':'/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', 'WebbPSF Default':'/nvme/scratch/work/tharvey/PSFs/webbpsf/default_jitter/', 'WebbPSF\n$\sigma$=22(SW)/34(LW) mas':'/nvme/scratch/work/tharvey/PSFs/webbpsf/morishita_jitter/'}
+    'UNCOVER DR3':'/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', 'WebbPSF Default':f'{outdir_webbpsf}/default_jitter', 'WebbPSF\n$\sigma=\left\{^{22(SW)}_{34(LW)}\\right.$ mas':f'{outdir_webbpsf}/morishita_jitter'}
     # Rederived 'NEW Webbpsf models have no difference to ours! 
     #'New webbpsf':'/nvme/scratch/work/tharvey/PSFs/webbpsf/'}
-    pixelscale = {'+'.join(surveys):0.03, 'WebbPSF Default':0.03, 'UNCOVER DR3':0.04, 'WebbPSF\n$\sigma$=22(SW)/34(LW) mas':0.03}# 'New webbpsf':0.03}
+    pixelscale = {'+'.join(surveys):0.03, 'WebbPSF Default':0.03, 'UNCOVER DR3':0.04, 'WebbPSF\n$\sigma=\left\{^{22(SW)}_{34(LW)}\\right.$ mas':0.03}# 'New webbpsf':0.03}
 
     # Make PSF model and kernels from stacking stars 
-   
-    #make_psf(bands, im_paths, outdir, kernel_dir, match_band = match_band, phot_zp = phot_zp, maglim=maglim)
-
-    # Generate WebbPSF model for bands - only for comparison!
+    #make_psf(bands, im_paths, outdir, kernel_dir, match_band = match_band, phot_zp = phot_zp, maglim=maglim, use_psf_masks=use_psf_masks, manual_id_remove = manual_id_remove, sigma=3.5, psf_fov = psf_fov, pypher_r = 1e-4)
+    
+     # Generate WebbPSF model for bands - only for comparison!
     for band in bands:
-        if int(band[1:-1]) > 240:
+        # strip things which aren't numbers
+        band_wav = int(''.join([i for i in band if i.isdigit()]))
+        if band_wav > 240:
             jitter_sigma = 0.034
         else:
             jitter_sigma = 0.022
-        print(band, jitter_sigma)
-        
-        #get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=outdir_webbpsf, jitter_kernel='gaussian', jitter_sigma=jitter_sigma)
-
+        #print(band, jitter_sigma)
+        if band in ['F480M', 'F460M', 'F444W', 'F430M', 'F410M', 'F356W', 'F335M', 'F300M', 'F277W', 'F250M', 'F210M', 'F200W', 'F182M', 'F162M', 'F150W', 'F115W', 'F090W']:
+            #get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=f'{outdir_webbpsf}/morishita_jitter', jitter_kernel='gaussian', jitter_sigma=jitter_sigma)
+            #get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=f'{outdir_webbpsf}/default_jitter')
+            pass
     # Compare EE for different models
     #psf_comparison(bands, psf_dir_dict, match_band=match_band, pixelscale=pixelscale)
-
+    psf_dir_dict = {'+'.join(surveys):outdir}
+    kernel_dir_dict = {'+'.join(surveys):kernel_dir}
+    #rel_cog_comparison(bands, psf_dir_dict, kernel_dir_dict, pixelscale=pixelscale, match_band=match_band)
+    
+    bands = ['F850LP', 'F814W', 'F775W', 'F606W', 'F435W']
     # Convolve images with bands
-    #convolve_images(bands, im_paths, wht_paths, err_paths, outdir_matched_images, kernel_dir, match_band, overwrite=True)
+    convolve_images(bands, im_paths, wht_paths, err_paths, outdir_matched_images, kernel_dir, match_band, overwrite=True)
+    dog
+
+    for apersize in [0.32, 0.5, 1, 1.5, 2]:
+        # Derive correction factor for apertures from a PSF model 
+        corr1 = psf_correction_factor('F444W', outdir, apersize=apersize, pixel_scale = 0.03)
+        corr2 = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/JADES-Deep-GS/', apersize=apersize, pixel_scale = 0.03)
+        corr3 = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/NEP-3/', apersize=apersize, pixel_scale = 0.03)
+        print(f'{apersize} ', np.median([corr1, corr2, corr3]))
+
+    corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', apersize=0.32, pixel_scale = 0.04)
+
+    print('UNCOVER corr', corr)
+
+    #corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/default_jitter/', apersize=0.32, pixel_scale = 0.03)
+
+    #print('WebbPSF Default corr', corr)
+
+    #corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/morishita_jitter/', apersize=0.32, pixel_scale = 0.03)
+
+    #print('WebbPSF Morishita corr', corr)
+
     
-    # Derive correction factor for apertures from a PSF model 
-    #corr = psf_correction_factor('F444W', outdir, apersize=0.32, pixel_scale = 0.03)
-    
-    #print(corr)

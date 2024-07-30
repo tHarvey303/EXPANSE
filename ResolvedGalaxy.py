@@ -30,6 +30,7 @@ from astropy.io.misc.hdf5 import write_table_hdf5, read_table_hdf5
 import copy
 import cmasher as cm
 import sys
+from tqdm import tqdm
 # import Ellipse
 from matplotlib.patches import Ellipse
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
@@ -567,6 +568,11 @@ class ResolvedGalaxy:
                 tool, run = key.split('/')[1:]
                 sed_fitting_table[tool][run] = table
 
+        photometry_properties = {}
+        if hfile.get('photometry_properties') is not None:
+            for prop in hfile['phot_properties'].keys():
+                phot_properties[prop] = hfile['phot_properties'][prop][()]
+        
         hfile.close()
 
         return cls(galaxy_id = galaxy_id, sky_coord = sky_coord, survey = survey, bands = bands, im_paths = im_paths,
@@ -589,6 +595,10 @@ class ResolvedGalaxy:
                     psfs, psfs_meta, galaxy_region,
                     cutout_size, h5_folder)
         '''
+
+    @classmethod
+    def init_mock_from_synthesizer(cls, ):
+        raise NotImplementedError
 
     def get_filter_wavs(self, facilities = {'JWST':['NIRCam'], 'HST':['ACS', 'WFC3_IR']}):
          
@@ -673,9 +683,7 @@ class ResolvedGalaxy:
                 run = True
         if run:
             self.convert_psfs_to_kernels(psf_type = 'star_stack')
-            
-                
-
+                           
     def estimate_rms_from_background(self, cutout_size = 250, object_distance = 20, overwrite=True, plot=False):
         '''Estimate the RMS error from the background'''
         import cv2
@@ -908,8 +916,6 @@ class ResolvedGalaxy:
             hfile.close()
             os.remove(self.h5_path)
             os.rename(self.h5_path.replace('.h5', f'{append}.h5'), self.h5_path)
-
-
 
     def convolve_with_psf(self, psf_type = 'webbpsf'):
         '''Convolve the images with the PSF'''
@@ -1466,7 +1472,6 @@ class ResolvedGalaxy:
         for i in range(len(bands), len(axes)):
             fig.delaxes(axes[i])
         
-        
         for i, band in enumerate(bands):
             snr_map = self.psf_matched_data[psf_type][band] / self.psf_matched_rms_err[psf_type][band]
             mappable = axes[i].imshow(snr_map, origin='lower', interpolation='none')
@@ -1828,7 +1833,7 @@ class ResolvedGalaxy:
             mask = (flux_table[fluxerr_col_name]/flux_table[flux_col_name] < min_percentage_error/100)  & (flux_table[flux_col_name]>0)
             flux_table[fluxerr_col_name][mask] = min_percentage_error/100 * flux_table[flux_col_name][mask]
         
-        row = flux_table[flux_table['ID'] == str(id)]
+        row = flux_table[flux_table['ID'] == id]
 
         if len(row) == 0:
             raise Exception(f'ID {id} not found in flux table')
@@ -2064,7 +2069,7 @@ class ResolvedGalaxy:
 
         fit_cat = pipes.fit_catalogue(ids, fit_instructions, self.provide_bagpipes_phot,
                                     spectrum_exists=False, photometry_exists=True, run=out_subdir,
-                                    make_plots=False, cat_filt_list=nircam_filts,  redshifts = redshifts,
+                                    make_plots=False, cat_filt_list=nircam_filts, redshifts = redshifts,
                                     full_catalogue=True) #analysis_function=custom_plotting,
         print('Beginning fit')
         print(fit_instructions)
@@ -2132,7 +2137,7 @@ class ResolvedGalaxy:
         return param_dict.get(param, u.dimensionless_unscaled)
 
     def plot_bagpipes_corner(self, run_name=None, bins_to_show = 'all', save=False, corner_bins=25, facecolor='white', colors='black', cache=None,
-                            plotpipes_dir=bagpipes_dir,run_dir = f'pipes/'):
+                            plotpipes_dir='pipes_scripts/',run_dir = f'pipes/'):
         
         if run_name is None:
             run_name = list(self.sed_fitting_table['bagpipes'].keys())
@@ -2141,8 +2146,10 @@ class ResolvedGalaxy:
             else:
                 run_name = run_name[0]
 
+        table = self.sed_fitting_table['bagpipes'][run_name]
+        
         if bins_to_show == 'all':
-            bins_to_show = np.unique(table['bin'])
+            bins_to_show = np.unique(table['#ID'])
 
         if type(colors) == str:
             colors = [colors for i in range(len(bins_to_show))]
@@ -2221,8 +2228,8 @@ class ResolvedGalaxy:
         return fig, cache
 
     def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'all', save=False, 
-                        facecolor='white', marker_colors='black', time_unit='Gyr',
-                        plotpipes_dir=bagpipes_dir, 
+                        facecolor='white', marker_colors='black', time_unit='Gyr', cmap = 'viridis',
+                        plotpipes_dir='pipes_scripts/', 
                         run_dir = f'pipes/', cache=None):
         sys.path.insert(1, plotpipes_dir)
 
@@ -2236,27 +2243,51 @@ class ResolvedGalaxy:
             self.load_bagpipes_results(run_name)
         table = self.sed_fitting_table['bagpipes'][run_name]
 
-
         fig, axes = plt.subplots(1, 1, figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
         if bins_to_show == 'all':
             bins_to_show = np.unique(table['bin'])
 
-        if type(marker_colors) == str:
-            marker_colors = [marker_colors for i in range(len(bins_to_show))]
+        if type(marker_colors) == str and len(bins_to_show) > 1:
+            cmap = plt.get_cmap(cmap)
+            marker_colors = cmap(np.linspace(0, 1, len(bins_to_show)))
+            #marker_colors = [marker_colors for i in range(len(bins_to_show))]
 
         if cache is None:
             cache = {}
         for bin, color, in zip(bins_to_show, marker_colors):
             h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
-
-            pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
-            # This plots the observed SED
-            #pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
-            #                y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
-            #                label=None,  marker="o", rerun_fluxes=False)
-            # This plots the best fit SED
-            
-            pipes_obj.plot_sfh(axes, color, modify_ax = True, add_zaxis=True, timescale=time_unit, plottype='lookback', logify=False, cosmo=None)
+            if bin == 'RESOLVED':
+                ''' Special case where we sum the SFH of all the bins'''
+                dummy_fig, dummy_ax = plt.subplots(1, 1)
+                set = False
+                for pos, tbin in enumerate(np.unique(table['#ID'])):
+                    
+                    try:
+                        float(tbin)
+                        pipes_obj = self.load_pipes_object(run_name, tbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
+                        tx, tsfh = pipes_obj.plot_sfh(dummy_ax, color, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = bin, return_sfh=True)
+                        if pos == 0:
+                            x_all = tx
+                            y_all = tsfh
+                            set = True
+                        else:
+                            assert np.all(x_all == tx), "Time scales do not match"
+                            y_all = np.sum([y_all, tsfh], axis=0)
+                            set = True
+                        
+                    except ValueError: 
+                        pass
+                    
+                if set:
+                    axes.plot(x_all, y_all[:, 1], color='tomato', label='RESOLVED', lw = 2)
+                    axes.fill_between(x_all, y_all[:, 0], y_all[:, 2], color='tomato', alpha=0.5)
+                
+                plt.close(dummy_fig)
+            else:
+                pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
+                pipes_obj.plot_sfh(axes, color, modify_ax = True, add_zaxis=True, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = bin)
+        
+        axes.legend(fontsize=8)
 
         #cbar.set_label('Age (Gyr)', labelpad=10)
         #cbar.ax.xaxis.set_ticks_position('top')
@@ -2268,7 +2299,7 @@ class ResolvedGalaxy:
 
         return fig, cache
 
-    def plot_bagpipes_results(self, run_name=None, parameters=['bin_map', 'stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white', max_on_row=4):
+    def plot_bagpipes_results(self, run_name=None, parameters=['bin_map', 'stellar_mass', 'sfr', 'dust:Av', 'chisq_phot-', 'UV_colour'], reload_from_cat=False, save=False, facecolor='white', max_on_row=4, weight_mass_sfr = True):
         
         if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys():
             print('No bagpipes results found.')
@@ -2309,14 +2340,21 @@ class ResolvedGalaxy:
             cax = ax_divider.append_axes('top', size='5%', pad='2%')
 
             if param == 'bin_map':
-                map = self.pixedfit_map
+                map = copy.copy(self.pixedfit_map)
+                map[map == 0] = np.nan
                 log = ''
             else:
                 map = self.convert_table_to_map(table, '#ID', f'{param[:-1]}' if param.endswith('-') else f'{param}_50', self.pixedfit_map, remove_log10=param.startswith('stellar_mass'))
                 log = ''
                 
             if param in ['stellar_mass', 'sfr']:
-                map = self.map_to_density_map(map, redshift = redshift, logmap = True) 
+                ref_band = {'stellar_mass':'F444W', 'sfr':'1500A'}
+                if weight_mass_sfr:
+                    weight = ref_band[param]
+                else:
+                    weight = False
+                map = self.map_to_density_map(map, redshift = redshift, weight_by_band=weight, logmap = True)
+                #map = self.map_to_density_map(map, redshift = redshift, logmap = True) 
                 log = '$\log_{10}$ '
                 param = f'{param}_density'
 
@@ -2335,18 +2373,20 @@ class ResolvedGalaxy:
             fig.savefig(f'galaxies/{run_name}_maps.png', dpi=300, bbox_inches='tight')
         return fig
 
-    def map_to_density_map(self, map, cosmo = FlatLambdaCDM(H0=70, Om0=0.3), redshift = None, logmap = False):
+    def map_to_density_map(self, map, cosmo = FlatLambdaCDM(H0=70, Om0=0.3), redshift = None, logmap = False, weight_by_band = False, psf_type = 'star_stack', binmap_type = 'pixedfit'):
         pixel_scale = self.im_pixel_scales[self.bands[0]]
         density_map = copy.deepcopy(map)
-        map[map == np.nan] = -1
-        unique = np.unique(map)
-        # Remove -1
-        unique = unique[unique != -1]
-        for id in unique:
-            
+        if binmap_type == 'pixedfit':
+            pixel_map = self.pixedfit_map
+        else:
+            raise Exception('Only pixedfit binning is supported for now')
+        
+        for id in np.unique(pixel_map):
+            #print(id)
             if id == 0:
                 continue
-            mask = map == id
+            mask = pixel_map == id
+        
             if redshift is None:
                 z = self.redshift
             else:
@@ -2356,16 +2396,59 @@ class ResolvedGalaxy:
             d_A = cosmo.angular_diameter_distance(z) #Angular diameter distance in Mpc
             pix_kpc = (re_as * d_A).to(u.kpc, u.dimensionless_angles()) # re of galaxy in kpc
             pix_area = np.sum(mask) * pix_kpc**2 #Area of pixels with id in kpc^2
-            value = np.sum(map[mask]) / pix_area
-            if logmap:
-                value = np.log10(value.value)
+            # Check if all values in map[mask] are equal
+            if len(np.unique(map[mask])) > 1:
+                raise Exception(f'This was supposed to be equal {id}')
             
-            density_map[mask] = value
+            if weight_by_band:
+
+                if weight_by_band.endswith('A'):
+                    # Calculate which band is closest to the wavelength
+                    wav = float(weight_by_band[:-1]) * u.AA
+                    # Convert to observed frame
+                    obs_wav = wav * (1 + z)
+
+                    self.get_filter_wavs()
+                    
+                    fmask = [self.filter_wavs[band].to(u.AA).value > obs_wav.value for band in self.bands]
+                    fmask = np.array(fmask, dtype=bool)
+    
+                    pos = np.argwhere(fmask == True)[0][0]
+                    band = self.bands[pos]
+                    print(f'Using band {band} at wavelength {self.filter_wavs[band].to(u.AA)} for weighting at {obs_wav} (rest frame {wav})')
+                else:
+                    band = weight_by_band
+                if self.use_psf_type:
+                    psf_type = self.use_psf_type
+                
+                data_band = self.psf_matched_data[psf_type][band]
+                norm = np.sum(data_band[mask])
+
+                x, y = np.where(mask)
+                for xi, yi in zip(x, y):
+                    value = map[xi, yi]
+                    #print(mask[xi, yi], data_band[xi, yi] / norm)
+                    weighted_val = value * data_band[xi, yi] / norm
+                    weighted_val_area = weighted_val / pix_kpc**2
+                    if logmap:
+                        weighted_val_area = np.log10(weighted_val_area.value)
+                        value = np.log10(value)
+                    density_map[xi, yi] = weighted_val_area
+                #assert np.sum(density_map[mask]) == value, f'overall sum should still correspond, {np.sum(density_map[mask])} != {value}'
+            else:
+                value = np.unique(map[mask]) / pix_area
+
+                if logmap:
+                    value = np.log10(value.value)
+
+                density_map[mask] = value
 
         return density_map
     
-    def load_pipes_object(self, run_name, bin, run_dir = f'pipes/', bagpipes_filter_dir=bagpipes_filter_dir, cache=None, plotpipes_dir=bagpipes_dir):
+    def load_pipes_object(self, run_name, bin, run_dir = f'pipes/', bagpipes_filter_dir=bagpipes_filter_dir, cache=None, plotpipes_dir='pipes_scripts/'):
+        plotpipes_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), plotpipes_dir)
         sys.path.insert(1, plotpipes_dir)
+        print(plotpipes_dir)
         from plotpipes import PipesFit
         found = False
         if cache is not None:
@@ -2373,9 +2456,10 @@ class ResolvedGalaxy:
                 pipes_obj = cache[bin]
                 found = True
 
-        if bin in self.internal_bagpipes_cache.keys():    
-            pipes_obj = self.internal_bagpipes_cache[bin]
-            found = True
+        if run_name in self.internal_bagpipes_cache.keys():
+            if bin in self.internal_bagpipes_cache[run_name].keys():    
+                pipes_obj = self.internal_bagpipes_cache[run_name][bin]
+                found = True
         
         if not found:
             h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
@@ -2383,16 +2467,20 @@ class ResolvedGalaxy:
             pipes_obj = PipesFit(bin, self.survey, h5_path, run_dir, catalog = None, overall_field=None,
                 load_spectrum=False, filter_path=bagpipes_filter_dir,
                 ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands = self.bands, data_func = self.provide_bagpipes_phot)
-            cache[bin] = pipes_obj
-            self.internal_bagpipes_cache[bin] = pipes_obj
+            if cache is not None:
+                cache[bin] = pipes_obj
+            if run_name not in self.internal_bagpipes_cache.keys():
+                self.internal_bagpipes_cache[run_name] = {bin: pipes_obj}
+            else:
+                self.internal_bagpipes_cache[run_name][bin] = pipes_obj
             
         return pipes_obj
 
 
     def plot_bagpipes_component_comparison(self, parameter = 'stellar_mass', run_name=None, 
                                         bins_to_show = 'all', save=False, run_dir = f'pipes/', 
-                                        facecolor='white', plotpipes_dir=bagpipes_dir, 
-                                        bagpipes_filter_dir=bagpipes_filter_dir,
+                                        facecolor='white', plotpipes_dir='pipes_scripts/', 
+                                        bagpipes_filter_dir=bagpipes_filter_dir, n_draws = 10000,
                                         cache = None):
         sys.path.insert(1, plotpipes_dir)
         from plotpipes import hist1d
@@ -2420,8 +2508,14 @@ class ResolvedGalaxy:
 
         all_samples = []
 
-        colors = mcm.get_cmap('tab20', len(bins_to_show))
-        colors = {bin:colors(i) for i, bin in enumerate(bins_to_show)}
+        bins = []
+        for bin in bins_to_show:
+            try:
+                bin = float(bin)
+            except:
+                bins.append(bin)
+        colors = mcm.get_cmap('cmr.guppy', len(bins))
+        colors = {bin:colors(i) for i, bin in enumerate(bins)}
         for bin in bins_to_show:
             pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
             
@@ -2436,34 +2530,42 @@ class ResolvedGalaxy:
             colour=colors[bin] if not bin_number else 'black', norm_height=True)
             if bin_number:
                 all_samples.append(samples)
-                print(len(samples))
         # Sum all samples
-        n_draws = 10000
+        
         all_samples = np.array(all_samples, dtype=object)
 
         #all_samples = all_samples[~np.isnan(all_samples)]
-        all_samples = all_samples.T
+        print(f'Combining {len(all_samples)} samples for {parameter}')
+        #all_samples = all_samples.T
         new_samples = np.zeros((n_draws, len(all_samples)))
         for i, samples in enumerate(all_samples):
             #samples = samples[~np.isnan(samples)]
             new_samples[:, i] = np.random.choice(samples, size=n_draws)
 
         sum_samples = np.log10(np.sum(10**new_samples, axis=1))
+        print(len(sum_samples))
         # Normalize height of histogram
 
         hist1d(sum_samples, ax_samples,
-                smooth=True, color='black', percentiles=False, lw=1, alpha=1, fill_between=True, norm_height=True)
+                smooth=True, color='black', percentiles=False, lw=1, alpha=1, fill_between=False, norm_height=True, label='$\Sigma$ Resolved')
 
         # Fix xticks
         ax_samples.set_xticks(np.arange(ax_samples.get_xlim()[0], ax_samples.get_xlim()[1], 0.5))
-        ax_samples.legend()
+        ax_samples.legend(fontsize=6)
+        ax_samples.set_xlabel(parameter)
 
 
+    def scale_map_by_band(self, map, band):
+
+        pix_map_band = self.self.psf_matched_data[binmap_type][band]
+
+        bins = np.unique(self.pixedfit_map)
+        for bin in bins:
+            mask = self.pixedfit_map == bin
+            map[mask] = map[mask] * pix_map_band[mask]
         
 
-    def plot_bagpipes_sed(self, run_name, run_dir = f'pipes/', bins_to_show='all', plotpipes_dir = bagpipes_dir):
-        sys.path.insert(1, plotpipes_dir)
-
+    def plot_bagpipes_sed(self, run_name, run_dir = f'pipes/', bins_to_show='all', plotpipes_dir = 'pipes_scripts/'):
         if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys():
             raise Exception("Need to run bagpipes first")
 
@@ -2472,12 +2574,11 @@ class ResolvedGalaxy:
         
         # Plot map next to SED plot
 
-        fig = plt.figure(constrained_layout=True, figsize=(8, 3))
+        fig = plt.figure(constrained_layout=True, figsize=(8, 4))
         gs = fig.add_gridspec(2, 3)
         ax_map = fig.add_subplot(gs[:, 0])
         ax_sed = fig.add_subplot(gs[:, 1:])
 
-        
         ax_divider = make_axes_locatable(ax_map)
         cax = ax_divider.append_axes('top', size='5%', pad='2%')
         
@@ -2494,11 +2595,12 @@ class ResolvedGalaxy:
 
         cmap = plt.cm.get_cmap('cmr.cosmic', len(count))
         color = {table['#ID'][i]:cmap(pos) for pos, i in enumerate(count)}
-        entire_cmap = plt.cm.get_cmap('cmr.guppy', len(other_count))
+        entire_cmap = plt.cm.get_cmap('cmr.pepper', len(other_count))
         color.update({table['#ID'][i]:entire_cmap(pos) for pos, i in enumerate(other_count)})
-
-        print(color)
-        mappable = ax_map.imshow(self.pixedfit_map, origin='lower', interpolation='none', cmap='cmr.cosmic')
+        map = copy.copy(self.pixedfit_map)
+        map[map == 0] = np.nan
+        
+        mappable = ax_map.imshow(map, origin='lower', interpolation='none', cmap='cmr.cosmic')
         cbar = fig.colorbar(mappable, cax=cax, orientation='horizontal')
         cbar.ax.xaxis.set_ticks_position('top')
         cbar.ax.xaxis.set_label_position('top')
@@ -2510,9 +2612,8 @@ class ResolvedGalaxy:
             bins_to_show = table['#ID']
         else:
             bins_to_show = bins_to_show
-        
 
-        for bin in bins_to_show:
+        for pos, bin in enumerate(bins_to_show):
             pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=None, plotpipes_dir=plotpipes_dir)
 
             # This plots the observed SED
@@ -2520,10 +2621,19 @@ class ResolvedGalaxy:
             #                y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
             #                label=None,  marker="o", rerun_fluxes=False)
             # This plots the best fit SED
-            pipes_obj.plot_best_fit(ax_sed, colour=color[bin],  wav_units=u.um, flux_units=u.ABmag, lw=1, fill_uncertainty=False,zorder=5, linestyle = '-.' if bin in other_count else 'solid')
+            print(color)
+            pipes_obj.plot_best_fit(ax_sed, colour=color[str(bin)],  wav_units=u.um, flux_units=u.ABmag, lw=1, fill_uncertainty=False, zorder=5, linestyle = '-.' if pos in other_count else 'solid', label = bin if pos in other_count else "")
             # Plot photometry
-            pipes_obj.plot_sed(ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, zorder = 6, fcolour=color[bin], ptsize=15)
-
+            pipes_obj.plot_sed(ax_sed, colour=color[str(bin)], wav_units=u.um, flux_units=u.ABmag, zorder = 6, fcolour=color[str(bin)], ptsize=15)
+            try:
+                float(bin)
+                # find CoM of pixels in map
+                y, x = np.where(map == bin)
+                y = np.mean(y)
+                x = np.mean(x)
+                ax_map.text(x, y, bin, fontsize=8, color='black', path_effects=[PathEffects.withStroke(linewidth=1, foreground='white')])
+            except ValueError:
+                pass
         # Set x-axis limits
         ax_sed.set_xlim(0.5, 5)
         # Set y-axis limits
@@ -2533,7 +2643,230 @@ class ResolvedGalaxy:
         ax_sed.set_xlabel('Wavelength ($\mu$m)')
         # Set y-axis label
         ax_sed.set_ylabel('AB Mag')
+        ax_sed.legend(fontsize=6,loc='upper left')
     
+    def init_galfind_phot(self, inst = 'ACS_WFC+NIRCam', psf_type = 'starstack', binmap_type = 'pixedfit'):
+
+        from galfind import Photometry_obs, Photometry, Photometry_rest, Instrument, Combined_Instrument, PDF
+
+        if not hasattr(self, 'photometry_table'):
+            raise Exception("Need to run measure_flux_in_bins first")
+        if hasattr(self, 'use_psf_type'):
+            psf_type = self.use_psf_type
+            print(f'Using PSF type {psf_type}')
+        else:
+            print(f'Using PSF type from argument {psf_type}')
+        
+        if hasattr(self, 'use_binmap_type'):
+            binmap_type = self.use_binmap_type
+            print(f'Using binmap type {binmap_type}')
+        else:
+            print(f'Using binmap type from argument {binmap_type}')
+        
+        if psf_type not in self.photometry_table.keys():
+            raise ValueError(f'PSF type {psf_type} not found in photometry table')
+        if binmap_type not in self.photometry_table[psf_type].keys():
+            raise ValueError(f'Binmap type {binmap_type} not found in photometry table')
+        
+
+        table = self.photometry_table[psf_type][binmap_type]
+        self.galfind_photometry_rest = {}
+        for row in table:
+            flux_Jy, flux_Jy_errs = [], []
+            instrument = Combined_Instrument.from_name(inst)
+            for band in instrument.band_names:
+                if band in self.bands:
+                    flux = row[band].to(u.Jy).value
+                    flux_err = row[f'{band}_err'].to(u.Jy).value
+                    flux_Jy.append(flux)
+                    flux_Jy_errs.append(flux_err)
+                else:
+                    instrument.remove_band(band)
+            
+            flux_Jy = np.array(flux_Jy) * u.Jy
+            flux_Jy_errs = np.array(flux_Jy_errs) * u.Jy
+            self.galfind_photometry_rest[str(row['ID'])] = Photometry_rest(instrument, flux_Jy, flux_Jy_errs, depths = np.ones(len(flux_Jy)), z = self.redshift)
+        
+    def galfind_phot_property_map(self, property, iters = 5, density = False, plot = True, ax = None, facecolor = 'white', cmap='viridis', **kwargs):
+        '''
+        Wrapper for galfind.Photometry_rest calculations
+
+        if density: property is converted to a density map (per kpc^2)
+
+
+        Common required arguments:
+        rest_UV_wav_lims = [1250., 3000.] * u.Angstrom : Wavelength limits for rest UV calculations
+        conv_author_year = str, e.g. 'M99', Paper ref, what is available depends on the function 
+        ref_wav =  1_500. * u.AA, wavelength at which to do calculation. 
+        dust_author_year = str, dust attenuation reference
+        kappa_UV_conv_author_year = str, K_UV conversion ref e.g. MD14
+        line_names = [], use self.available_em_lines for options
+        calc_wav = u.Quantity : calculate propety (only for dust attenuation) at this wavelength
+
+        
+        Property description: name : required kwargs
+
+        Beta: beta_phot :  # rest_UV_wav_lims, 
+        Dust attenuation in UV: AUV_from_beta_phot : rest_UV_wav_lims, conv_author_year
+        Apparent magnitude in UV: mUV_phot : rest_UV_wav_lims, conv_author_year
+        Absolute magnitude in UV: MUV_phot : rest_UV_wav_lims, ref_wav
+        Luminosity in UV: LUV_phot : rest_UV_wav_lims, ref_wav
+        SFR from UV: SFR_UV_phot : rest_UV_wav_lims, ref_wav, dust_author_year, kappa_UV_conv_author_year
+        Continuum in rest optical: cont_rest_optical : line_names
+        EW in rest optical: EW_rest_optical : line_names
+        Dust attenuation: dust_atten : calc_wav
+        Line flux in rest optical: line_flux_rest_optical : line_names
+        Line luminosity in rest optical: line_lum_rest_optical : line_names
+        Ionizing flux: xi_ion : 
+        '''
+        if not hasattr(self, 'galfind_photometry_rest'):
+            print('Warning: galfind photometry not initialized, initializing with default values')
+            self.init_galfind_phot()
+        map = copy.copy(self.pixedfit_map)
+        map[map == 0] = np.nan
+        PDFs = []
+
+        kwargs['iters'] = iters
+
+        test_id = np.unique(map)[1]
+        func = getattr(self.galfind_photometry_rest[str(int(test_id))],  f'calc_{property}')
+        property_name = func(extract_property_name = True, **kwargs)            
+
+        for pos, id in enumerate(tqdm(np.unique(map))):
+            if str(id) in ['0', 'nan']:
+                value = np.nan
+                continue
+            
+            phot = copy.deepcopy(self.galfind_photometry_rest[str(int(id))])
+
+            if hasattr(self, f'{property_name}_PDFs'):
+                skip = False
+                if np.shape(phot.property_PDFs[property_name][pos]) == [iters, len(np.unique(map))]:
+                    print(f'Expected shape {[iters, len(np.unique(map))]}, got {np.shape(phot.property_PDFs[property_name][pos])}')
+                    skip = True
+                if not skip:
+                    pdf = phot.property_PDFs[property_name][pos]
+                    phot.property_PDFs[property_name] = PDF.from_1D_arr(property_name, pdf)
+                    phot._update_properties_from_PDF(property_name)
+
+            func_name = f'calc_{property}'
+            if hasattr(phot, func_name):
+                func = getattr(phot, func_name)
+                _, param_name = phot._calc_property(SED_rest_property_function = func, **kwargs)
+                
+                if type(param_name) in [tuple, list]:
+                    param_name = param_name[-1]
+            else:
+                raise ValueError(f'Function calc_{property} not found in galfind photometry object')
+            
+            value = phot.properties[param_name]
+            
+            line = param_name.split('_')[2]
+            
+            if phot.property_PDFs[param_name] is not None:
+                out_kwargs = phot.property_PDFs[param_name].kwargs
+            else:
+                out_kwargs = {}
+
+            # Also have phot.property_PDFs for PDFs
+            #print(phot)
+            #print('phot.properties[param_name] = ', value)
+            #print('phot.property_PDFs[param_name].input_arr = ', phot.property_PDFs[param_name].input_arr)
+            #print(phot.property_PDFs[param_name].input_arr)
+            #rest_UV_wav_lims = [1250., 3000.] * u.Angstrom
+            #print('phot.get_rest_UV_phot(rest_UV_wav_lims).flux_Jy = ', phot.get_rest_UV_phot(rest_UV_wav_lims).flux_Jy)
+            PDFs.append(phot.property_PDFs[param_name].input_arr)
+
+            label = param_name
+
+            if type(value) == u.Quantity:
+                label = f'{label} ({value.unit:latex}'
+            if density:
+                value = self.map_to_density_map(value, redshift = self.redshift, logmap = False)
+                label = f'{label} $kpc^{-2}$'
+            label = f'{label})'
+            map[map == id] = value
+        
+
+        all_PDFs = np.array(PDFs)
+
+        print(type(all_PDFs), type(param_name))
+        
+        self.add_to_h5(all_PDFs, 'photometry_properties', param_name, setattr_gal = f'{param_name}_PDFs', overwrite=True) 
+
+        #def add_to_h5(self, data, group, name, ext=0, setattr_gal=None, overwrite=False, meta=None):
+
+        if np.all(np.isnan(map)):
+            print(f'Calculation not possible for {param_name}')
+            return None, None
+
+        if plot:
+            if ax is not None:
+                fig = ax.get_figure()
+            else:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 5), constrained_layout=True, facecolor=facecolor)
+            
+            ax_divider = make_axes_locatable(ax)
+            cax = ax_divider.append_axes('top', size='5%', pad='2%')
+
+            i = ax.imshow(map, origin='lower', interpolation='none', cmap=cmap)
+            cbar = fig.colorbar(i, cax=cax, orientation='horizontal')
+            # Label top of axis
+            cbar.set_label(label, labelpad = 10, fontsize=10)
+            cbar.ax.xaxis.set_ticks_position('top')
+            cbar.ax.xaxis.set_label_position('top')
+            cbar.ax.tick_params(labelsize=8)
+            cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+            if property == 'EW_rest_optical':
+                line_band = out_kwargs[f'{line}_emission_band']
+                cont_band = out_kwargs[f'{line}_cont_band']
+                ax.text(0.05, 0.95, f'{line_band} - {cont_band}', transform=ax.transAxes, fontsize=10, horizontalalignment = 'left', verticalalignment='top', color='black')
+            ax.set_title(property)
+            return fig
+        
+        return map, out_kwargs
+
+    # calc_beta_phot(
+    @property
+    def available_em_lines(self):
+        from galfind import Emission_lines
+        return Emission_lines.line_diagnostics.keys()
+
+    def plot_ew_figure(self, medium_bands_only = False, save = False, facecolor = 'white', max_col = 5, **kwargs):
+
+        to_plot = {}
+        for em_line in self.available_em_lines:
+            map, out_kwargs = self.galfind_phot_property_map(f'EW_rest_optical', plot = False, facecolor = facecolor, line_names = [em_line], medium_bands_only = medium_bands_only, rest_optical_wavs=[0, 9000]*u.Angstrom, **kwargs)
+            if type(map) != type(None):
+                to_plot[em_line] = (map, out_kwargs)
+        
+        num_rows = len(to_plot) // max_col + 1
+        fig, axes = plt.subplots(num_rows, max_col, figsize=(2.5*max_col, 2.5*num_rows), constrained_layout=True, facecolor=facecolor, sharex=True, sharey=True)
+        fig.get_layout_engine().set( h_pad=4 / 72, hspace=0.2)
+
+        axes = axes.flatten()
+        for pos, line in enumerate(to_plot.keys()):
+            cax = make_axes_locatable(axes[pos]).append_axes('top', size='5%', pad='2%')
+            map, out_kwargs = to_plot[line]
+            i = axes[pos].imshow(map, origin='lower', interpolation='none', cmap='viridis')
+            cbar = fig.colorbar(i, cax=cax, orientation='horizontal')
+            line_band = out_kwargs[f'{line}_emission_band']
+            cont_band = out_kwargs[f'{line}_cont_band']
+            axes[pos].text(0.05, 0.95, f'{line_band} - {cont_band}', transform=axes[pos].transAxes, fontsize=10, horizontalalignment = 'left', verticalalignment='top', color='black')
+            cbar.set_label(line, labelpad = 10)
+            cbar.ax.xaxis.set_ticks_position('top')
+            cbar.ax.xaxis.set_label_position('top')
+            cbar.ax.tick_params(labelsize=8)
+            cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+            #axes[pos].set_title(line)
+        # Remove empty axes
+        for i in range(len(to_plot), len(axes)):
+            fig.delaxes(axes[i])
+        return fig
+
+
+
+
 if __name__ == "__main__":
     # Test the Galaxy class
     #galaxy = ResolvedGalaxy.init_from_galfind(645, 'NGDEEP2', 'v11', excl_bands = ['F435W', 'F775W', 'F850LP'])

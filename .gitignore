@@ -12,3 +12,6 @@ MinViable.py
 diagnostic/*
 psfs/kernels/*
 psfs/psf_models/*
+__pycache__/*
+__pycache__
+plots
