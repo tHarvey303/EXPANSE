@@ -1751,9 +1751,9 @@ class ResolvedGalaxy:
 
     def plot_kron_ellipse(self, ax, center, band='detection', color = 'red', return_params = False):
         if band == 'detection':
-            kron = self.total_photometry[self.detection_band][f'KRON_RADIUS_{self.detection_band}']
-            a = self.total_photometry[self.detection_band][f'a_{self.detection_band}'] * kron
-            b = self.total_photometry[self.detection_band][f'b_{self.detection_band}'] * kron
+            #kron = self.total_photometry[self.detection_band][f'KRON_RADIUS_{self.detection_band}']
+            a = self.total_photometry[self.detection_band][f'a_{self.detection_band}'] # already scaled by kron 
+            b = self.total_photometry[self.detection_band][f'b_{self.detection_band}'] # already scaled by kron
             theta = self.total_photometry[self.detection_band][f'theta_{self.detection_band}']
         else:
             kron_radius = self.auto_photometry[band]['KRON_RADIUS']
