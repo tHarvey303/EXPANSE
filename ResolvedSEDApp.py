@@ -222,6 +222,11 @@ def plot_rgb(resolved_galaxy, red, green, blue, scale, q, psf_mode):
         circle = hv.Ellipse(7, 15, 5).opts(color='white', line_color='white')
         rgb_img = rgb_img * circle
 
+    center = resolved_galaxy.cutout_size/2
+    a, b, theta = resolved_galaxy.plot_kron_ellipse(None, None, return_params = True)
+    kron = hv.Ellipse(center, center, (a, b), orientation=theta*np.pi/180).opts(color='white', line_color='white')
+    rgb_img = rgb_img * kron
+
     return pn.pane.HoloViews(rgb_img, height=400, width=430)
 
 @cached_function

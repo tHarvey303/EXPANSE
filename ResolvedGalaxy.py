@@ -1466,6 +1466,7 @@ class ResolvedGalaxy:
             return rgb
         
         plt.imshow(rgb, origin='lower')
+        self.plot_kron_ellipse(ax=plt.gca())
         if save:
             plt.savefig(save_path)
         if show:
@@ -1747,6 +1748,29 @@ class ResolvedGalaxy:
         self.add_to_h5(name_out_fits, 'bin_fluxes', 'pixedfit', ext='BIN_FLUX', setattr_gal='binned_flux_map', overwrite=overwrite)
         self.add_to_h5(name_out_fits, 'bin_flux_err', 'pixedfit', ext='BIN_FLUXERR', setattr_gal='binned_flux_err_map', overwrite=overwrite)
 
+
+    def plot_kron_ellipse(self, ax, center, band='detection', color = 'red', return_params = False):
+        if band == 'detection':
+            kron = self.total_photometry[self.detection_band][f'KRON_RADIUS_{self.detection_band}']
+            a = self.total_photometry[self.detection_band][f'a_{self.detection_band}'] * kron
+            b = self.total_photometry[self.detection_band][f'b_{self.detection_band}'] * kron
+            theta = self.total_photometry[self.detection_band][f'theta_{self.detection_band}']
+        else:
+            kron_radius = self.auto_photometry[band]['KRON_RADIUS']
+            a = self.auto_photometry[band]['A_IMAGE'] * kron_radius
+            b = self.auto_photometry[band]['B_IMAGE'] * kron_radius
+            theta = self.auto_photometry[band]['THETA_IMAGE']
+        
+        if return_params:
+            return a, b, theta
+
+        #center = np.shape(data)[0]/2
+        e = Ellipse((center, center), a, b, angle=theta, edgecolor=color, facecolor='none')
+        
+        ax.add_artist(e)
+        e.set_clip_box(ax.bbox)
+        e.set_alpha(0.5)
+
     def plot_image_stamp(self, band, scale = 'log10', save=False, save_path=None, show=False, facecolor='white', sex_factor=6):
         fig, ax = plt.subplots(1, 1, figsize=(6, 6), facecolor=facecolor)
         if scale == 'log10':
@@ -1757,14 +1781,7 @@ class ResolvedGalaxy:
             raise ValueError('Scale must be log10 or linear')
         ax.imshow(data, origin='lower', interpolation='none')
         if band in self.auto_photometry.keys():
-            a = self.auto_photometry[band]['A_IMAGE'] * sex_factor
-            b = self.auto_photometry[band]['B_IMAGE'] * sex_factor
-            theta = self.auto_photometry[band]['THETA_IMAGE']
-            center = np.shape(data)[0]/2
-            e = Ellipse((center, center), a, b, angle=theta, edgecolor='red', facecolor='none')
-            ax.add_artist(e)
-            e.set_clip_box(ax.bbox)
-            e.set_alpha(0.5)
+            self.plot_kron_ellipse(ax, center=self.cutout_size//2, band=band)
         
         re = 15 # pixels
         d_A = cosmo.angular_diameter_distance(self.redshift)
