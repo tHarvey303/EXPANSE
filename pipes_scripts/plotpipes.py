@@ -82,11 +82,11 @@ import bagpipes as pipes
 import useful_funcs
 
 flexoki_colors = ["#D14D41", "#DA702C", "#D0A215", "#879A39", "#3AA99F", "#4385BE", "#8B7EC8", "#CE5D97"]
-try:
-    plt.style.use('/nvme/scratch/work/tharvey/scripts/paper.mplstyle')
-    print('Using custom style')
-except FileNotFoundError:
-    pass
+#try:
+    #plt.style.use('/nvme/scratch/work/tharvey/scripts/paper.mplstyle')
+    #print('Using custom style')
+#except FileNotFoundError:
+#   pass
 
 # Use class-based approach to plotting
 # Use pathlib to handle paths
@@ -232,7 +232,7 @@ class PipesFit:
         self.galaxy = pipes.galaxy(galaxy_id, self.data_func, filt_list=self.filts, spectrum_exists=spectrum_exists, photometry_exists=photometry_exists)
         
         # Recreating the posterior object
-        print(self.h5_path)
+        #print(self.h5_path)
         try:
             self.fit = pipes.fit(self.galaxy, fit_instructions, run=str(out_subdir))
             self.fit.fit(verbose=True)
@@ -361,7 +361,7 @@ class PipesFit:
             self.name += f' Exclude: {self.excluded_bands.replace("_", " ")}'
         
 
-        print(self.name)
+        #print(self.name)
         try:
             shutil.rmtree(temp_file.parent)
         except:
@@ -1015,7 +1015,7 @@ class PlotPipes:
             if True:
                 fit.plot_sfh(ax_sfh, colour=colours[pos], add_zaxis=True if pos == 0 else False, modify_ax=True if pos == 0 else False, logify=True, timescale='Myr', plottype='lookback', cosmo=FlatLambdaCDM(H0=70, Om0=0.3, Tcmb0=2.725))
                 
-                print('Adding posterior PDFs')
+                #print('Adding posterior PDFs')
                 try:
                     fit.plot_pdf(ax_z_pdf,'redshift', colour=colours[pos], fill_between=fill_uncertainty)
                 except: # Exclude the zfix ones 
@@ -1324,7 +1324,7 @@ class PlotPipes:
                 field_dir = option
         if field_dir is None:
             raise Exception(f'No image directory found for {field}')
-        print(field_dir)
+        #print(field_dir)
         try:
             im_path = glob.glob(f"{field_dir}/*{band.lower()}*_i2d*.fits")
             if len(im_path) > 1:
