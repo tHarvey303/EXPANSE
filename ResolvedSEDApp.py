@@ -162,7 +162,7 @@ def update_sidebar(active_tab, sidebar):
 
 
 def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, total_fit_options_param, mode='sed'):
-    print('handel map click')
+    #print('handel map click')
     use = True
     if x == None or y == None:
         use = False
@@ -494,7 +494,8 @@ def fitsmap(fitsmap_dir = '/nvme/scratch/work/tharvey/fitsmap', port = 8000, ban
     ra = resolved_galaxy.sky_coord.ra.deg
     dec = resolved_galaxy.sky_coord.dec.deg
     image_path = resolved_galaxy.im_paths[band]
-    header = fits.getheader(image_path.replace('/mosaic_1084_wispnathan/', '/NIRCam/mosaic_1084_wispnathan/'), ext = 1)
+    path = image_path.replace('/mosaic_1084_wispnathan/', '/NIRCam/mosaic_1084_wispnathan/') if 'NIRCam' not in image_path else image_path
+    header = fits.getheader(path, ext = 1)
     wcs = WCS(header)
     x_cent, y_cent = wcs.all_world2pix(ra, dec, 0)
 
@@ -547,27 +548,29 @@ def other_bagpipes_results_func(param_property, p_run_name, norm, total_params):
     #param_property = str(param_property)
     #p_run_name = str(p_run_name)
 
-    if param_property is None or p_run_name is None:
+    if param_property is None or p_run_name is None or 'bagpipes':
         print('no property')
         return pn.pane.Markdown('No property or run selected.')
+    
+    if 'bagpipes' not in resolved_galaxy.sed_fitting_table.keys():
+        return pn.pane.Markdown('No Bagpipes results found.')
 
+    options = list(resolved_galaxy.sed_fitting_table['bagpipes'][p_run_name].keys())
+    options = [i for i in options if not (i.startswith('#') or i.endswith('16') or i.endswith('84'))]
+    actual_options = [i.replace('_50', '') for i in options]
+    dist_options = [i for i in options if i.endswith('50')]
+    other_bagpipes_properties_dropdown.options = actual_options
+    if f'{param_property}_50' not in dist_options:
+        if not param_property.endswith('-'):
+            param_property = f'{param_property}-'
+
+    fig = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=[param_property], max_on_row=3, run_name=p_run_name, norm = norm, total_params = total_params)
+    if fig is not None:
+        print('returning fig')
+        return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode='scale_both', min_width=400, width = 400, height = 400)
     else:
-        options = list(resolved_galaxy.sed_fitting_table['bagpipes'][p_run_name].keys())
-        options = [i for i in options if not (i.startswith('#') or i.endswith('16') or i.endswith('84'))]
-        actual_options = [i.replace('_50', '') for i in options]
-        dist_options = [i for i in options if i.endswith('50')]
-        other_bagpipes_properties_dropdown.options = actual_options
-        if f'{param_property}_50' not in dist_options:
-            if not param_property.endswith('-'):
-                param_property = f'{param_property}-'
-
-        fig = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=[param_property], max_on_row=3, run_name=p_run_name, norm = norm, total_params = total_params)
-        if fig is not None:
-            print('returning fig')
-            return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode='scale_both', min_width=400, width = 400, height = 400)
-        else:
-            print('Returning none')
-            return pn.pane.Markdown('No Bagpipes results found.')
+        print('Returning none')
+        return pn.pane.Markdown('No Bagpipes results found.')
 
 
 def sed_results_plot_func(which_sed_fitter_param, which_run_param):
