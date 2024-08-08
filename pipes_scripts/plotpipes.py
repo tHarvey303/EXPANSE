@@ -16,6 +16,7 @@ from astropy.cosmology import FlatLambdaCDM
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 import warnings
+import time
 import matplotlib.patches as patches
 import json
 import glob
@@ -130,8 +131,9 @@ def colormap(z, z_range = (6, 21), cmap=mpl.cm.get_cmap('gist_rainbow_r')):
 
 class PipesFit:
     def __init__(self, galaxy_id, field, h5_path, pipes_path, catalog, overall_field=None,
-                 load_spectrum=False, filter_path=bagpipes_filter_dir,
+                 load_spectrum=False, filter_path=bagpipes_filter_dir, get_advanced_quantities=True,
                  ID_col='NUMBER', field_col='field', catalogue_flux_unit=u.MJy/u.sr, bands=None, data_func=None):
+        start1 = time.time()
         # Manually loading the .h5 file with deepdish
         if overall_field == None:
             self.overall_field = field
@@ -146,6 +148,7 @@ class PipesFit:
         
         self.bands = bands
         self.data_func = data_func
+        self.has_advanced_quantities = get_advanced_quantities
 
         if self.catalog is not None:
             if len(self.catalog) > 1:
@@ -238,11 +241,12 @@ class PipesFit:
             self.fit.fit(verbose=True)
         except KeyError:
             raise Exception(f'Couldn\'t recreate {self.h5_path}. Skipping')
-            
-        
+
         # Get quantities
         self.fit.posterior.get_basic_quantities()
-        self.fit.posterior.get_advanced_quantities()
+    
+        if get_advanced_quantities:
+            self.fit.posterior.get_advanced_quantities()
         
         dust = fit_instructions['dust']['type']
         try:
@@ -367,6 +371,11 @@ class PipesFit:
         except:
             pass
 
+
+    def add_advanced_quantities(self):
+        self.fit.posterior.get_advanced_quantities()
+        self.has_advanced_quantities = True
+
     def plot_csfh(self, ax, colour='black', modify_ax = True, add_zaxis=True, timescale='Gyr', plottype='lookback', logify=False, cosmo=None, **kwargs):
         add_csfh_posterior(self.fit, ax, color=colour, use_color=True, zvals = [6.5, 8, 10, 13, 16, 20], z_axis=add_zaxis, alpha=0.3, plottype=plottype, timescale=timescale)
         if modify_ax:
@@ -490,8 +499,11 @@ class PipesFit:
                                    alpha=0.05, s=40, rasterized=True)
     
     def calc_low_chi2(self):
-        chi2 =  np.min(self.fit.posterior.samples["chisq_phot"])
-        return chi2
+        if 'chisq_phot' in self.fit.posterior.samples.keys():
+            chi2 =  np.min(self.fit.posterior.samples["chisq_phot"])
+            return chi2
+        else:
+            return -99.99
           
     def plot_best_fit(self, ax, colour='black',  wav_units=u.um, flux_units=u.ABmag, lw=1,fill_uncertainty=False,zorder=5, label=None, **kwargs):
         if "redshift" in self.fit.fitted_model.params:
@@ -506,20 +518,23 @@ class PipesFit:
         spec_post = spec_post.astype(float)  # fixes weird isfinite error
 
         flux_lambda = spec_post * u.erg / (u.s * u.cm**2 *u.AA)
-        
+
         wavs_micron_3 = np.vstack([wavs_aa, wavs_aa, wavs_aa]).T
 
-        flux_nu = flux_lambda * wavs_micron_3**2/c.c 
+        flux = flux_lambda.to(flux_units, equivalencies=u.spectral_density(wavs_micron_3)).value
+        
 
-        flux_nu = flux_nu.to(flux_units).value
+        #flux_nu = flux_lambda * wavs_micron_3**2/c.c 
+
+        #flux_nu = flux_nu.to(flux_units).value
 
         if label is None:
             label = self.name
 
         wavs = wavs_aa.to(wav_units).value
-        ax.plot(wavs, flux_nu[:, 1], lw=lw, color=colour, alpha=0.7, zorder=zorder, label = label, **kwargs)
+        ax.plot(wavs, flux[:, 1], lw=lw, color=colour, alpha=0.7, zorder=zorder, label = label, **kwargs)
         if fill_uncertainty:
-            ax.fill_between(wavs, flux_nu[:,0], flux_nu[:,2], alpha=0.5, color=colour, lw=lw, zorder=zorder)
+            ax.fill_between(wavs, flux[:,0], flux[:,2], alpha=0.5, color=colour, lw=lw, zorder=zorder)
                 
     def plot_sed(self, ax, colour='black', wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
                             y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
@@ -657,26 +672,26 @@ class PipesFit:
     def plot_pdf(self, ax, parameter, colour='black',fill_between=False, alpha=1, return_samples = False, linelabel='',norm_height=False, **kwargs):
         # Generate list of parameters to plot
         fit = self.fit
-        sfh_names = ["stellar_mass", "sfr", "ssfr", "tform"]
+        sfh_names = ["stellar_mass", "sfr", "ssfr", "tform", "nsfr", "formed_mass", 'UV_colour', "VJ_colour", "mass_weighted_age", "dust:Av", "tquench"]
         names = sfh_names + fit.fitted_model.params
-        
         if parameter not in names:
             # This deals with name changes between SFH components
             val = [x.split(':')[0]  for x in fit.fitted_model.params if x.split(':')[-1] == 'massformed'][0]
             parameter = f'{val}:{parameter}'
-            if parameter not in names:
-                 raise Exception(f'{parameter} was not fit.')
-            
+            #if parameter not in names:
+            #     raise Exception(f'{parameter} was not fit.')
+        #print(names, parameter)
         pos = np.argwhere(np.array(names) == parameter)[0][0]
 
         # Get axis labels
         name = parameter
         label = fix_param_names(name)
+        print(fit.posterior.samples.keys())
         samples = np.copy(fit.posterior.samples[name])
 
 
         # Log parameter samples and labels for parameters with log priors
-        if (pos > 4 and fit.fitted_model.pdfs[pos-4] == "log_10") or name == "sfr":
+        if name == "sfr" or name == 'formed_mass':
             samples = np.log10(samples)
             label = "$\\mathrm{log_{10}}(" + label[1:-1] + ")$"
 
@@ -701,7 +716,7 @@ class PipesFit:
             pass
 
         ax.set_xlabel(label,  fontsize='small', fontweight='bold')
-        ax.set_title(parameter, fontsize='small', fontweight='bold')
+        #ax.set_title(parameter, fontsize='small', fontweight='bold')
         auto_x_ticks(ax, nticks=3)
         ax.tick_params(axis='both', which='major', labelsize='medium')
         ax.tick_params(axis='both', which='minor', labelsize='medium')                         

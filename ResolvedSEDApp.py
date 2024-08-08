@@ -39,7 +39,7 @@ elif 'Users' in file_path:
 ACCENT = "goldenrod"
 LOGO = "https://assets.holoviz.org/panel/tutorials/matplotlib-logo.png"
 
-plotpipes_dir = '/Users/user/Documents/PhD/bagpipes_dir/'
+plotpipes_dir = 'pipes_scripts/'
 run_dir = 'pipes/'
 cache_pipes = {}
 
@@ -138,12 +138,13 @@ def update_sidebar(active_tab, sidebar):
     elif active_tab == 1:
         settings_sidebar.append('#### Pixel Binning')
         settings_sidebar.append(which_map)
-        settings_sidebar.append(show_galaxy)
+        settings_sidebar.append(pn.Row(show_galaxy, show_kron))
         settings_sidebar.append(scale_alpha)
         settings_sidebar.append(choose_show_band)
         settings_sidebar.append('#### SED Fitting Tool')
         settings_sidebar.append(which_sed_fitter)
         settings_sidebar.append(pn.bind(possible_runs_select, which_sed_fitter.param.value, watch=True))
+        settings_sidebar.append(upscale_select)
 
         settings_sidebar.append('#### SED Plot Config')
         settings_sidebar.append(which_flux_unit)
@@ -161,7 +162,9 @@ def update_sidebar(active_tab, sidebar):
     sidebar.append(settings_sidebar)
 
 
-def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param, which_run_param, total_fit_options_param, mode='sed'):
+def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fitter_param, 
+                    which_flux_unit_param, multi_choice_bins_param, which_run_param, 
+                    total_fit_options_param, param_property, mode='sed'):
     #print('handel map click')
     use = True
     if x == None or y == None:
@@ -185,7 +188,7 @@ def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fit
         else:
             pass
     
-    yield pn.indicators.LoadingSpinner(size = 50, name = 'Loading...', value = True)
+    #yield pn.indicators.LoadingSpinner(size = 50, name = 'Loading...', value = True)
         
     if mode == 'sed':
         obj = plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, which_flux_unit_param, multi_choice_bins_param_safe, which_run_param, total_fit_options_param)
@@ -193,8 +196,10 @@ def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fit
         obj = plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param_safe, which_run_param, total_fit_options_param)
     if mode == 'corner':
         obj = plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param_safe, which_run_param, total_fit_options_param)
+    if mode == 'pdf':
+        obj = plot_bagpipes_pdf(resolved_galaxy, map, cmap, param_property, which_run_param, multi_choice_bins_param_safe, total_fit_options_param, which_sed_fitter_param)
 
-    yield obj 
+    return obj 
     #except Exception as e:
     #    pn.state.notifications.error(f'Error: {e}', duration=2000)
 
@@ -281,13 +286,17 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 
     if table is not None:
         for bin_pos, bin in enumerate(multi_choice_bins_param + total_fit_options_param):
+            
             if type(bin) == str:
                 color = TOTAL_FIT_COLORS[bin]
             else:
-                color = cmap(bin/np.nanmax(map))
+                color = cmap((bin-1)/np.nanmax(map))
 
             colors.append(color)
             table_row = table[table['ID'] == bin]
+            if len(table_row) == 0:
+                print(f'No Bagpipes results for {bin} and run {which_run_param}')
+                continue
             # loop through markers
             if bin_pos > len(list_of_markers) - 1:
                 bin_pos = bin_pos % len(list_of_markers)
@@ -339,11 +348,39 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
             fig, cache == resolved_galaxy.plot_bagpipes_fit(which_run_param, ax, fig, bins_to_show=multi_choice_bins_param + total_fit_options_param, marker_colors=colors, wav_units=x_unit, flux_units=y_unit, cache=cache)
             cache_pipes[which_run_param] = cache
 
- 
+    plt.close(fig)
     return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both")
     #return False
 
-def plot_bins(bin_type, cmap, scale_alpha, show_galaxy, psf_matched, band = 'F444W'):
+@cached_function     
+def plot_bagpipes_pdf(resolved_galaxy, map, cmap, param_property, which_run_param, multi_choice_bins_param, total_fit_options_param, which_sed_fitter_param, run_dir = run_dir):
+    cmap = cm.get_cmap(cmap)
+    #print(multi_choice_bins_param + total_fit_options_param)
+    colors = [cmap((bin-1)/np.nanmax(map)) for pos, bin in enumerate(multi_choice_bins_param)] + [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
+
+    if which_sed_fitter_param == 'bagpipes' and which_run_param != None:
+        # Check if bagpipes run exists
+        if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and which_run_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys():
+            if which_run_param not in cache_pipes:
+                cache_pipes[which_run_param] = {}
+            cache = cache_pipes.get(which_run_param)
+
+            fig, cache = resolved_galaxy.plot_bagpipes_component_comparison(parameter = param_property, run_name=which_run_param, 
+                                        bins_to_show = multi_choice_bins_param + total_fit_options_param, save=False, run_dir = run_dir,
+                                        facecolor=facecolor, cache = cache, colors=colors)
+            plt.close(fig)
+            
+            cache_pipes[which_run_param] = cache
+        
+            return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both", min_width = 500, min_height = 400)
+        
+        else:
+            return pn.pane.Markdown('No Bagpipes results found.')
+    else:
+        return pn.pane.Markdown(f'Not implemented for {which_sed_fitter_param}.')
+
+
+def plot_bins(bin_type, cmap, scale_alpha, show_galaxy, show_kron, psf_matched, band = 'F444W'):
     array = getattr(resolved_galaxy, f"{bin_type}_map")
     if array is None:
         # Empty plot
@@ -352,7 +389,15 @@ def plot_bins(bin_type, cmap, scale_alpha, show_galaxy, psf_matched, band = 'F44
     dimensions = np.linspace(0, resolved_galaxy.cutout_size, resolved_galaxy.cutout_size)
     im_array = xr.DataArray(array, dims=['y', 'x'], name=f'{bin_type} bins', coords={'x': dimensions, 'y': dimensions})
     hvplot = im_array.hvplot('x','y').opts(cmap=cmap, xaxis=None, yaxis=None, clabel=f'{bin_type} Bin', alpha=scale_alpha)
-    multi_choice_bins.options = list(np.unique(array))
+    opts = np.unique(array)
+    multi_choice_bins.options = list(opts[~np.isnan(opts)])
+
+    if show_kron:
+        center = resolved_galaxy.cutout_size/2
+        a, b, theta = resolved_galaxy.plot_kron_ellipse(None, None, return_params = True)
+        kron = hv.Ellipse(center, center, (a, b), orientation=theta*np.pi/180).opts(color='red', line_color='red')
+        hvplot = hvplot * kron
+
     if show_galaxy:
         if psf_matched:
             data = resolved_galaxy.psf_matched_data['star_stack'][band]
@@ -378,7 +423,7 @@ def plot_bins(bin_type, cmap, scale_alpha, show_galaxy, psf_matched, band = 'F44
 def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, total_fit_options_param, x_unit = 'Gyr', facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
-    colors = [cmap(bin/np.nanmax(map)) for bin in multi_choice_bins_param] + [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
+    colors = [cmap((bin-1)/np.nanmax(map)) for pos, bin in enumerate(multi_choice_bins_param)] + [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
 
     if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and which_run_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys():   
         if which_sed_fitter_param == 'bagpipes':
@@ -387,14 +432,14 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 
             bins_to_show = [int(i) for i in multi_choice_bins_param] + total_fit_options_param
             cache = cache_pipes.get(which_run_param)
-            fig, cache = resolved_galaxy.plot_bagpipes_sfh(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, marker_colors=colors, time_unit=x_unit, run_dir=run_dir, plotpipes_dir=plotpipes_dir, cache=cache) 
+            fig, cache = resolved_galaxy.plot_bagpipes_sfh(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, marker_colors=colors, time_unit=x_unit, run_dir=run_dir, cache=cache) 
             cache_pipes[which_run_param] = cache
 
             if len(fig.get_axes()) != 0:
                 ax = fig.get_axes()[0]
                 ax.set_xlim(0, 1)
         
-
+            plt.close(fig)
             return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both")
     else:
         return pn.pane.Markdown('No Bagpipes results found.')
@@ -403,7 +448,7 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_param, total_fit_options_param, facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
-    colors = [cmap(bin/np.nanmax(map)) for bin in multi_choice_bins_param] + [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
+    colors = [cmap((bin-1)/np.nanmax(map)) for pos, bin in enumerate(multi_choice_bins_param)] + [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
 
 
     if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and which_run_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys():   
@@ -414,7 +459,7 @@ def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_pa
 
             bins_to_show = [int(i) for i in multi_choice_bins_param] + total_fit_options_param
             cache = cache_pipes.get(which_run_param)
-            fig, cache = resolved_galaxy.plot_bagpipes_corner(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, colors=colors, run_dir=run_dir, plotpipes_dir=plotpipes_dir, cache=cache) 
+            fig, cache = resolved_galaxy.plot_bagpipes_corner(run_name=which_run_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, colors=colors, run_dir=run_dir, cache=cache) 
             cache_pipes[which_run_param] = cache
             #ax = fig.get_axes()[0]
             #ax.set_xlim(0, 1)
@@ -422,6 +467,7 @@ def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_pa
                 fig = plt.figure()
 
             fig.set_facecolor(facecolor)
+            plt.close(fig)
 
             return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="stretch_both", max_width=800, min_width = 500)
 
@@ -437,8 +483,8 @@ def do_other_plot(plot_option):
     elif plot_option == 'Segmentation Map':
         fig = resolved_galaxy.plot_seg_stamps()
     elif plot_option == 'Radial SNR':
-        resolved_galaxy.pixedfit_plot_radial_SNR()
-    
+        fig = resolved_galaxy.pixedfit_plot_radial_SNR()
+    plt.close(fig)
     return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", max_width = 1000, sizing_mode = 'stretch_both')
 
 def do_snr_plot(band):
@@ -456,29 +502,35 @@ options_direct = {'Beta': f'beta_phot',
                 'xi_ion':'xi_ion'}
 
 @cached_function
-def plot_phot_property(property, button_obj, rest_UV_wav_lims = [1250., 3000.] * u.Angstrom, ref_wav =  1_500. * u.AA, 
+def plot_phot_property(property, cmap,  strong_line_names = ["Hbeta", "[OIII]-4959", "[OIII]-5007", "Halpha"],
+                    rest_UV_wav_lims = [1250., 3000.] * u.Angstrom, ref_wav =  1_500. * u.AA, 
                     dust_author_year = 'M99', kappa_UV_conv_author_year = 'MD14',  density = False, logmap = False, 
-                    frame = 'obs', conv_author_year = 'M99', strong_line_names = ["Hbeta", "[OIII]-4959", "[OIII]-5007", "Halpha"]):
+                    frame = 'obs', conv_author_year = 'M99',):
 
     rest_UV_wav_text = f'{int(rest_UV_wav_lims[0].value)}_{int(rest_UV_wav_lims[1].value)}AA'
 
+    author_func = {'fesc_from_beta_phot':{'conv_author_year':'Chisholm22'}}
     #with button_obj.param.update(loading = True):
-    yield pn.indicators.LoadingSpinner(size = 50, name = 'Loading...', value = True)
+    #yield pn.indicators.LoadingSpinner(size = 50, name = 'Loading...', value = True)
 
     default_options = {'SFR_UV':{'density':True, 'logmap':True}}
     if property in default_options:
         density = default_options[property]['density']
         logmap = default_options[property]['logmap']
 
+    if options_direct[property] in author_func:
+        print('Setting author year')
+        conv_author_year = options_direct[property]['conv_author_year']
+
     fig = resolved_galaxy.galfind_phot_property_map(options_direct[property], rest_UV_wav_lims = rest_UV_wav_lims, 
                                                 ref_wav = ref_wav, dust_author_year = dust_author_year,
-                                                kappa_UV_conv_author_year = kappa_UV_conv_author_year,
+                                                kappa_UV_conv_author_year = kappa_UV_conv_author_year, cmap = cmap,
                                                 facecolor = facecolor, logmap = logmap, density = density, frame = frame,
                                                 conv_author_year = conv_author_year, strong_line_names = strong_line_names)
-
+    plt.close(fig)
     empty_phot_page.loading = False
 
-    yield pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode='scale_width', min_width=200)
+    return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode='scale_width', min_width=200)
 
 
 def fitsmap(fitsmap_dir = '/nvme/scratch/work/tharvey/fitsmap', port = 8000, band = 'F444W'):
@@ -519,27 +571,37 @@ def phot_prop_func():
     
     middle_row = pn.Row()
 
-    options_phot = list(options_direct.keys())
-    drop_down1 = pn.widgets.Select(options = options_phot, value = 'Beta')
-    drop_down2 = pn.widgets.Select(options = options_phot, value = 'MUV')
-    drop_down3 = pn.widgets.Select(options = options_phot, value = 'SFR_UV')
+    options_phot = list([key for key in options_direct.keys() if 'rest_optical' not in key])
+    drop_down1 = pn.widgets.Select(options = options_phot, value = 'Beta', width = 100)
+    cmap_1 = pn.widgets.Select( options = plt.colormaps(), value = 'viridis', width = 100)
+    drop_down2 = pn.widgets.Select(options = options_phot, value = 'MUV', width = 100)
+    cmap_2 = pn.widgets.Select( options = plt.colormaps(), value = 'viridis', width = 100)
+    drop_down3 = pn.widgets.Select(options = options_phot, value = 'SFR_UV', width = 100)
+    cmap_3 = pn.widgets.Select( options = plt.colormaps(), value = 'viridis', width = 100)
 
-    plot1 = pn.bind(plot_phot_property, drop_down1.param.value, drop_down1, watch=False)
-    top_row.append(pn.Column(drop_down1, plot1, sizing_mode = 'stretch_width'))
-    plot2 = pn.bind(plot_phot_property, drop_down2.param.value, drop_down2, watch=False)
-    top_row.append(pn.Column(drop_down2, plot2, sizing_mode = 'stretch_width'))
-    plot3 = pn.bind(plot_phot_property, drop_down3.param.value, drop_down3, watch=False)
-    top_row.append(pn.Column(drop_down3, plot3, sizing_mode = 'stretch_width'))
+    plot1 =  pn.param.ParamFunction(pn.bind(plot_phot_property, drop_down1.param.value, cmap_1.param.value, watch=False), loading_indicator=True)
+    top_row.append(pn.Column(pn.Row(drop_down1, cmap_1), plot1, sizing_mode = 'stretch_width'))
+    plot2 =  pn.param.ParamFunction(pn.bind(plot_phot_property, drop_down2.param.value, cmap_2.param.value, watch=False), loading_indicator=True)
+    top_row.append(pn.Column(pn.Row(drop_down2, cmap_2), plot2, sizing_mode = 'stretch_width'))
+    plot3 =  pn.param.ParamFunction(pn.bind(plot_phot_property, drop_down3.param.value, cmap_3.param.value, watch=False), loading_indicator=True)
+    top_row.append(pn.Column(pn.Row(drop_down3, cmap_3), plot3, sizing_mode = 'stretch_width'))
 
     empty_page.append(top_row)
 
     empty_page.append(pn.layout.Divider())
-    middle_row = empty_page.append('### Inferred Line Properties')
+    empty_page.append('### Inferred Line Properties')
 
     #strong_line_options = 
-    line_plot = pn.bind(plot_phot_property, 'line_flux_rest_optical', watch=False)
-    
-    
+    drop_down_4 = pn.widgets.Select(name = 'Line', options = ["Hbeta", "[OIII]-4959", "[OIII]-5007", "Halpha"], width = 100, value = "Hbeta")
+    line_plot1 =  pn.param.ParamFunction(pn.bind(plot_phot_property, 'line_flux_rest_optical', 'viridis', drop_down_4.param.value, watch=False), loading_indicator=True)
+    middle_row.append(pn.Column(line_plot1, sizing_mode = 'stretch_width'))
+    line_plot2 =  pn.param.ParamFunction(pn.bind(plot_phot_property, 'EW_rest_optical', 'viridis', drop_down_4.param.value, watch=False), loading_indicator=True)
+    middle_row.append(pn.Column(line_plot2, sizing_mode = 'stretch_width'))
+    line_plot2 =  pn.param.ParamFunction(pn.bind(plot_phot_property, 'line_lum_rest_optical', 'viridis', drop_down_4.param.value, watch=False), loading_indicator=True)
+    middle_row.append(pn.Column(line_plot2, sizing_mode = 'stretch_width'))
+
+    empty_page.append(drop_down_4)
+
     empty_page.append(middle_row)
     
     return empty_page
@@ -549,11 +611,13 @@ def phot_prop_func():
     #return pn.pane.Markdown('Not implemented yet.')
 
 @cached_function
-def other_bagpipes_results_func(param_property, p_run_name, norm, total_params):
+def other_bagpipes_results_func(param_property, p_run_name, norm_param, total_params, weight_mass_sfr, outtype = 'median'):
     #param_property = str(param_property)
     #p_run_name = str(p_run_name)
 
-    if param_property is None or p_run_name is None or 'bagpipes':
+    #yield pn.Row(pn.indicators.LoadingSpinner(size = 50, name = 'Loading...', value = True), height=400, width=400)
+
+    if param_property is None or p_run_name is None:
         print('no property')
         return pn.pane.Markdown('No property or run selected.')
     
@@ -564,24 +628,60 @@ def other_bagpipes_results_func(param_property, p_run_name, norm, total_params):
     options = [i for i in options if not (i.startswith('#') or i.endswith('16') or i.endswith('84'))]
     actual_options = [i.replace('_50', '') for i in options]
     dist_options = [i for i in options if i.endswith('50')]
+    pdf_param_property.options = [i.replace('_50', '') for i in dist_options]
     other_bagpipes_properties_dropdown.options = actual_options
+    other_bagpipes_properties_dropdown.value = param_property
+
+    no_log = ['ssfr']
+    if param_property in no_log:
+        norm.value = 'linear'
+        norm.disabled = True
+    else:
+        norm.disabled = False
+
+
     if f'{param_property}_50' not in dist_options:
         if not param_property.endswith('-'):
             param_property = f'{param_property}-'
 
-    fig = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=[param_property], max_on_row=3, run_name=p_run_name, norm = norm, total_params = total_params)
+    if outtype == 'gif':
+        logmap = False
+        scale = 'linear'
+        if param_property in ['stellar_mass', 'sfr']:
+            
+            if norm_param == 'log':
+                logmap = True
+        else:
+            scale = norm_param
+            weight_mass_sfr = False
+                
+        
+        
+        fig = resolved_galaxy.plot_bagpipes_map_gif(parameter = param_property,  weight_mass_sfr=weight_mass_sfr, logmap=logmap, path = 'temp', facecolor=facecolor, cmap = 'magma')
+    elif outtype == 'median':
+        fig = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=[param_property], max_on_row=3, run_name=p_run_name, norm = norm_param, total_params = total_params)
+
     if fig is not None:
-        print('returning fig')
-        return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode='scale_both', min_width=400, width = 400, height = 400)
+        if type(fig) == plt.Figure:
+            plt.close(fig)
+            #print('returning fig')
+            return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", width = 400, height = 400)
+        else:
+            #import html
+            #iframe = f'<iframe src="{html.escape(fig)}" width="100%" height="100%"></iframe>'
+            #from IPython.display import HTML
+            #return pn.pane.HTML(HTML(fig), width = 400, height = 400)
+            return pn.pane.GIF(fig, width = 400, height = 400)
     else:
         print('Returning none')
         return pn.pane.Markdown('No Bagpipes results found.')
 
 
-def sed_results_plot_func(which_sed_fitter_param, which_run_param):
+def sed_results_plot_func(which_sed_fitter_param, which_run_param, upscale_select_param):
     if which_sed_fitter_param == 'bagpipes':
-        sed_results_plot = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=['stellar_mass', 'sfr'], max_on_row=3, run_name = which_run_param, norm = 'linear')
+        sed_results_plot = resolved_galaxy.plot_bagpipes_results(facecolor=facecolor, parameters=['stellar_mass', 'sfr'], max_on_row=3, run_name = which_run_param, norm = 'linear', weight_mass_sfr = upscale_select_param)
         if sed_results_plot is not None:
+            plt.close(sed_results_plot)
             sed_results = pn.Row(pn.pane.Matplotlib(sed_results_plot, dpi=144, tight=True, format="svg", sizing_mode="scale_both"))
         else:
             sed_results = pn.pane.Markdown('No Bagpipes results found.')
@@ -595,7 +695,9 @@ def plot_cutouts(psf_matched_param, psf_type_param):
         psf_matched_param = False
     elif psf_matched_param == 'PSF Matched':
         psf_matched_param = True
-    return pn.pane.Matplotlib(resolved_galaxy.plot_cutouts(facecolor=facecolor, psf_matched = psf_matched_param, psf_type = psf_type_param), dpi=144, max_width=950, tight=True, format="svg", sizing_mode='scale_width')
+    fig = resolved_galaxy.plot_cutouts(facecolor=facecolor, psf_matched = psf_matched_param, psf_type = psf_type_param)
+    plt.close(fig)
+    return pn.pane.Matplotlib(fig, dpi=144, max_width=950, tight=True, format="svg", sizing_mode='scale_width')
 
 
 
@@ -620,8 +722,12 @@ def handle_file_upload(value, components):
     global other_bagpipes_properties_dropdown
     global scale_alpha
     global show_galaxy
+    global show_kron
     global choose_show_band
     global empty_phot_page
+    global pdf_param_property
+    global norm
+    global upscale_select
 
     which_map = pn.widgets.RadioButtonGroup(options=['pixedfit', 'voronoi'], value='pixedfit', name='Pixel Binning')
 
@@ -637,6 +743,7 @@ def handle_file_upload(value, components):
 
     scale_alpha = pn.widgets.FloatSlider(name='Scale Alpha', start=0, end=1, value=1, step=0.01)
     show_galaxy = pn.widgets.Checkbox(name='Show Galaxy', value=False)
+    show_kron = pn.widgets.Checkbox(name='Show Kron', value=False)
 
     file = BytesIO(value)
     resolved_galaxy = ResolvedGalaxy.init_from_h5(file)
@@ -666,27 +773,35 @@ def handle_file_upload(value, components):
     cmap = 'nipy_spectral_r'
  
     #hvplot_bins = plot_bins('pixedfit', cmap)
-    bin_map = pn.bind(plot_bins, 'pixedfit', cmap, scale_alpha.param.value, show_galaxy.param.value, psf_mode_select.param.value, choose_show_band.param.value)
+    bin_map = pn.bind(plot_bins, 'pixedfit', cmap, scale_alpha.param.value, show_galaxy.param.value, show_kron.param.value, psf_mode_select.param.value, choose_show_band.param.value)
     # set stream off holoviews object instead
     
-
-    sed_obj = pn.bind(handle_map_click, stream.param.x, stream.param.y, resolved_galaxy, 
+    pdf_param_property = pn.widgets.Select(name='PDF Property', options = ['stellar_mass', 'sfr'], value = 'stellar_mass')
+    
+    
+    sed_obj =  pn.param.ParamFunction(pn.bind(handle_map_click, stream.param.x, stream.param.y, resolved_galaxy, 
                             cmap, which_map.param.value, which_sed_fitter.param.value, 
                             which_flux_unit.param.value, multi_choice_bins.param.value,
-                            which_run.param.value, total_fit_options.param.value,
-                            'sed', watch=False)
+                            which_run.param.value, total_fit_options.param.value, None,
+                            'sed', watch=False), loading_indicator = True)
     
-    sfh_obj = pn.bind(handle_map_click, stream.param.x, stream.param.y, resolved_galaxy, 
+    sfh_obj =  pn.param.ParamFunction(pn.bind(handle_map_click, stream.param.x, stream.param.y, resolved_galaxy, 
                             cmap, which_map.param.value, which_sed_fitter.param.value, 
                             which_flux_unit.param.value, multi_choice_bins.param.value,
-                            which_run.param.value, total_fit_options.param.value,
-                             'sfh', watch=False)
+                            which_run.param.value, total_fit_options.param.value, None,
+                             'sfh', watch=False), loading_indicator = True)
     
-    corner_obj = pn.bind(handle_map_click, stream.param.x, stream.param.y, resolved_galaxy, cmap,
+    corner_obj =  pn.param.ParamFunction(pn.bind(handle_map_click, stream.param.x, stream.param.y, resolved_galaxy, cmap,
                             which_map.param.value, which_sed_fitter.param.value, 
                             which_flux_unit.param.value, multi_choice_bins.param.value,
-                            which_run.param.value, total_fit_options.param.value,
-                            'corner', watch=False)
+                            which_run.param.value, total_fit_options.param.value, None,
+                            'corner', watch=False), loading_indicator = True)
+
+    pdf_obj =  pn.param.ParamFunction(pn.bind(handle_map_click, stream.param.x, stream.param.y, resolved_galaxy, cmap,
+                            which_map.param.value, which_sed_fitter.param.value, 
+                            which_flux_unit.param.value, multi_choice_bins.param.value,
+                            which_run.param.value, total_fit_options.param.value, pdf_param_property.param.value,
+                            'pdf', watch=False), loading_indicator = True)
     
     red_select = pn.widgets.MultiChoice(name='Red Channel', options = resolved_galaxy.bands, value = ['F444W'])
     green_select = pn.widgets.MultiChoice(name='Green Channel', options = resolved_galaxy.bands, value = ['F277W'])
@@ -712,14 +827,18 @@ def handle_file_upload(value, components):
     sed_results_grid[2, :3] = sfh_obj
     sed_results_grid[3:5, :3] = corner_obj
     '''
-    
-    norm = pn.widgets.RadioButtonGroup(name='Scaling', options=['linear', 'log'], value='linear')
+    upscale_select = pn.widgets.Select(name='Upscale Mass/SFR', options = [True, False], value = True, width=70)
+
+    norm = pn.widgets.RadioButtonGroup(name='Scaling', options=['linear', 'log'], value='linear', button_type='primary')
     #sed_results_plot = sed_results_plot_func(resolved_galaxy, which_sed_fitter.param.value, which_run.param.value)
-    sed_results = pn.bind(sed_results_plot_func, which_sed_fitter.param.value, which_run.param.value, watch=True)
+    sed_results = pn.bind(sed_results_plot_func, which_sed_fitter.param.value, which_run.param.value, upscale_select.param.value, watch=True)
     
-    other_bagpipes_properties_dropdown = pn.widgets.Select(name='SED Properties Map', options = ['chisq_phot-'], value = 'chisq_phot-')
+    other_bagpipes_properties_dropdown = pn.widgets.Select(name='SED Properties Map', options = ['constant:age_max'], value = 'constant:age_max')
+    type_select = pn.widgets.Select(name='Type', options = ['median', 'gif'], value = 'median', width=90)
+   
     #other_bagpipes_results = other_bagpipes_results_func(resolved_galaxy, other_bagpipes_properties_dropdown.param.value, which_run.param.value)
-    other_bagpipes_results = pn.bind(other_bagpipes_results_func, other_bagpipes_properties_dropdown.param.value, which_run.param.value, norm.param.value, total_fit_options.param.value, watch = True)
+    other_bagpipes_results = pn.param.ParamFunction(pn.bind(other_bagpipes_results_func, other_bagpipes_properties_dropdown.param.value, which_run.param.value, norm.param.value, total_fit_options.param.value, upscale_select.param.value, type_select.param.value, watch=False), 
+                                                    loading_indicator = True)
     '''
     sed_results_grid[2, 3:5] = sed_results
     '''
@@ -727,8 +846,10 @@ def handle_file_upload(value, components):
     # Alternative to SED results grid using Columns and Rows
     top_row = pn.Row(bin_map, sed_obj, height=350)
     mid_row = pn.Row(sfh_obj, sed_results, height=300)
-    bot_row = pn.Row(corner_obj, pn.Column(pn.Row(other_bagpipes_properties_dropdown), pn.Row(norm), pn.Row(other_bagpipes_results)), height=750)
-    combined = pn.Column(top_row, mid_row, bot_row, scroll=False)
+    bot_row = pn.Row(corner_obj, pn.Column(pn.Row(other_bagpipes_properties_dropdown), pn.Row(norm, type_select), pn.Row(other_bagpipes_results)), height=750)
+    even_lower = pn.Row(pn.Column(pdf_param_property, pdf_obj, max_height=400))
+
+    combined = pn.Column(top_row, mid_row, bot_row, even_lower, scroll=False)
 
     empty_phot_page = pn.Column(loading = True, sizing_mode='stretch_both', min_height=400, min_width = 400)#, max_width=1000)
     #phot_prop = pn.param.ParamFunction(phot_prop_func,  lazy=True)
@@ -746,7 +867,7 @@ def handle_file_upload(value, components):
     #@pn.depends(which_map.param.value)
     update_sidebar(0, sidebar)
 
-    pn.bind(update_sidebar, galaxy_tabs.param.active, sidebar, watch=True)
+    pn.param.ParamFunction(pn.bind(update_sidebar, galaxy_tabs.param.active, sidebar, watch=True), loading_indicator = True)
 
 
 def resolved_sed_interface():
