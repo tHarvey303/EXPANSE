@@ -4297,8 +4297,7 @@ if __name__ == "__main__":
 
         # Add original imaging back
         print('Adding original imaging.')
-        
-        print(type(cat))
+
         cat = galaxy.add_original_data(cat = cat, return_cat = True, overwrite = overwrite, crop_by = None)
         # Add total fluxes
         galaxy.add_flux_aper_total(catalogue_path = '/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v11/ACS_WFC+NIRCam/JOF_psfmatched/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total.fits', overwrite = overwrite)
@@ -4311,17 +4310,19 @@ if __name__ == "__main__":
         fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
         plt.close()
         # Currently set to use segmentation map from detection image. May change this in future. 
-        galaxy.pixedfit_processing(gal_region_use = 'detection', overwrite = overwrite) # Maybe seg map should be from detection image?
+        if galaxy.gal_region is None or overwrite:
+            galaxy.pixedfit_processing(gal_region_use = 'detection', overwrite = overwrite) # Maybe seg map should be from detection image?
 
-        fig = galaxy.plot_gal_region()
-        fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
-        plt.close()
+            fig = galaxy.plot_gal_region()
+            fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
+            plt.close()
+        if galaxy.pixedfit_map is None or overwrite:
+            galaxy.pixedfit_binning(overwrite = overwrite)
 
-        galaxy.pixedfit_binning(overwrite = overwrite)
+        if galaxy.photometry_table is None or overwrite:
+            galaxy.measure_flux_in_bins(overwrite = overwrite)
 
         num_of_bins += galaxy.get_number_of_bins()
-
-        galaxy.measure_flux_in_bins(overwrite = overwrite)
 
     print(f'Total number of bins to fit: {num_of_bins}')
     # Run Bagpipes in parallel
