@@ -63,6 +63,8 @@ cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 # What computer is this:
 # Get path of this file
 file_path = os.path.abspath(__file__)
+db_dir = ''
+
 if 'nvme' in file_path:
     computer = 'morgan'
 elif 'Users' in file_path:
@@ -72,7 +74,6 @@ elif os.path.exists('/.singularity.d/Singularity'):
 
 if computer == 'mac':
     bagpipes_dir = '/Users/user/Documents/PhD/bagpipes_dir/'
-    db_dir = ''
     print('Running on Mac.')
     bagpipes_filter_dir = bagpipes_dir + 'inputs/filters/'
 
