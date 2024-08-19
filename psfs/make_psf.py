@@ -22,7 +22,6 @@ import matplotlib.pyplot as plt
 from photutils.detection import find_peaks
 from astropy.wcs import WCS
 from astropy.nddata import Cutout2D
-from photutils.centroids import centroid_com
 from astropy.modeling.fitting import LinearLSQFitter, FittingWithOutlierRemoval
 from astropy.modeling.models import Linear1D
 import astropy.units as u
@@ -552,6 +551,11 @@ def find_stars(filenames=None, block_size=5, npeaks=1000, size=20, radii=np.arra
 
         img[~mask] = 0
 
+        if showme:
+            if mask is not None:
+                imshow([img], title=['img'], log=True)
+                plt.savefig(plotdir+label+'_'+os.path.basename(filename).replace('.fits','_img_mask.pdf'),dpi=300)
+
                                   
         imgb = block_reduce(img, block_size, func=np.sum)
         sig = mad_std(imgb[imgb>0], ignore_nan=True)/block_size
@@ -789,7 +793,7 @@ class PSF():
     def select(self, snr_lim = 800, dshift_lim=3, mask_lim=0.40, phot_frac_mask_lim = 0.85, showme=False, **kwargs):
         self.ok = (self.cat['dshift'] < dshift_lim) & (self.cat['snr'] > snr_lim) & (self.cat['frac_mask'] < mask_lim) & (self.cat['phot_frac_mask'] > phot_frac_mask_lim)
 
-    #(self.cat['cmin'] >= -1.5)  #& (self.cat['cmin'] >= -1.5)
+        #(self.cat['cmin'] >= -1.5)  #& (self.cat['cmin'] >= -1.5)
         self.cat['ok'] = np.int32(self.ok)
         self.cat['ok_shift'] = (self.cat['dshift'] < dshift_lim)
         self.cat['ok_snr'] = (self.cat['snr'] > snr_lim)
@@ -823,7 +827,7 @@ class PSF():
             shape = self.clipped[i].mask.shape
             if update_ok:
                 self.ok[iok[i]] = self.ok[iok[i]] and ~self.clipped[i].mask[shape[0]//2,shape[1]//2]
-            print('dog', ~self.clipped[i].mask[shape[0]//2, shape[1]//2], np.shape(self.clipped[i].mask))
+            #print('dog', ~self.clipped[i].mask[shape[0]//2, shape[1]//2], np.shape(self.clipped[i].mask))
             self.data[iok[i]].mask = self.clipped[i].mask
             mask = self.data[iok[i]].mask
             self.cat['frac_mask'][iok[i]] = np.size(mask[mask]) / np.size(mask)
@@ -1129,14 +1133,19 @@ def powspace(start, stop, num=30, power=0.5, **kwargs):
 
 def plot_profile(psf, target):
     shape = psf.shape
-    center = (shape[1]//2, shape[0]//2)
-    radii_pix = np.arange(1,67,1)
-    apertures = [CircularAperture(center, r=r) for r in radii_pix] #r in pixels
+    #center = (shape[1]//2, shape[0]//2) old - changed 12/08/24
+    center_psf = centroid_com(psf)
 
-    phot_table = aperture_photometry(psf, apertures)
+    radii_pix = np.arange(1,67,1)
+    apertures_psf = [CircularAperture(center_psf, r=r) for r in radii_pix] #r in pixels
+
+    center_target = centroid_com(target)
+    apertures_target = [CircularAperture(center_target, r=r) for r in radii_pix] #r in pixels
+
+    phot_table = aperture_photometry(psf, apertures_psf)
     flux_psf = np.array([phot_table[0][3+i] for i in range(len(radii_pix))])
 
-    phot_table = aperture_photometry(target, apertures)
+    phot_table = aperture_photometry(target, apertures_target)
     flux_target = np.array([phot_table[0][3+i] for i in range(len(radii_pix))])
 
     return radii_pix[:-1], (flux_psf)[0:-1], (flux_target)[0:-1]
@@ -1501,7 +1510,7 @@ def rel_cog_comparison(bands, psf_dir_dict, kernel_dir_dict, cmap = 'cmr.torch',
 
 def measure_cog(sci_cutout, pos):
     # make COG by apertures
-    radii = np.arange(1, np.shape(sci_cutout)[0]/2., 0.1)
+    radii = np.arange(1, np.shape(sci_cutout)[0]/2., 0.01)
     apertures = [CircularAperture(pos, r) for r in radii]
     phot_tab = aperture_photometry(sci_cutout, apertures)
     cog = np.array([[phot_tab[coln][0] for coln in phot_tab.colnames[3:]]][0])
@@ -1510,8 +1519,20 @@ def measure_cog(sci_cutout, pos):
 
 # Compute COG for PSF
 def psf_cog(psfmodel, filt, nearrad=None, fix_extrapolation=True, pixel_scale=None, norm_rad=1.0):
-    pos = np.shape(psfmodel)[0]/2.,  np.shape(psfmodel)[1]/2.
+    posold = np.shape(psfmodel)[0]/2.,  np.shape(psfmodel)[1]/2.
+    
+    pos = centroid_com(psfmodel)
+
+    plt.imshow(psfmodel)
+    plt.scatter(pos[1], pos[0], c='r', s= 1)
+    plt.scatter(posold[1], posold[0], c='b', s= 1)
+
+    plt.savefig('psf.png', dpi=300)
+    plt.close() 
+
     radii, cog = measure_cog(psfmodel, pos)
+
+    #radii, cog, _ = measure_curve_of_growth(psfmodel, rnorm=norm_rad, nradii=50, showme=False)
     radii *= pixel_scale
 
     if fix_extrapolation:
@@ -1545,6 +1566,9 @@ def psf_cog(psfmodel, filt, nearrad=None, fix_extrapolation=True, pixel_scale=No
         cog *= large_ee[np.argmin(np.abs(large_rad-norm_rad))] / cog[-1]
         radii = np.array(list(radii)+list(large_rad[large_rad>norm_rad]))
         cog_norm = np.array(list(cog)+list(large_ee[large_rad>norm_rad]))
+    
+    else:
+        cog_norm = cog
 
     import scipy.interpolate
     modcog_norm = scipy.interpolate.interp1d(radii, cog_norm, fill_value = 'extrapolate')
@@ -1666,16 +1690,16 @@ def make_err_from_wht(path):
     newhdu.writeto(outname, overwrite=True)
 
 
-def psf_correction_factor(match_band, psf_dir, apersize=0.32, pixel_scale = 0.03, ):
-    conv_psfmodel = fits.open(psf_dir + f'/{match_band}_psf.fits')[0].data # My modelled PSF
+def psf_correction_factor(match_band, psf_dir, apersize=0.32, pixel_scale = 0.03, fix_extrapolation = False):
+    conv_psfmodel = fits.open(psf_dir + f'/{match_band}_psf_norm.fits')[0].data # My modelled PSF
     #conv_psfmodel = fits.open('/raid/scratch/data/jwst/PSFs/TomPSFs/PSF_Resample_03_F444W.fits')[0].data # My WebbPSF PSF
     #conv_psfmodel = fits.open('/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/f444w_psf_norm.fits')[0].data # UNCOVER/MEGASCIENCE PSF (need 0.04 as pixel size)
 
-    min_corr = 1. / psf_cog(conv_psfmodel, match_band, nearrad=(apersize / 2.), pixel_scale = pixel_scale) # defaults to EE(<R_aper)
+    min_corr = 1. / psf_cog(conv_psfmodel, match_band, nearrad=(apersize / 2.), pixel_scale = pixel_scale, fix_extrapolation = fix_extrapolation) # defaults to EE(<R_aper)
 
     # Convert to AB mag difference
 
-    corr = -2.5 * np.log10(min_corr)
+    corr = 2.5 * np.log10(min_corr)
 
     return corr
 
@@ -1687,7 +1711,7 @@ if __name__ == '__main__':
     outdir = f'/nvme/scratch/work/tharvey/PSFs/{"+".join(surveys)}/'
     outdir_webbpsf = f'/nvme/scratch/work/tharvey/PSFs/{"+".join(surveys)}/webbpsf/'
     kernel_dir = f'/nvme/scratch/work/tharvey/PSFs/kernels/{"+".join(surveys)}/'
-    psf_mask = '/nvme/scratch/work/nadams/Ring/L2_HSTPSF_Mask.reg'
+    psf_mask = ''
     use_psf_masks = None #{'F606W':[psf_mask]} # None
     maglim = (18.0, 25.0) # Mag limit for stars to stack
     psf_fov = 4 # FOV for PSF in arcsec
@@ -1707,21 +1731,35 @@ if __name__ == '__main__':
     err_paths = copy(im_paths) # Placeholder
     phot_zp = {band:28.08 for band in bands}
   
-    
+    '''
     # Add HST seperately
     # Reset
     # For Nathan
-    '''
-    name = 'NEP-3'
+    # Special case for nathan
+    name = 'L1_NEP-2_HST'
     outdir = f'/nvme/scratch/work/tharvey/PSFs/{name}/'
     bands = []
+    match_band = None
     im_paths, wht_paths, err_paths, phot_zp = {}, {}, {}, {}
     bands.insert(0, 'F606W')
-    im_paths['F606W'] = '/raid/scratch/data/hst/NEP-1/ACS_WFC/30mas/aligned_full/ACS_WFC_f606W_NEP-1_drz.fits'
-    wht_paths['F606W'] = '/raid/scratch/data/hst/NEP-1/ACS_WFC/30mas/aligned_full/ACS_WFC_f606W_NEP-1_wht.fits'
-    err_paths['F606W'] = ''
-    
+    psf_mask = '/nvme/scratch/work/tharvey/catalogs/regions/L1_NEP-2_HSTPSF_Mask.reg'
+    use_psf_masks = {'F606W':[psf_mask]} # None
+    im_paths['F606W'] = ['/raid/scratch/data/hst/NEP-2/ACS_WFC/30mas/ACS_WFC_F606W_NEP-2_drz.fits']
+    wht_paths['F606W'] = ['/raid/scratch/data/hst/NEP-2/ACS_WFC/30mas/ACS_WFC_F606W_NEP-2_wht.fits']
+    err_paths['F606W'] = ['']
+    band = 'F606W'
+    try:
+        hdr = fits.getheader(im_paths[band][0], ext=0)
+        if 'ZEROPNT' in hdr:
+            phot_zp[band] = hdr['ZEROPNT']
+        else:
+            phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+    except KeyError:
+        hdr = fits.getheader(im_paths[band][0], ext=1)
+        phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+
     '''
+    
     #bands = []
     for band in ['F850LP', 'F814W', 'F775W', 'F606W', 'F435W']:
         bands.insert(0, band)
@@ -1754,7 +1792,7 @@ if __name__ == '__main__':
     print(im_paths)
     manual_id_remove = []
     #maglim = [18., 25.]
-    
+
     kernel_dir_dict = {'aperpy': kernel_dir, 'WebbPSF':'/nvme/scratch/work/tharvey/resolved_sedfitting/psfs/'}
     psf_dir_dict = {'+'.join(surveys):outdir,
     'UNCOVER DR3':'/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', 'WebbPSF Default':f'{outdir_webbpsf}/default_jitter', 'WebbPSF\n$\sigma=\left\{^{22(SW)}_{34(LW)}\\right.$ mas':f'{outdir_webbpsf}/morishita_jitter'}
@@ -1782,23 +1820,25 @@ if __name__ == '__main__':
     #psf_comparison(bands, psf_dir_dict, match_band=match_band, pixelscale=pixelscale)
     psf_dir_dict = {'+'.join(surveys):outdir}
     kernel_dir_dict = {'+'.join(surveys):kernel_dir}
-    #rel_cog_comparison(bands, psf_dir_dict, kernel_dir_dict, pixelscale=pixelscale, match_band=match_band)
+    
+    rel_cog_comparison(bands, psf_dir_dict, kernel_dir_dict, pixelscale=pixelscale, match_band=match_band)
     
     bands = ['F850LP', 'F814W', 'F775W', 'F606W', 'F435W']
     # Convolve images with bands
-    convolve_images(bands, im_paths, wht_paths, err_paths, outdir_matched_images, kernel_dir, match_band, overwrite=True)
-    dog
+    #convolve_images(bands, im_paths, wht_paths, err_paths, outdir_matched_images, kernel_dir, match_band, overwrite=True)
+    
 
-    for apersize in [0.32, 0.5, 1, 1.5, 2]:
+    for apersize in [0.2, 0.32, 0.5, 1, 1.5, 2]:
         # Derive correction factor for apertures from a PSF model 
-        corr1 = psf_correction_factor('F444W', outdir, apersize=apersize, pixel_scale = 0.03)
+        #corr1 = psf_correction_factor('F444W', outdir, apersize=apersize, pixel_scale = 0.03)
+        corr1 = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/JOF', apersize=apersize, pixel_scale = 0.03)
         corr2 = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/JADES-Deep-GS/', apersize=apersize, pixel_scale = 0.03)
         corr3 = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/NEP-3/', apersize=apersize, pixel_scale = 0.03)
-        print(f'{apersize} ', np.median([corr1, corr2, corr3]))
+        print(f'{apersize} ', np.median([corr1, corr2, corr3]), corr1, corr2, corr3)
 
-    corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', apersize=0.32, pixel_scale = 0.04)
+    #corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', apersize=0.32, pixel_scale = 0.04)
 
-    print('UNCOVER corr', corr)
+    #print('UNCOVER corr', corr)
 
     #corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/default_jitter/', apersize=0.32, pixel_scale = 0.03)
 

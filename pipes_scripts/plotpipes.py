@@ -12,6 +12,7 @@ import ast
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from matplotlib.ticker import ScalarFormatter, AutoMinorLocator
+import matplotlib as mpl
 from astropy.cosmology import FlatLambdaCDM
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
@@ -63,24 +64,11 @@ elif computer == 'morgan':
 
 bagpipes_filter_dir = f'{bagpipes_dir}/inputs/filters/'
 
-from general import *
-from plot_galaxy import plot_galaxy, add_observed_photometry_linear
-#from plot_ import plot_
-#from plot_1d_posterior import plot_1d_posterior
-#from plot_calibration import plot_calibration
-from plot_spectrum import add_spectrum, add_photometry_posterior
-from plot_sfh_posterior import plot_sfh_posterior, add_sfh_posterior
-from plot_csfh_posterior import add_csfh_posterior
-from plot_sfh import plot_sfh, add_sfh
-from general import hist1d
-from plot_corner import plot_corner
+
 import sys
 import subprocess
-#sys.path.insert(1, "/nvme/scratch/work/tharvey/scripts/")
-#import deepdish as dd
-import run_bagpipes
-import bagpipes as pipes 
-import useful_funcs
+
+
 
 flexoki_colors = ["#D14D41", "#DA702C", "#D0A215", "#879A39", "#3AA99F", "#4385BE", "#8B7EC8", "#CE5D97"]
 #try:
@@ -119,9 +107,13 @@ def combine_bands(bands, image_paths):
         
     if opened_first == False:
         return None, None
-            
 
-def colormap(z, z_range = (6, 21), cmap=mpl.cm.get_cmap('gist_rainbow_r')):
+def five_sig_depth_to_n_sig_depth(five_sig_depth, n):
+    one_sig_flux = 1/5* 10**((five_sig_depth - 28.08)/-2.5) 
+    n_sig_mag = -2.5 * np.log10(n*one_sig_flux) + 28.08
+    return n_sig_mag
+
+def colormap(z, z_range = (6, 21), cmap=mpl.colormaps.get_cmap('gist_rainbow_r')):
     z = z - z_range[0]
     z_top = z_range[1] - z_range[0]
     z_new = z/z_top
@@ -173,7 +165,38 @@ class PipesFit:
         data = h5py.File(h5_path, 'r')
         # fit_instructions is attribute of data
         fit_instructions = data.attrs['fit_instructions']
+        try:
+            self.config_used = eval(file.attrs["config"])
+            if self.config_used['type'] == 'BPASS':
+                os.environ['use_bpass'] = str(int(True))
+            elif self.config_used['type'] == 'BC03':
+                os.environ['use_bpass'] = str(int(False))
+        except KeyError:
+            self.config_used = None
+            pass
+
         data.close()
+
+        # Only import after we check the config
+        
+        # Reload the module if it's already been imported
+        if 'bagpipes' in sys.modules:
+            import importlib
+            importlib.reload(sys.modules['bagpipes'])
+            from bagpipes import general, add_sfh_posterior, add_csfh_posterior, plot_corner, plot_sfh, config
+            
+        else:
+            import bagpipes
+            from bagpipes import general, add_sfh_posterior, add_csfh_posterior, plot_corner, plot_sfh, config
+            import run_bagpipes
+            from bagpipes.plotting import hist1d
+
+        if self.config_used is not None:
+            assert config.stellar_file == self.config_used['stellar_file'], f'{config.stellar_file} != {self.config_used["stellar_file"]}'
+            assert config.neb_line_file == self.config_used['neb_line_file'], f'{config.neb_line_file} != {self.config_used["neb_line_file"]}'
+            assert config.neb_cont_file == self.config_used['neb_cont_file'], f'{config.neb_cont_file} != {self.config_used["neb_cont_file"]}'
+
+
 
         #fit_instructions = data['fit_instructions']
         if type(fit_instructions) in [str, np.str_]:
@@ -232,12 +255,12 @@ class PipesFit:
             photometry_exists = False
             self.filts = None
 
-        self.galaxy = pipes.galaxy(galaxy_id, self.data_func, filt_list=self.filts, spectrum_exists=spectrum_exists, photometry_exists=photometry_exists)
+        self.galaxy = bagpipes.galaxy(galaxy_id, self.data_func, filt_list=self.filts, spectrum_exists=spectrum_exists, photometry_exists=photometry_exists)
         
         # Recreating the posterior object
         #print(self.h5_path)
         try:
-            self.fit = pipes.fit(self.galaxy, fit_instructions, run=str(out_subdir))
+            self.fit = bagpipes.fit(self.galaxy, fit_instructions, run=str(out_subdir))
             self.fit.fit(verbose=True)
         except KeyError:
             raise Exception(f'Couldn\'t recreate {self.h5_path}. Skipping')
@@ -708,7 +731,7 @@ class PipesFit:
             return samples
 
         try:
-            hist1d(samples[np.invert(np.isnan(samples))], ax,
+            general.hist1d(samples[np.invert(np.isnan(samples))], ax,
                 smooth=True, color=colour, percentiles=False, lw=1, alpha=alpha, fill_between=fill_between, label=linelabel, norm_height=norm_height)
 
         except ValueError:

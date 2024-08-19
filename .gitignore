@@ -15,3 +15,4 @@ psfs/psf_models/*
 __pycache__/*
 __pycache__
 plots
+galaxies/diagnostic_plots/*
