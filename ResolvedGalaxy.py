@@ -4336,8 +4336,8 @@ if __name__ == "__main__":
         n_jobs = 6
         backend = 'loky'
     elif computer == 'singularity':
-        n_jobs = np.min([len(galaxies)+1, 32])
-        backend = 'loky'
+        n_jobs = np.min([len(galaxies)+1, 6])
+        backend = 'threading'
     with parallel_config(backend=backend, n_jobs=n_jobs):
         Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
 
