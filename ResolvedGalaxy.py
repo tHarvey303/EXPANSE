@@ -1982,6 +1982,10 @@ class ResolvedGalaxy:
 
     def add_detection_data(self, detection_instrument = 'NIRCam', galfind_work_dir = '/raid/scratch/work/austind/GALFIND_WORK', overwrite = False):
         
+        if self.det_data is not None and not overwrite:
+            print('Detection data already loaded')
+            return
+            
         im_path = f'{galfind_work_dir}/Stacked_Images/{self.galfind_version}/{detection_instrument}/{self.survey}/{self.survey}_{self.detection_band}_{self.galfind_version}_stack_new.fits'
         seg_path = f'{galfind_work_dir}/SExtractor/{detection_instrument}/{self.galfind_version}/{self.survey}/{self.survey}_{self.detection_band}_{self.detection_band}_sel_cat_{self.galfind_version}_seg.fits'
         hdu_data = fits.open(im_path)
@@ -4238,13 +4242,14 @@ if __name__ == "__main__":
         cutout_size = cat_selected['CUTOUT_SIZE'][:10]
         ids = ids[:10] # For testing
         overwrite = False
-        h5_folder = 'galaxies/'
+        h5folder = 'galaxies/'
     elif computer == 'singularity':
         ids = [16, 36, 370, 478, 531, 575, 778, 801, 805, 830]
         overwrite = False
-        h5_folder = '/mnt/galaxies/'
+        h5folder = '/mnt/galaxies/'
+        cutout_size = None # Not used when loading from h5
 
-    galaxies = ResolvedGalaxy.init(list(ids), 'JOF_psfmatched', 'v11', already_psf_matched = True, cutout_size = cutout_size)
+    galaxies = ResolvedGalaxy.init(list(ids), 'JOF_psfmatched', 'v11', already_psf_matched = True, cutout_size = cutout_size, h5folder = h5folder)
     # Should speed it up?
     
 
@@ -4303,13 +4308,13 @@ if __name__ == "__main__":
 
         # Plot segmentation stamps
         fig = galaxy.plot_seg_stamps()
-        fig.savefig(f'galaxies/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
+        fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
         plt.close()
         # Currently set to use segmentation map from detection image. May change this in future. 
         galaxy.pixedfit_processing(gal_region_use = 'detection', overwrite = overwrite) # Maybe seg map should be from detection image?
 
         fig = galaxy.plot_gal_region()
-        fig.savefig(f'galaxies/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
+        fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
         plt.close()
 
         galaxy.pixedfit_binning(overwrite = overwrite)
