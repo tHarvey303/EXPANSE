@@ -4298,15 +4298,15 @@ if __name__ == "__main__":
     '''
     sfh_type = 'delayed'
     sfh["tau"] = (0.01, 15) # `Gyr`
-	sfh["massformed"] = (5., 12.)   # Log_10 total stellar mass formed: M_Solar
-	
-	sfh["age"] = (0.001, 15) # Gyr
-	sfh['age_prior'] = 'uniform'
-	sfh['metallicity_prior'] = 'uniform'
-	if metallicity_prior == 'log_10':
-		sfh["metallicity"] = (1e-03, 3)
-	elif metallicity_prior == 'uniform':
-		sfh['metallicity'] = (0, 3)
+    sfh["massformed"] = (5., 12.)   # Log_10 total stellar mass formed: M_Solar
+
+    sfh["age"] = (0.001, 15) # Gyr
+    sfh['age_prior'] = 'uniform'
+    sfh['metallicity_prior'] = 'uniform'
+    if metallicity_prior == 'log_10':
+        sfh["metallicity"] = (1e-03, 3)
+    elif metallicity_prior == 'uniform':
+        sfh['metallicity'] = (0, 3)
 
     
     dust = {}
@@ -4400,7 +4400,7 @@ if __name__ == "__main__":
             n_jobs = 6
             backend = 'loky'
         elif computer == 'singularity':
-            n_jobs = np.min([len(galaxies)+1, 6])
+            n_jobs = np.min([len(galaxies)+1, 28])
             backend = 'multiprocessing'
         
     if n_jobs == 1:
