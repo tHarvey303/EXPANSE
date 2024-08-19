@@ -4414,7 +4414,7 @@ if __name__ == "__main__":
             # This options runs multiple galaxies in parallel with joblib
             if computer == 'singularity':
                 from joblib import parallel_config
-                with parallel_config(backend=backend, n_jobs=n_jobs, inner_max_num_threads=1):
+                with parallel_config(backend=backend, n_jobs=n_jobs): # inner_max_num_threads=1 if backend is 'multiprocessing' else None)
                     Parallel()(galaxies[i].run_bagpipes(run_dicts[i]) for i in range(len(galaxies)))
             else:
                 Parallel(n_jobs=n_jobs)(delayed(galaxies[i].run_bagpipes)(run_dicts[i]) for i in range(len(galaxies)))
