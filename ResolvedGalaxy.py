@@ -3052,7 +3052,7 @@ class ResolvedGalaxy:
     def add_flux_aper_total(self, catalogue_path, id_column = 'NUMBER', overwrite = False, columns_to_add = ['KRON_RADIUS_', 'a_', 'b_', 'theta_', 'area_', 'flux_ratio_', 'EE_correction_', 'total_correction_', 'FLUX_APER_band_TOTAL_Jy', 'FLUXERR_APER_band_TOTAL_Jy'], stacked_band = 'F277W+F356W+F444W'):
         
         if getattr(self, 'total_photometry', None) is not None and not overwrite:
-            print('Total photometry already exists')
+            print(f'Total photometry already loaded for {self.galaxy_id}.')
             return
 
         table = Table.read(catalogue_path)
@@ -4398,13 +4398,14 @@ if __name__ == "__main__":
                 n_jobs = 6
                 backend = 'loky'
             elif computer == 'singularity':
-                n_jobs = np.min([len(galaxies)+1, 28])
+                n_jobs = np.min([len(galaxies)+1, 6])
                 backend = 'multiprocessing'
             
         if n_jobs == 1:
             for i in range(len(galaxies)):
                 galaxies[i].run_bagpipes(dicts[i])
         else:
+            print(f'Using {n_jobs} cores.')
             # This options runs multiple galaxies in parallel with joblib
             if computer == 'singularity':
                 from joblib import parallel_config
