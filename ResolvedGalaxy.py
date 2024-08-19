@@ -4322,7 +4322,7 @@ if __name__ == "__main__":
 
     meta = {'run_name':'photoz_delayed', 'redshift':'eazy', 'redshift_sigma':'eazy',
             'min_redshift_sigma':0.5, 'fit_photometry':'TOTAL_BIN+MAG_APER_TOTAL',
-            'sampler':'multinest'}
+            'sampler':'nautilus'}
 
     overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
 
@@ -4402,7 +4402,7 @@ if __name__ == "__main__":
             elif computer == 'singularity':
                 n_jobs = np.min([len(galaxies)+1, 6])
                 backend = 'multiprocessing'
-                backend = 'loky'
+                backend = 'threading'
             
         if n_jobs == 1:
             for i in range(len(galaxies)):
