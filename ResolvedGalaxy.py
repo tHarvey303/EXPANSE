@@ -65,12 +65,13 @@ cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 file_path = os.path.abspath(__file__)
 db_dir = ''
 
-if 'nvme' in file_path:
+if os.path.exists('/.singularity.d/Singularity'):
+    computer = 'singularity'
+elif 'nvme' in file_path:
     computer = 'morgan'
 elif 'Users' in file_path:
     computer = 'mac'
-elif os.path.exists('/.singularity.d/Singularity'):
-    computer = 'singularity'
+
 
 if computer == 'mac':
     bagpipes_dir = '/Users/user/Documents/PhD/bagpipes_dir/'
@@ -85,6 +86,7 @@ elif computer == 'morgan':
     
 
 elif computer == 'singularity':
+    print('Running in container.')
     bagpipes_filter_dir = 'filters/'
 
 
