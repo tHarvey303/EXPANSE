@@ -7,7 +7,7 @@ from io import BytesIO
 import astropy.units as u
 import matplotlib
 from astropy.coordinates import SkyCoord
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel_backend, wrap_non_picklable_objects
 from astropy.nddata import Cutout2D
 import ast
 from astropy.convolution import convolve_fft
@@ -2589,6 +2589,8 @@ class ResolvedGalaxy:
             # the physical parameters - stellar mass, SFR, tx, dust, metallicity and redshift
             sedfit.evaluate_posterior_percentiles()
     
+    @delayed
+    @wrap_non_picklable_objects
     def run_bagpipes(self, bagpipes_config, filt_dir = bagpipes_filter_dir, fit_photometry = 'all',
     run_dir = f'pipes/', overwrite=False):
         #meta - run_name, use_bpass, redshift (override)
