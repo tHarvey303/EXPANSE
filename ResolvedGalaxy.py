@@ -4340,8 +4340,13 @@ if __name__ == "__main__":
     elif computer == 'singularity':
         n_jobs = np.min([len(galaxies)+1, 6])
         backend = 'threading'
-    with parallel_config(backend=backend, n_jobs=n_jobs):
-        Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
+    n_jobs = 1
+    if n_jobs == 1:
+        for i in range(len(galaxies)):
+            galaxies[i].run_bagpipes(dicts[i])
+    else:
+        with parallel_config(backend=backend, n_jobs=n_jobs):
+            Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
 
 
         
