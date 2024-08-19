@@ -32,8 +32,6 @@ from astropy.io.misc.hdf5 import write_table_hdf5, read_table_hdf5
 # can write astropy to h5
 import copy
 import cmasher as cm
-from photutils import CircularAperture, EllipticalAperture, aperture_photometry
-from photutils.centroids import centroid_com
 import sys
 from tqdm import tqdm
 from inspect import signature
@@ -140,7 +138,10 @@ def scale_fluxes(mag_aper, mag_auto, a, b, theta, kron_radius, psf, zero_point =
     assert type(psf) == np.ndarray, "PSF must be a numpy array"
     assert np.sum(psf) < 1, 'PSF should not be normalised, some flux is outside the footprint.'
     #center = (psf.shape[0] - 1) / 2
+    from photutils.centroids import centroid_com
     center = centroid_com(psf)
+    # 
+    #from photutils import CircularAperture, EllipticalAperture, aperture_photometry
     #circular_aperture = CircularAperture(center, center, r=aper_diam/(2*pixel_scale))
     #circular_aperture_phot = aperture_photometry(psf, circular_aperture)
 
@@ -2673,6 +2674,8 @@ class ResolvedGalaxy:
             mask = (flux_table['type'] == 'MAG_AUTO') & (flux_table['type'] == 'MAG_ISO') & (flux_table['type'] == 'MAG_BEST')
         elif fit_photometry.startswith('MAG_APER'):
             mask = flux_table['type'] == 'MAG_APER'
+        elif fit_photometry == 'TOTAL_BIN+MAG_APER_TOTAL':
+            mask = (flux_table['type'] == 'MAG_APER_TOTAL') | (flux_table['type'] == 'TOTAL_BIN')
         else:
             raise ValueError('fit_photometry must be one of: all, bin, MAG_AUTO, MAG_ISO, MAG_BEST, TOTAL_BIN, MAG or MAG_APER')
        
@@ -2708,6 +2711,8 @@ class ResolvedGalaxy:
                 os.chmod(path, 0o777)
                 existing_files += glob.glob(f'{path}/*')    
 
+        os.makedirs(f'{run_dir}/cats/{out_subdir_encoded}', exist_ok=True)
+
         existing_filenames = [os.path.basename(file) for file in existing_files]  
         
         #path_fits = f'{run_dir}/cats/{run_name}/{self.survey}/' # Filename is galaxy ID rather than being a folder
@@ -2729,8 +2734,6 @@ class ResolvedGalaxy:
                         os.rename(file, new_file)
                     else:
                         os.remove(file)
-
-
 
         print(existing_filenames)
 
@@ -2759,9 +2762,9 @@ class ResolvedGalaxy:
             # Move catalogue
             
             path = f'{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits'
-            old_name = f'{run_dir}/cats/{out_subdir}/{self.galaxy_id}.fits'
-            if os.path.exists(path) and not os.path.exists(old_name):
-                os.rename(path, old_name)
+            run_name = f'{run_dir}/cats/{out_subdir_encoded}/{self.galaxy_id}.fits'
+            if os.path.exists(path) and not os.path.exists(run_name):
+                os.rename(path, run_name)
             
         # Default pipes install for now
 
@@ -4291,8 +4294,8 @@ if __name__ == "__main__":
                     "dust":dust}
 
     meta = {'run_name':'photoz_DPL', 'redshift':'eazy', 'redshift_sigma':'eazy',
-            'min_redshift_sigma':0.5, 'fit_photometry':'all_total',
-            'sampler':'nautilus'}
+            'min_redshift_sigma':0.5, 'fit_photometry':'TOTAL_BIN+MAG_APER_TOTAL',
+            'sampler':'multinest'}
 
     overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
 
@@ -4333,18 +4336,19 @@ if __name__ == "__main__":
     print(f'Total number of bins to fit: {num_of_bins}')
     # Run Bagpipes in parallel
 
-    from joblib import parallel_config
+    
     if computer == 'morgan':
         n_jobs = 6
         backend = 'loky'
     elif computer == 'singularity':
         n_jobs = np.min([len(galaxies)+1, 6])
         backend = 'threading'
-    n_jobs = 1
+    n_jobs = 3
     if n_jobs == 1:
         for i in range(len(galaxies)):
             galaxies[i].run_bagpipes(dicts[i])
     else:
+        from joblib import parallel_config
         with parallel_config(backend=backend, n_jobs=n_jobs):
             Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
 
