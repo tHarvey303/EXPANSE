@@ -312,9 +312,7 @@ class ResolvedGalaxy:
         
         else:
             galaxy_names = [f'{survey}_{gal_id}' for gal_id in galaxy_id]
-            print(f'{h5folder}{galaxy_names[0]}.h5')
             found = [os.path.exists(f'{h5folder}{galaxy_name}.h5') for galaxy_name in galaxy_names]
-            print(found)
             if all(found):
                 print('Loading from .h5')
                 return cls.init_multiple_from_h5(galaxy_names, h5_folder = h5folder)
@@ -4246,7 +4244,7 @@ if __name__ == "__main__":
         overwrite = False
         h5folder = 'galaxies/'
     elif computer == 'singularity':
-        ids = [16, 36, 370, 478, 531, 575, 778, 801, 805, 830]
+        ids = [16, 36, 370, 478, 531, 575, 778, 801, 806, 830]
         overwrite = False
         h5folder = '/mnt/galaxies/'
         cutout_size = None # Not used when loading from h5
