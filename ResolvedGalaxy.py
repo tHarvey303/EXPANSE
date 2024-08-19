@@ -4342,7 +4342,7 @@ if __name__ == "__main__":
         backend = 'loky'
     elif computer == 'singularity':
         n_jobs = np.min([len(galaxies)+1, 6])
-        backend = 'threading'
+        backend = 'multiprocessing'
     n_jobs = 3
     if n_jobs == 1:
         for i in range(len(galaxies)):
