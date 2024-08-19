@@ -4407,7 +4407,7 @@ if __name__ == "__main__":
             
         if n_jobs == 1:
             for i in range(len(galaxies)):
-                galaxies[i].run_bagpipes(dicts[i])
+                galaxies[i].run_bagpipes(run_dicts[i])
         else:
             print(f'Using {n_jobs} cores.')
             for i in range(len(galaxies)):
