@@ -4271,7 +4271,7 @@ if __name__ == "__main__":
         overwrite = False
         h5folder = '/mnt/galaxies/'
         cutout_size = None # Not used when loading from h5
-
+    
     galaxies = ResolvedGalaxy.init(list(ids), 'JOF_psfmatched', 'v11', already_psf_matched = True, cutout_size = cutout_size, h5folder = h5folder)
     # Should speed it up?
     
@@ -4322,7 +4322,7 @@ if __name__ == "__main__":
 
     meta = {'run_name':'photoz_delayed', 'redshift':'eazy', 'redshift_sigma':'eazy',
             'min_redshift_sigma':0.5, 'fit_photometry':'TOTAL_BIN+MAG_APER_TOTAL',
-            'sampler':'nautilus'}
+            'sampler':'multinest'}
 
     overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
 
@@ -4392,6 +4392,7 @@ if __name__ == "__main__":
         # Run Bagpipes in parallel
 
     for run_dicts in [dicts, resolved_dicts]:
+        size = 2
         if size >= 2:
             # This option for running by with mpirun/mpiexec
             n_jobs = 1
