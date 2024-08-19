@@ -49,6 +49,16 @@ import matplotlib.cm as mcm
 #import FontProperties
 from matplotlib.font_manager import FontProperties
 
+try:
+    from mpi4py import MPI
+    rank = MPI.COMM_WORLD.Get_rank()
+    size = MPI.COMM_WORLD.Get_size()
+    from mpi4py.futures import MPIPoolExecutor
+
+except ImportError:
+    rank = 0
+    size = 1
+
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 # This class is designed to hold all the data for a galaxy, including the cutouts, segmentation maps, and RMS error maps.
 
@@ -2603,10 +2613,14 @@ class ResolvedGalaxy:
                 redshift = self.meta_properties['zbest_fsps_larson_zfree']
             elif redshift in self.sed_fitting_table['bagpipes'].keys():
                 table = self.sed_fitting_table['bagpipes'][redshift]
+                redshift_id = meta.get('redshift_id', table['ID'][0])
+                row_index = table['ID'] == redshift_id
+                table = table[row_index]
+
                 if 'redshift_50' in table.colnames:
-                    redshift = table['redshift_50'][0]
+                    redshift = table['redshift_50'][redshift_id]
                 elif 'input_redshift' in table.colnames:
-                    redshift = table['input_redshift'][0]
+                    redshift = table['input_redshift'][redshift_id]
             
 
         redshift_sigma = meta.get('redshift_sigma', 0)
@@ -4259,8 +4273,9 @@ if __name__ == "__main__":
     galaxies = ResolvedGalaxy.init(list(ids), 'JOF_psfmatched', 'v11', already_psf_matched = True, cutout_size = cutout_size, h5folder = h5folder)
     # Should speed it up?
     
-
+    # Initial model for photo-z 
     sfh = {} # double-power-law
+    '''
     sfh_type = 'dblplaw'
                    
     sfh["tau"] = (0., 15.)                # Vary the time of peak star-formation between
@@ -4280,6 +4295,19 @@ if __name__ == "__main__":
                                             # above as in Carnall et al. (2017).
     sfh["massformed"] = (5., 12.)
     sfh['metallicity'] = (0, 3)
+    '''
+    sfh_type = 'delayed'
+    sfh["tau"] = (0.01, 15) # `Gyr`
+	sfh["massformed"] = (5., 12.)   # Log_10 total stellar mass formed: M_Solar
+	
+	sfh["age"] = (0.001, 15) # Gyr
+	sfh['age_prior'] = 'uniform'
+	sfh['metallicity_prior'] = 'uniform'
+	if metallicity_prior == 'log_10':
+		sfh["metallicity"] = (1e-03, 3)
+	elif metallicity_prior == 'uniform':
+		sfh['metallicity'] = (0, 3)
+
     
     dust = {}
     dust["type"] = "Calzetti"
@@ -4293,64 +4321,100 @@ if __name__ == "__main__":
                     "nebular":nebular,
                     "dust":dust}
 
-    meta = {'run_name':'photoz_DPL', 'redshift':'eazy', 'redshift_sigma':'eazy',
+    meta = {'run_name':'photoz_delayed', 'redshift':'eazy', 'redshift_sigma':'eazy',
             'min_redshift_sigma':0.5, 'fit_photometry':'TOTAL_BIN+MAG_APER_TOTAL',
             'sampler':'multinest'}
 
     overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
 
     dicts = [copy.deepcopy(overall_dict) for i in range(len(galaxies))]
+
+    resolved_sfh = {
+    'age_max': (0.01, 2.5), # Gyr 
+    'age_min': (0, 2.5), # Gyr
+    'metallicity': (1e-3, 2.5), # solar
+    'massformed': (4, 12), # log mstar/msun
+    }
+
+    dust = {}
+    dust["type"] = "Calzetti"
+    dust["Av"] = (0, 5.0)
+
+    fit_instructions = {"t_bc":0.01,
+                    "constant":sfh,
+                    "nebular":nebular,
+                    "dust":dust,  
+                    }
+    # This means that we are fixing the photo-z to the results from the 'photoz_DPL' run,
+    # specifically the 'MAG_APER_TOTAL' photometry
+    # We are fitting only the resolved photometry in the 'TOTAL_BIN' bins
+    meta = {'run_name':'CNST_SFH_RESOLVED', 'redshift':'photoz_delayed', 'redshift_id':'MAG_APER_TOTAL',
+            'fit_photometry':'bin'}
+    resolved_dict = {'meta': meta, 'fit_instructions': fit_instructions}
+    resolved_dicts = [copy.deepcopy(resolved_dict) for i in range(len(galaxies))]
+
+
     cat = None
     num_of_bins = 0
-    for posi, galaxy in enumerate(galaxies):
 
-        # Add original imaging back
-        print('Adding original imaging.')
+    if rank == 0:
+        for posi, galaxy in enumerate(galaxies):
 
-        cat = galaxy.add_original_data(cat = cat, return_cat = True, overwrite = overwrite, crop_by = None)
-        # Add total fluxes
-        galaxy.add_flux_aper_total(catalogue_path = '/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v11/ACS_WFC+NIRCam/JOF_psfmatched/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total.fits', overwrite = overwrite)
+            # Add original imaging back
+            print('Adding original imaging.')
 
-        # Add Detection data
-        galaxy.add_detection_data(overwrite = overwrite)
+            cat = galaxy.add_original_data(cat = cat, return_cat = True, overwrite = overwrite, crop_by = None)
+            # Add total fluxes
+            galaxy.add_flux_aper_total(catalogue_path = '/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v11/ACS_WFC+NIRCam/JOF_psfmatched/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total.fits', overwrite = overwrite)
 
-        # Plot segmentation stamps
-        fig = galaxy.plot_seg_stamps()
-        fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
-        plt.close()
-        # Currently set to use segmentation map from detection image. May change this in future. 
-        if galaxy.gal_region is None or overwrite:
-            galaxy.pixedfit_processing(gal_region_use = 'detection', overwrite = overwrite) # Maybe seg map should be from detection image?
+            # Add Detection data
+            galaxy.add_detection_data(overwrite = overwrite)
 
-            fig = galaxy.plot_gal_region()
-            fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
+            # Plot segmentation stamps
+            fig = galaxy.plot_seg_stamps()
+            fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
             plt.close()
-        if galaxy.pixedfit_map is None or overwrite:
-            galaxy.pixedfit_binning(overwrite = overwrite)
+            # Currently set to use segmentation map from detection image. May change this in future. 
+            if galaxy.gal_region is None or overwrite:
+                galaxy.pixedfit_processing(gal_region_use = 'detection', overwrite = overwrite) # Maybe seg map should be from detection image?
 
-        if galaxy.photometry_table is None or overwrite:
-            galaxy.measure_flux_in_bins(overwrite = overwrite)
+                fig = galaxy.plot_gal_region()
+                fig.savefig(f'{h5folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
+                plt.close()
+            if galaxy.pixedfit_map is None or overwrite:
+                galaxy.pixedfit_binning(overwrite = overwrite)
 
-        num_of_bins += galaxy.get_number_of_bins()
+            if galaxy.photometry_table is None or overwrite:
+                galaxy.measure_flux_in_bins(overwrite = overwrite)
 
-    print(f'Total number of bins to fit: {num_of_bins}')
-    # Run Bagpipes in parallel
+            num_of_bins += galaxy.get_number_of_bins()
 
-    
-    if computer == 'morgan':
-        n_jobs = 6
-        backend = 'loky'
-    elif computer == 'singularity':
-        n_jobs = np.min([len(galaxies)+1, 6])
-        backend = 'multiprocessing'
-    n_jobs = 3
+        print(f'Total number of bins to fit: {num_of_bins}')
+        # Run Bagpipes in parallel
+
+    if size > 1:
+        # This option for running by with mpirun/mpiexec
+        n_jobs = 1
+    else:
+        if computer == 'morgan':
+            n_jobs = 6
+            backend = 'loky'
+        elif computer == 'singularity':
+            n_jobs = np.min([len(galaxies)+1, 6])
+            backend = 'multiprocessing'
+        
     if n_jobs == 1:
         for i in range(len(galaxies)):
             galaxies[i].run_bagpipes(dicts[i])
     else:
-        from joblib import parallel_config
-        with parallel_config(backend=backend, n_jobs=n_jobs):
-            Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
+        # This options runs multiple galaxies in parallel with joblib
+        if computer == 'singularity':
+            from joblib import parallel_config
+            with parallel_config(backend=backend, n_jobs=n_jobs):
+                Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
+        else:
+            Parallel(n_jobs=n_jobs)(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
+        
 
 
         
