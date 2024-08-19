@@ -4326,7 +4326,16 @@ if __name__ == "__main__":
 
     print(f'Total number of bins to fit: {num_of_bins}')
     # Run Bagpipes in parallel
-    Parallel(n_jobs=6)(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
+
+    from joblib import parrallel_config
+    if computer == 'morgan':
+        n_jobs = 6
+        backend = 'loky'
+    elif computer == 'singularity':
+        n_jobs = 32
+        backend = 'threading'
+    with parallel_config(backend=backend, n_jobs=n_jobs):
+        Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
 
 
         
