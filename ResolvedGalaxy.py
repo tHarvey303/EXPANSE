@@ -1996,7 +1996,7 @@ class ResolvedGalaxy:
     def add_detection_data(self, detection_instrument = 'NIRCam', galfind_work_dir = '/raid/scratch/work/austind/GALFIND_WORK', overwrite = False):
         
         if self.det_data is not None and not overwrite:
-            print('Detection data already loaded')
+            print(f'Detection data already loaded for {self.galaxy_id}.')
             return
 
         im_path = f'{galfind_work_dir}/Stacked_Images/{self.galfind_version}/{detection_instrument}/{self.survey}/{self.survey}_{self.detection_band}_{self.galfind_version}_stack_new.fits'
@@ -2055,7 +2055,7 @@ class ResolvedGalaxy:
                             lowz_zmax_arr = [[4., 6., None]], cat = None, return_cat = False, crop_by = 'ID'):
 
         if self.unmatched_data is not None and self.unmatched_rms_err is not None and self.unmatched_seg is not None and not overwrite:
-            print('Unmatched data already loaded')
+            print(f'Unmatched data already loaded for {self.galaxy_id}.')
             return
 
         if crop_by == 'ID':
@@ -4358,7 +4358,7 @@ if __name__ == "__main__":
         for posi, galaxy in enumerate(galaxies):
 
             # Add original imaging back
-            print('Adding original imaging.')
+            #print('Adding original imaging.')
 
             cat = galaxy.add_original_data(cat = cat, return_cat = True, overwrite = overwrite, crop_by = None)
             # Add total fluxes
@@ -4389,33 +4389,34 @@ if __name__ == "__main__":
         print(f'Total number of bins to fit: {num_of_bins}')
         # Run Bagpipes in parallel
 
-    if size > 1:
-        # This option for running by with mpirun/mpiexec
-        n_jobs = 1
-    else:
-        if computer == 'morgan':
-            n_jobs = 6
-            backend = 'loky'
-        elif computer == 'singularity':
-            n_jobs = np.min([len(galaxies)+1, 28])
-            backend = 'multiprocessing'
-        
-    if n_jobs == 1:
-        for i in range(len(galaxies)):
-            galaxies[i].run_bagpipes(dicts[i])
-    else:
-        # This options runs multiple galaxies in parallel with joblib
-        if computer == 'singularity':
-            from joblib import parallel_config
-            with parallel_config(backend=backend, n_jobs=n_jobs):
-                Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
+    for run_dicts in [dicts, resolved_dicts]:
+        if size >= 2:
+            # This option for running by with mpirun/mpiexec
+            n_jobs = 1
         else:
-            Parallel(n_jobs=n_jobs)(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
-        
+            if computer == 'morgan':
+                n_jobs = 6
+                backend = 'loky'
+            elif computer == 'singularity':
+                n_jobs = np.min([len(galaxies)+1, 28])
+                backend = 'multiprocessing'
+            
+        if n_jobs == 1:
+            for i in range(len(galaxies)):
+                galaxies[i].run_bagpipes(dicts[i])
+        else:
+            # This options runs multiple galaxies in parallel with joblib
+            if computer == 'singularity':
+                from joblib import parallel_config
+                with parallel_config(backend=backend, n_jobs=n_jobs):
+                    Parallel()(delayed(galaxies[i].run_bagpipes)(run_dicts[i]) for i in range(len(galaxies)))
+            else:
+                Parallel(n_jobs=n_jobs)(delayed(galaxies[i].run_bagpipes)(run_dicts[i]) for i in range(len(galaxies)))
+            
 
 
-        
-        
+            
+            
 
 
 
