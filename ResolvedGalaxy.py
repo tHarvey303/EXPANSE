@@ -4230,15 +4230,19 @@ class MultipleResolvedGalaxy:
             function(*args, **kwargs)
 
 
-
-
 if __name__ == "__main__":
-    catalog_path_selected = '/nvme/scratch/work/tharvey/resolved_sedfitting/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits'
-    cat_selected = Table.read(catalog_path_selected)
-    ids = cat_selected['NUMBER']
-    cutout_size = cat_selected['CUTOUT_SIZE'][:10]
-    ids = ids[:10] # For testing
-    overwrite = False
+    if computer == 'morgan':
+        catalog_path_selected = '/nvme/scratch/work/tharvey/resolved_sedfitting/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits'
+        cat_selected = Table.read(catalog_path_selected)
+        ids = cat_selected['NUMBER']
+        cutout_size = cat_selected['CUTOUT_SIZE'][:10]
+        ids = ids[:10] # For testing
+        overwrite = False
+        h5_folder = 'galaxies/'
+    elif computer == 'singularity':
+        ids = [16, 36, 370, 478, 531, 575, 778, 801, 805, 830]
+        overwrite = False
+        h5_folder = '/mnt/galaxies/'
 
     galaxies = ResolvedGalaxy.init(list(ids), 'JOF_psfmatched', 'v11', already_psf_matched = True, cutout_size = cutout_size)
     # Should speed it up?
