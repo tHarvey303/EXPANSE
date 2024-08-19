@@ -4327,7 +4327,7 @@ if __name__ == "__main__":
     print(f'Total number of bins to fit: {num_of_bins}')
     # Run Bagpipes in parallel
 
-    from joblib import parrallel_config
+    from joblib import parallel_config
     if computer == 'morgan':
         n_jobs = 6
         backend = 'loky'
