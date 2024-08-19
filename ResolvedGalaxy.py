@@ -4409,14 +4409,13 @@ if __name__ == "__main__":
                 galaxies[i].run_bagpipes(dicts[i])
         else:
             print(f'Using {n_jobs} cores.')
-            print(run_dicts[0])
-            print([type(run_dicts[i]) for i in range(len(run_dicts))])
-
+            for i in range(len(galaxies)):
+                print(run_dicts[i])
             # This options runs multiple galaxies in parallel with joblib
             if computer == 'singularity':
                 from joblib import parallel_config
                 with parallel_config(backend=backend, n_jobs=n_jobs, inner_max_num_threads=1):
-                    Parallel()(delayed(galaxies[i].run_bagpipes)(run_dicts[i]) for i in range(len(galaxies)))
+                    Parallel()(galaxies[i].run_bagpipes(run_dicts[i]) for i in range(len(galaxies)))
             else:
                 Parallel(n_jobs=n_jobs)(delayed(galaxies[i].run_bagpipes)(run_dicts[i]) for i in range(len(galaxies)))
             
