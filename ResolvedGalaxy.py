@@ -312,7 +312,9 @@ class ResolvedGalaxy:
         
         else:
             galaxy_names = [f'{survey}_{gal_id}' for gal_id in galaxy_id]
+            print(f'{h5folder}{galaxy_names[0]}.h5')
             found = [os.path.exists(f'{h5folder}{galaxy_name}.h5') for galaxy_name in galaxy_names]
+            print(found)
             if all(found):
                 print('Loading from .h5')
                 return cls.init_multiple_from_h5(galaxy_names, h5_folder = h5folder)
@@ -1985,7 +1987,7 @@ class ResolvedGalaxy:
         if self.det_data is not None and not overwrite:
             print('Detection data already loaded')
             return
-            
+
         im_path = f'{galfind_work_dir}/Stacked_Images/{self.galfind_version}/{detection_instrument}/{self.survey}/{self.survey}_{self.detection_band}_{self.galfind_version}_stack_new.fits'
         seg_path = f'{galfind_work_dir}/SExtractor/{detection_instrument}/{self.galfind_version}/{self.survey}/{self.survey}_{self.detection_band}_{self.detection_band}_sel_cat_{self.galfind_version}_seg.fits'
         hdu_data = fits.open(im_path)
