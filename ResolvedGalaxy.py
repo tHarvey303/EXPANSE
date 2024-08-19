@@ -67,17 +67,24 @@ if 'nvme' in file_path:
     computer = 'morgan'
 elif 'Users' in file_path:
     computer = 'mac'
+elif os.path.exists('/.singularity.d/Singularity'):
+    computer = 'singularity'
 
 if computer == 'mac':
     bagpipes_dir = '/Users/user/Documents/PhD/bagpipes_dir/'
     db_dir = ''
     print('Running on Mac.')
+    bagpipes_filter_dir = bagpipes_dir + 'inputs/filters/'
+
 elif computer == 'morgan':
     bagpipes_dir = '/nvme/scratch/work/tharvey/bagpipes/'
     db_dir = '/nvme/scratch/work/tharvey/dense_basis/pregrids/'
     print('Running on Morgan.')
+    bagpipes_filter_dir = bagpipes_dir + 'inputs/filters/'
+    
 
-bagpipes_filter_dir = bagpipes_dir + 'inputs/filters/'
+elif computer == 'singularity':
+    bagpipes_filter_dir = 'filters/'
 
 
 def update_mpl(tex_on=True):
@@ -1919,7 +1926,6 @@ class ResolvedGalaxy:
 
         # Add scalebar
 
-            
         ax.set_title(f'{band} Image')
         if save:
             plt.savefig(save_path)
