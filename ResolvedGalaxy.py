@@ -2616,6 +2616,7 @@ class ResolvedGalaxy:
             redshift_sigma = np.mean([z84 - z50, z50 - z16])      
 
         min_redshift_sigma = meta.get('min_redshift_sigma', 0)
+        sampler = meta.get('sampler', 'multinest')
         if redshift_sigma != 0:
             redshift_sigma = max(redshift_sigma, min_redshift_sigma)  
         else:
@@ -2769,8 +2770,9 @@ class ResolvedGalaxy:
                                     full_catalogue=True) #analysis_function=custom_plotting,
         print('Beginning fit')
         print(fit_instructions)
-        fit_cat.fit(verbose=False, mpi_serial = True)
+        # Run this with MPI
 
+        fit_cat.fit(verbose=False, mpi_serial = True, sampler = sampler)
 
         # Move files to the correct location
         for i in ['posterior', 'plots', 'seds']:
@@ -4286,7 +4288,9 @@ if __name__ == "__main__":
                     "nebular":nebular,
                     "dust":dust}
 
-    meta = {'run_name':'photoz_DPL', 'redshift':'eazy', 'redshift_sigma':'eazy', 'min_redshift_sigma':0.5, 'fit_photometry':'all_total'}
+    meta = {'run_name':'photoz_DPL', 'redshift':'eazy', 'redshift_sigma':'eazy',
+            'min_redshift_sigma':0.5, 'fit_photometry':'all_total',
+            'sampler':'nautilus'}
 
     overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
 
@@ -4332,8 +4336,8 @@ if __name__ == "__main__":
         n_jobs = 6
         backend = 'loky'
     elif computer == 'singularity':
-        n_jobs = 32
-        backend = 'threading'
+        n_jobs = np.min([len(galaxies)+1, 32])
+        backend = 'loky'
     with parallel_config(backend=backend, n_jobs=n_jobs):
         Parallel()(delayed(galaxies[i].run_bagpipes)(dicts[i]) for i in range(len(galaxies)))
 
