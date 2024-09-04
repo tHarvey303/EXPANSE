@@ -166,7 +166,7 @@ class PipesFit:
         # fit_instructions is attribute of data
         fit_instructions = data.attrs['fit_instructions']
         try:
-            self.config_used = eval(file.attrs["config"])
+            self.config_used = eval(data.attrs["config"])
             if self.config_used['type'] == 'BPASS':
                 os.environ['use_bpass'] = str(int(True))
             elif self.config_used['type'] == 'BC03':
@@ -183,11 +183,11 @@ class PipesFit:
         if 'bagpipes' in sys.modules:
             import importlib
             importlib.reload(sys.modules['bagpipes'])
-            from bagpipes import general, add_sfh_posterior, add_csfh_posterior, plot_corner, plot_sfh, config
+            from bagpipes import general, add_sfh_posterior, add_csfh_posterior, plot_corner, plot_sfh, config, galaxy, fit
             
         else:
             import bagpipes
-            from bagpipes import general, add_sfh_posterior, add_csfh_posterior, plot_corner, plot_sfh, config
+            from bagpipes import general, add_sfh_posterior, add_csfh_posterior, plot_corner, plot_sfh, config, galaxy, fit
             import run_bagpipes
             from bagpipes.plotting import hist1d
 
@@ -255,12 +255,12 @@ class PipesFit:
             photometry_exists = False
             self.filts = None
 
-        self.galaxy = bagpipes.galaxy(galaxy_id, self.data_func, filt_list=self.filts, spectrum_exists=spectrum_exists, photometry_exists=photometry_exists)
+        self.galaxy = galaxy(galaxy_id, self.data_func, filt_list=self.filts, spectrum_exists=spectrum_exists, photometry_exists=photometry_exists)
         
         # Recreating the posterior object
         #print(self.h5_path)
         try:
-            self.fit = bagpipes.fit(self.galaxy, fit_instructions, run=str(out_subdir))
+            self.fit = fit(self.galaxy, fit_instructions, run=str(out_subdir))
             self.fit.fit(verbose=True)
         except KeyError:
             raise Exception(f'Couldn\'t recreate {self.h5_path}. Skipping')
@@ -419,10 +419,12 @@ class PipesFit:
             ax.xaxis.set_major_formatter(mpl.ticker.ScalarFormatter())
 
     def plot_corner_plot(self, show=False, save=True, bins=25, type="fit_params", fig=None, color='black', facecolor='white'):
+        from bagpipes import plot_corner
         fig = plot_corner(self.fit, show=show, save=save, bins=bins, type=type, fig=fig, color=color, facecolor=facecolor)
         return fig 
     
     def plot_sfh(self, ax, colour='black', modify_ax = True, add_zaxis=True, timescale='Myr', plottype='lookback', logify=False, cosmo=None, return_sfh = False, **kwargs):
+        from bagpipes import add_sfh_posterior
         sfh = add_sfh_posterior(self.fit, ax, color=colour, use_color=True, zvals = [6.5, 8, 10, 13, 16, 20], z_axis=add_zaxis, alpha=0.3, plottype=plottype, timescale=timescale, save=False, return_sfh = return_sfh, **kwargs)
         if modify_ax:
             if plottype == 'lookback':
@@ -708,8 +710,9 @@ class PipesFit:
 
         # Get axis labels
         name = parameter
+        from bagpipes.plotting import fix_param_names
         label = fix_param_names(name)
-        print(fit.posterior.samples.keys())
+
         samples = np.copy(fit.posterior.samples[name])
 
 
@@ -731,7 +734,8 @@ class PipesFit:
             return samples
 
         try:
-            general.hist1d(samples[np.invert(np.isnan(samples))], ax,
+            from bagpipes.plotting import hist1d
+            hist1d(samples[np.invert(np.isnan(samples))], ax,
                 smooth=True, color=colour, percentiles=False, lw=1, alpha=alpha, fill_between=fill_between, label=linelabel, norm_height=norm_height)
 
         except ValueError:
@@ -740,6 +744,7 @@ class PipesFit:
 
         ax.set_xlabel(label,  fontsize='small', fontweight='bold')
         #ax.set_title(parameter, fontsize='small', fontweight='bold')
+        from bagpipes.plotting import auto_x_ticks
         auto_x_ticks(ax, nticks=3)
         ax.tick_params(axis='both', which='major', labelsize='medium')
         ax.tick_params(axis='both', which='minor', labelsize='medium')                         
