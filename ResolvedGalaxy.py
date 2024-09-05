@@ -1210,12 +1210,14 @@ class ResolvedGalaxy:
             if self.seds is not None:
                 hfile['mock_galaxy'].create_group('seds')
                 for key in self.seds.keys():
+                    print('h5', hfile['mock_galaxy']['seds'].keys())
                     if type(self.seds[key]) == np.ndarray:
+                        print('dataset', key)
                         hfile['mock_galaxy']['seds'].create_dataset(key, data=self.seds[key])
                     else:
                         hfile['mock_galaxy']['seds'].create_group(key)
                         for key2 in self.seds[key].keys():
-                            hfile['mock_galaxy']['seds'].create_dataset(key2, data=self.seds[key][key2])
+                            hfile['mock_galaxy']['seds'][key].create_dataset(key2, data=self.seds[key][key2])
                     
                     
         # Big memory leak here!!  
@@ -4277,7 +4279,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             return variables
 
         
-
         return cls(**variables)
         
 
@@ -4346,11 +4347,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             from synthesizer.emission_models.attenuation import PowerLaw
             from synthesizer.emission_models.dust.emission import Greybody
             from synthesizer_functions import convert_coordinates, apply_pixel_coordinate_mask, get_spectra_in_mask
+            from synthesizer.imaging.image import Image
 
         except ImportError:
             raise Exception('Synthesizer not installed. Please clone from Github and install using pip install .')
 
-        
 
         resolution = resolution * arcsecond
 
@@ -4491,9 +4492,23 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             func = getattr(gal, f'get_map_{prop}')
             arguments = {'resolution':resolution_kpc, 'fov':width, 'img_type':img_type, 'kernel':kernel_data, 'kernel_threshold':1}
             if prop in ['ssfr', 'sfr']:
+                if prop == 'ssfr':
+                    unit = yr**-1
+                if prop == 'sfr':
+                    unit = Msun/yr
+                    
                 for age_bin in [10, 100]*Myr:
                     arguments['age_bin'] = age_bin
-                    prop_im = func(**arguments)
+
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings('error')
+                
+                        try:
+                            prop_im = func(**arguments)
+                        except Warning:
+                        # Catch case where no star formation is happening
+                            prop_im = Image(resolution = resolution_kpc, fov = width, img = unyt_array(np.zeros((cutout_size, cutout_size)), units = unit)) 
+                    
                     data_im = prop_im.arr * prop_im.units
                     property_images[f'{prop}_{age_bin}'] = data_im.to_astropy()
             else:
@@ -4875,14 +4890,14 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         seds = {}
 
-        seds['wav'] = gal.stars.spectra['total'].obslam
+        seds['wav'] = gal.stars.spectra['total'].obslam.to(Angstrom).value
 
         seds["total_fnu"] = {}
-        seds["total_fnu"]["total"] = gal.stars.spectra['total'].fnu
+        seds["total_fnu"]["total"] = gal.stars.spectra['total'].fnu.to(uJy).value
         seds["0.32as_fnu"] = {}
-        seds["0.32as_fnu"]["total"] = get_spectra_in_mask(gal, aperture_mask_radii = 0.16 * u.arcsec, spectra_type = 'total')
+        seds["0.32as_fnu"]["total"] = get_spectra_in_mask(gal, aperture_mask_radii = 0.16 * u.arcsec, spectra_type = 'total').to(uJy).value
         seds["det_segmap_fnu"] = {}
-        seds["det_segmap_fnu"]["total"] = get_spectra_in_mask(gal, pixel_mask = det_data["seg"] , spectra_type = 'total')
+        seds["det_segmap_fnu"]["total"] = get_spectra_in_mask(gal, pixel_mask = det_data["seg"] , spectra_type = 'total').to(uJy).value
 
         # other maps - tau_v
 
@@ -4896,6 +4911,131 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                     im_pixel_scales = im_pixel_scales, im_zps = im_zps, phot_pix_unit = phot_pix_unit,
                     det_data = det_data, phot_imgs = final_images,
                     noise_images = noise_images, meta_properties = meta_properties, property_images = property_images, seds = seds)
+
+    def plot_mock_spectra(self, components, fig = None, ax = None, wav_unit = u.um, flux_unit = u.uJy, label = True, **kwargs):
+        if fig is None:
+            fig, ax = plt.subplots(1, 1, figsize=(5, 5), facecolor='white', dpi = 200)
+        
+        if type(components) == str:
+            components = [components]
+
+        for component in components:
+            wav = self.seds['wav'] * u.Angstrom
+            flux = self.seds[component]['total'] * u.uJy
+            ax.plot(wav.to(wav_unit), flux.to(flux_unit, equivalencies=u.spectral_density(wav)), **kwargs, label = 'component' if label else '')
+        
+        if label:
+            ax.legend()
+            ax.set_xlabel('Wavelength (Angstrom)')
+            ax.set_ylabel('Flux (uJy)')
+
+        return fig
+
+
+    def plot_property_maps(self, parameters=['stellar_mass', 'sfr', 'ssfr', 'stellar_age', 'stellar_metallicity'], save=False, facecolor='white', max_on_row=4, weight_mass_sfr = True, norm = 'linear', total_params = []):
+        
+        cmaps = ['magma','RdYlBu', 'cmr.ember', 'cmr.cosmic', 'cmr.lilac', 'cmr.eclipse', 'cmr.sapphire', 'cmr.dusk', 'cmr.emerald']
+        
+        fig, axes = plt.subplots(len(parameters)//max_on_row + 1, max_on_row, figsize=(2.5*max_on_row, 2.5*(len(parameters)//max_on_row + 1)), constrained_layout=True, facecolor=facecolor, sharex=True, sharey=True)
+        # add gap between rows using get_layout_engine
+        fig.get_layout_engine().set( h_pad=4 / 72, hspace=0.2)
+
+        axes = axes.flatten()
+        # Remove empty axes
+        for i in range(len(parameters), len(axes)):
+            fig.delaxes(axes[i])
+
+        redshift = self.redshift
+        
+        for i, param in enumerate(parameters):
+            ax_divider = make_axes_locatable(axes[i])
+            cax = ax_divider.append_axes('top', size='5%', pad='2%')
+
+            map = self.property_images[param]
+            '''
+            if param in ['stellar_mass', 'sfr']:
+                ref_band = {'stellar_mass':'F444W', 'sfr':'1500A'}
+                print(param, np.nanmin(map), np.nanmax(map))
+
+                if weight_mass_sfr:
+                    weight = ref_band[param]
+                else:
+                    weight = False
+                
+
+                map = self.map_to_density_map(map, redshift = redshift, weight_by_band=weight, logmap = True)
+                #map = self.map_to_density_map(map, redshift = redshift, logmap = True) 
+                log = '$\log_{10}$ '
+                param = f'{param}_density'
+            '''
+
+            if norm == 'log':
+                norm = LogNorm(vmin=np.nanmin(map), vmax=np.nanmax(map))
+            else:
+                norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
+            
+            '''
+            gunit = self.param_unit(param.split(':')[-1])
+            unit = f' ({log}{gunit:latex})' if gunit != u.dimensionless_unscaled else ''
+            param_str = param.replace("_", r"\ ")
+            
+            for pos, total_param in enumerate(total_params):
+                if total_param in table['#ID']:
+                    value = table[table['#ID'] == total_param][param_name]
+                    if param_name.endswith('_50'):
+                        err_up = table[table['#ID'] == total_param][param_name.replace('50', '84')] - value
+                        err_down = value - table[table['#ID'] == total_param][param_name.replace('50', '16')]
+                        
+                        berr = f'$^{{+{err_up[0]:.2f}}}_{{-{err_down[0]:.2f}}}$'
+                    else:
+                        berr = ''
+
+                    if 0 < norm(value) < 1:
+                        c_map = plt.cm.get_cmap(cmaps[i])
+                        color = c_map(norm(value))
+                    else:
+                        color = 'black'
+                    
+                    axes[i].text(0.5, 0.03+0.1*pos, f'{total_param}:{value[0]:.2f}{berr} {unit}', ha='center', va='bottom', fontsize=8, transform=axes[i].transAxes, color = color, path_effects=[PathEffects.withStroke(linewidth=0.2, foreground='black')])
+            '''
+
+            # Create actual normalisation
+            
+
+            mappable = axes[i].imshow(map, origin='lower', interpolation='none', cmap=cmaps[i], norm=norm)
+            cbar = fig.colorbar(mappable, cax=cax, orientation='horizontal')
+            
+            # ensure cbar is using ScalarFormatter
+            cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+            cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
+            
+            
+            cbar.set_label(rf'$\rm{{{param_str}}}${unit}', labelpad=10, fontsize=8)
+            cbar.ax.xaxis.set_ticks_position('top')
+            cbar.ax.xaxis.set_tick_params(labelsize=6, which='both')
+            cbar.ax.xaxis.set_label_position('top')
+            #disable xtick labels
+            #cax.set_xticklabels([])
+            # Fix colorbar tick size and positioning if log
+            if norm == 'log':
+                # Generate reasonable ticks
+                ticks = np.logspace(np.log10(np.nanmin(map)), np.log10(np.nanmax(map)), num=5)
+                cbar.set_ticks(ticks)
+                cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+                cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
+                cbar.ax.xaxis.set_tick_params(labelsize=6, which='both')
+                cbar.ax.xaxis.set_label_position('top')
+                cbar.ax.xaxis.set_ticks_position('top')
+                cbar.update_ticks()
+                
+
+        if save:
+            fig.savefig(f'galaxies/{run_name}_mock_maps.png', dpi=300, bbox_inches='tight')
+        
+        return fig
+
+
+
 
 class MultipleResolvedGalaxy:
     def __init__(self, list_of_galaxies):

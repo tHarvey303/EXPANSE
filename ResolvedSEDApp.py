@@ -752,7 +752,30 @@ def plot_phot_property(property, cmap,  strong_line_names = ["Hbeta", "[OIII]-49
     return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode='scale_width', min_width=200)
 
 def synthesizer_page():
-    return pn.pane.Markdown('Not implemented yet.')
+
+    empty_page = pn.Column()
+
+    empty_page.append('### Synthesizer Properties')
+
+    top_row = pn.Row()
+
+    middle_row = pn.Row()
+
+    # Plot photometry maps
+
+    fig = pn.Matplotlib(resolved_galaxy.plot_property_maps(), dpi=144, tight=True, format="svg", sizing_mode='stretch_both', max_height = 500)
+
+    empty_page.append(fig)
+
+    empty_page.append(pn.layout.Divider())
+
+    # plot spectra
+
+    empty_page.append('### Spectra')
+
+    fig = pn.Matplotlib(resolved_galaxy.plot_mock_spectra(components = ['det_segmap_fnu']), dpi=144, tight=True, format="svg", sizing_mode='stretch_both', max_height = 500)
+
+    #return pn.pane.Markdown('Not implemented yet.')
 
 def fitsmap(fitsmap_dir = '/nvme/scratch/work/tharvey/fitsmap', port = 8000, band = 'F444W'):
 
