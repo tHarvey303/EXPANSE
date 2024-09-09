@@ -17,6 +17,7 @@ import matplotlib as mpl
 from matplotlib.colors import Normalize
 from astropy import units as u
 import functools
+import h5py as h5
 import os
 import subprocess
 from astropy.wcs import WCS
@@ -25,8 +26,16 @@ from astropy.io import fits
 sys.setrecursionlimit(100000)
 import resource
 
-resource.setrlimit(resource.RLIMIT_STACK, [0x10000000, resource.RLIM_INFINITY])
+# change bokeh logging level
+import logging
+logging.getLogger('bokeh').setLevel(logging.ERROR)
+# Change logging level for panel
+logging.getLogger('panel').setLevel(logging.ERROR)
+# Supress boken warnings
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
+resource.setrlimit(resource.RLIMIT_STACK, [0x10000000, resource.RLIM_INFINITY])
 
 sys.path.append('/usr/local/texlive/')
 
@@ -146,8 +155,10 @@ def possible_runs_select(sed_fitting_tool):
     
     which_run_resolved.options = options_resolved
     which_run_aperture.options = options_aperture
-    which_run_resolved.value = options_resolved[0]
-    which_run_aperture.value = options_aperture[0]
+    if len(options_resolved) > 0:
+        which_run_resolved.value = options_resolved[0]
+    if len(options_aperture) > 0:
+        which_run_aperture.value = options_aperture[0]
     
     return pn.Column(which_run_resolved, which_run_aperture)
 
@@ -290,7 +301,6 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
     
     show_sed_photometry_param = True if show_sed_photometry_param == 'Show' else False
     
-    print('show_sed_photometry_param', show_sed_photometry_param)
     '''
     for option in total_fit_options_param:
         if option == 'MAG_APER':
@@ -695,14 +705,19 @@ def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_pa
         return pn.pane.Markdown('No Bagpipes results found.')
 
 def do_other_plot(plot_option):
-    if plot_option == 'Galaxy Region':
-        fig = resolved_galaxy.plot_gal_region(facecolor=facecolor)
-    elif plot_option == 'Fluxes':
-        fig = resolved_galaxy.pixedfit_plot_map_fluxes()
-    elif plot_option == 'Segmentation Map':
-        fig = resolved_galaxy.plot_seg_stamps()
-    elif plot_option == 'Radial SNR':
-        fig = resolved_galaxy.pixedfit_plot_radial_SNR()
+    try:
+        if plot_option == 'Galaxy Region':
+            fig = resolved_galaxy.plot_gal_region(facecolor=facecolor)
+        elif plot_option == 'Fluxes':
+            fig = resolved_galaxy.pixedfit_plot_map_fluxes()
+        elif plot_option == 'Segmentation Map':
+            fig = resolved_galaxy.plot_seg_stamps()
+        elif plot_option == 'Radial SNR':
+            fig = resolved_galaxy.pixedfit_plot_radial_SNR()
+    except Exception as e:
+        print(e)
+        fig = plt.figure()
+
     plt.close(fig)
     return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", max_width = 1000, sizing_mode = 'stretch_both')
 
@@ -763,9 +778,11 @@ def synthesizer_page():
 
     # Plot photometry maps
 
-    fig = pn.Matplotlib(resolved_galaxy.plot_property_maps(), dpi=144, tight=True, format="svg", sizing_mode='stretch_both', max_height = 500)
+    fig = pn.pane.Matplotlib(resolved_galaxy.plot_property_maps(facecolor = facecolor), dpi=144, tight=True, format="svg", sizing_mode='stretch_both', max_height = 500)
 
-    empty_page.append(fig)
+    top_row.append(fig)
+
+    empty_page.append(top_row)
 
     empty_page.append(pn.layout.Divider())
 
@@ -773,9 +790,19 @@ def synthesizer_page():
 
     empty_page.append('### Spectra')
 
-    fig = pn.Matplotlib(resolved_galaxy.plot_mock_spectra(components = ['det_segmap_fnu']), dpi=144, tight=True, format="svg", sizing_mode='stretch_both', max_height = 500)
+    
+    fig = pn.pane.Matplotlib(resolved_galaxy.plot_mock_spectra(components = ['det_segmap_fnu'], facecolor = facecolor), dpi=144, tight=True, format="svg", sizing_mode='stretch_both', max_height = 500)
 
+    middle_row.append(fig)
+
+    empty_page.append(middle_row)
+
+    return empty_page
     #return pn.pane.Markdown('Not implemented yet.')
+
+    
+
+    return empty_page
 
 def fitsmap(fitsmap_dir = '/nvme/scratch/work/tharvey/fitsmap', port = 8000, band = 'F444W'):
 
@@ -993,13 +1020,16 @@ def handle_file_upload(value, components):
     scale_alpha = pn.widgets.FloatSlider(name='Scale Alpha', start=0, end=1, value=1, step=0.01)
     show_galaxy = pn.widgets.Checkbox(name='Show Galaxy', value=False)
     show_kron = pn.widgets.Checkbox(name='Show Kron', value=False)
-    
-    # What is filename
-    filename = value.filename
+
 
     file = BytesIO(value)
 
-    if 'mock' in filename:
+    hfile = h5.File(file, 'r')
+    # what is the filename
+    
+    mtype = 'mock' if 'mock_galaxy' in hfile.keys() else 'resolved'
+
+    if mtype == 'mock':
         resolved_galaxy = MockResolvedGalaxy.init_from_h5(file)
     else:
         resolved_galaxy = ResolvedGalaxy.init_from_h5(file)
@@ -1102,7 +1132,7 @@ def handle_file_upload(value, components):
     '''
     sed_results_grid[2, 3:5] = sed_results
     '''
-   
+
     # Alternative to SED results grid using Columns and Rows
     top_row = pn.Row(bin_map, sed_obj, height=350)
     mid_row = pn.Row(sfh_obj, sed_results, height=300)
@@ -1122,7 +1152,8 @@ def handle_file_upload(value, components):
         galaxy_tabs.append(('Fitsmap', fitsmap_page))
 
     if type(resolved_galaxy) == MockResolvedGalaxy:
-        synthesizer_page = pn.param.ParamFunction(synthesizer_page, watch=False, lazy = True)
+        print('Adding synthesizer')
+        mock_page = pn.param.ParamFunction(synthesizer_page, watch=False, lazy = True)
         galaxy_tabs.append(('Synthesizer', mock_page))
    
     tabs.append((f"{id} ({survey})", galaxy_tabs))

@@ -11,6 +11,7 @@ from joblib import Parallel, delayed, parallel_backend, wrap_non_picklable_objec
 from astropy.nddata import Cutout2D
 import ast
 import contextlib
+import sys
 from astropy.convolution import convolve_fft
 import glob
 from astropy.nddata import block_reduce
@@ -37,6 +38,11 @@ import sys
 from tqdm import tqdm
 from scipy.interpolate import interp1d
 from inspect import signature
+import curses
+import threading
+import time
+import sys
+import os
 # import Ellipse
 from matplotlib.patches import Ellipse
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
@@ -50,6 +56,9 @@ import matplotlib.patheffects as PathEffects
 import matplotlib.cm as mcm
 #import FontProperties
 from matplotlib.font_manager import FontProperties
+# supress RuntimeWarning
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+
 
 try:
     from mpi4py import MPI
@@ -124,6 +133,7 @@ def update_mpl(tex_on=True):
     else:
         mpl.rcParams["text.usetex"] = False
 
+
 def scale_fluxes(mag_aper, mag_auto, a, b, theta, kron_radius, psf, zero_point = 28.08, aper_diam = 0.32*u.arcsec, sourcex_factor=6, pix_scale=0.03):
     '''Scale fluxes to total flux using PSF
     Scale mag_aper to mag_auto (ideally measured in LW stack), and then derive PSF correction by placing a elliptical aperture around the PSF.
@@ -171,13 +181,176 @@ def scale_fluxes(mag_aper, mag_auto, a, b, theta, kron_radius, psf, zero_point =
     return mag_aper_total
     
     
-
-
-
-
 def make_EAZY_SED_fit_params_arr(SED_code_arr, templates_arr, lowz_zmax_arr):
     return [{"code": code, "templates": templates, "lowz_zmax": lowz_zmax} \
         for code, templates, lowz_zmaxs in zip(SED_code_arr, templates_arr, lowz_zmax_arr) for lowz_zmax in lowz_zmaxs]
+
+
+class CLIInterface:
+    def __init__(self):
+        self.screen = None
+        self.lines = [[]]
+        self.current_task = None
+        self.progress = 0.0
+        self.running = False
+        self.lock = threading.Lock()
+        self.start_time = 0
+        #self.keyboard_interrupt_event = threading.Event()
+        
+        
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._run)
+        self.thread.start()
+        self.start_time = time.time()
+        
+        #signal.signal(signal.SIGINT, self._signal_handler)
+
+    def stop(self):
+        self.running = False
+        self.thread.join()
+        #self.keyboard_interrupt_event.set()
+        self.end_time = time.time()
+
+    def update(self, lines=None, current_task=None, progress=None):
+        with self.lock:
+            if lines is not None:
+                self.lines = lines
+
+            if progress is not None:
+                self.progress = progress
+
+    def _run(self):
+        curses.wrapper(self._curses_main)
+
+    def _signal_handler(self, signum, frame):
+        #self.keyboard_interrupt_event.set()
+        self.stop()
+
+    def _curses_main(self, stdscr):
+        self.screen = stdscr
+        curses.curs_set(0)
+        curses.start_color()
+        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(4, curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(5, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        curses.init_pair(6, curses.COLOR_BLUE, curses.COLOR_BLACK)
+        curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        
+
+        while self.running:
+            self._update_display()
+            #if self.keyboard_interrupt_event.is_set():
+            #    self._handle_keyboard_interrupt()
+            #    break
+            time.sleep(0.1)
+
+    def _update_display(self):
+        
+        if not self.screen:
+            return
+
+        height, width = self.screen.getmaxyx()
+
+        self.screen.clear()
+
+        with self.lock:
+            
+            # Add divider
+            self.screen.addstr(0, 0, '-' * width, curses.color_pair(2))
+
+            top_line = ['ResolvedGalaxy CLI', f'Time elapsed: {time.time() - self.start_time:.2f}s', f'Computer: {computer}']
+        
+            #top_line.append(f'RAM usage: {psutil.virtual_memory().percent:.2f}%')
+            #self.screen.addstr(0, 0, f"ResolvedGalaxy  Time elapsed: {time.time() - self.start_time:.2f}s  Computer: {computer}", curses.color_pair(1))
+            for i, item in enumerate(top_line):
+                self.screen.addstr(1, i * (width // len(top_line)), item[:width // len(top_line)-1], curses.color_pair(i))
+
+            info_line = []
+            # add a RAM usage line
+            try:
+                import psutil
+                info_line.append(f'Total RAM usage: {psutil.virtual_memory().percent:.2f}%')
+                pid = os.getpid()
+                python_process = psutil.Process(pid)
+                memoryUse = python_process.memory_info()[0]/2.**30  # memory use in GB...I think
+                info_line.append(f'Script RAM usage: {memoryUse:.2f} GB')
+                # script CPU usage
+                info_line.append(f'Script CPU usage: {python_process.cpu_percent(interval = 0.1)}%')
+                # Which core is being used
+                info_line.append(f'Core = {python_process.cpu_num()}')
+                core_num = python_process.cpu_num()
+                
+                index = np.argwhere([i[0] == f'Core {core_num}' for i in psutil.sensors_temperatures()['coretemp']])
+                if len(index) > 0:
+                    # flatten index
+                    index = index.flatten()
+
+                    temp = psutil.sensors_temperatures()['coretemp'][index[0]][1]
+                else:
+                    temp = 'N/A'
+                # Core clock and temperature
+                #info_line.append(f'(Clock: {python_process.cpu_freq()}, ')
+                info_line.append(f"Temp: {temp}°C ")
+            except ImportError:
+                pass
+
+            for i, item in enumerate(info_line):
+                self.screen.addstr(2, i * (width // len(info_line)), item[:width // len(info_line)-1], curses.color_pair(i))
+
+
+            
+            # Add divider
+            self.screen.addstr(3, 0, '-' * width, curses.color_pair(2))
+
+            for i, line in enumerate(self.lines):
+                for j, item in enumerate(line):
+                    self.screen.addstr(i+4, j * (width // len(line)), item[:width // len(line)-1], curses.color_pair(i))
+            
+            # Show current task.
+            if self.current_task is not None:
+                self.screen.addstr(height-2, 0, f'Current task: {self.current_task}', curses.color_pair(3))
+
+            progress_width = int(self.progress * (width - 2))
+            progress_bar = '[' + '#' * progress_width + ' ' * (width - 2 - progress_width) + ']'
+            self.screen.addstr(height-1, 0, progress_bar[:width-1], curses.color_pair(3))
+
+        self.screen.refresh()
+
+    def _handle_keyboard_interrupt(self):
+        height, width = self.screen.getmaxyx()
+        self.screen.clear()
+        self.screen.addstr(height // 2, width // 2 - 11, "Keyboard Interrupt", curses.A_BOLD)
+        self.screen.addstr(height // 2 + 1, width // 2 - 9, "Exiting...", curses.A_BOLD)
+        self.screen.refresh()
+        time.sleep(2)  # Show the message for 2 seconds before exiting
+
+def is_cli():
+    # Check if running in IPython/Jupyter
+    try:
+        __IPYTHON__
+        return False
+    except NameError:
+        pass
+    
+    # Check for common notebook environments
+    if 'JUPYTER_RUNTIME_DIR' in os.environ or 'IPYTHON_KERNEL_PATH' in os.environ:
+        return False
+    
+    # Check if it's an interactive Python shell
+    if hasattr(sys, 'ps1'):
+        return False
+    
+    # Check if the script is being piped or redirected
+    if sys.stdin is not None and not sys.stdin.isatty():
+        return False
+    
+    # If none of the above, it's likely a CLI environment
+    return True
+
 
 class ResolvedGalaxy:
     internal_bagpipes_cache = {}
@@ -304,9 +477,9 @@ class ResolvedGalaxy:
                 self.get_star_stack_psf()
 
             #print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
-    
+            print(self.galaxy_id)
             print('Convolving images with PSF')
-            self.convolve_with_psf(psf_type = psf_type)
+            self.convolve_with_psf(psf_type = psf_type, init_run = True)
 
 
         #if self.rms_background is None:
@@ -330,7 +503,7 @@ class ResolvedGalaxy:
         else:
             galaxy_names = [f'{survey}_{gal_id}' for gal_id in galaxy_id]
             found = [os.path.exists(f'{h5_folder}{galaxy_name}.h5') for galaxy_name in galaxy_names]
-            print(found)
+
             if all(found):
                 print('Loading from .h5')
                 return cls.init_multiple_from_h5(galaxy_names, h5_folder = h5_folder)
@@ -560,7 +733,8 @@ class ResolvedGalaxy:
     def init_from_h5(cls, h5_name, h5_folder = 'galaxies/', return_attr = False):
         '''Load a galaxy from an .h5 file'''
         if type(h5_name) == BytesIO:
-            hfile = h5.File(h5_name, 'r')
+            h5path = h5_name
+            
         else:
             if not h5_name.endswith('.h5'):
                 h5_name = f'{h5_name}.h5'
@@ -568,255 +742,270 @@ class ResolvedGalaxy:
                 h5path = h5_name
             else:
                 h5path = f'{h5_folder}{h5_name}'
-            hfile = h5.File(h5path, 'r')
-        # Load meta data
-        galaxy_id = hfile['meta']['galaxy_id'][()].decode('utf-8')
-        survey = hfile['meta']['survey'][()].decode('utf-8')
-        if hfile['meta'].get('sky_coord') is not None:
-            sky_coord = hfile['meta']['sky_coord'][()].split(b' ')
-            sky_coord = SkyCoord(ra=float(sky_coord[0]), dec=float(sky_coord[1]), unit=(u.deg, u.deg))
-        else:
-            sky_coord = None
-        redshift = hfile['meta']['redshift'][()]
-        bands = ast.literal_eval(hfile['meta']['bands'][()].decode('utf-8'))
-        cutout_size = int(hfile['meta']['cutout_size'][()])
-        im_zps = ast.literal_eval(hfile['meta']['zps'][()].decode('utf-8'))
-        if 'galfind_version' in hfile['meta'].keys():
-            galfind_version = hfile['meta']['galfind_version'][()].decode('utf-8')
-        else:
-            print('Warning! Assuming galfind version is v11')
-            galfind_version = 'v11'
-        if 'detection_band' in hfile['meta'].keys():
-            detection_band = hfile['meta']['detection_band'][()].decode('utf-8')
-        else:
-            detection_band = 'F277W+F356W+F444W'
-            print('Warning! Assuming detection band is F277W+F356W+F444W')
-
-        im_pixel_scales = ast.literal_eval(hfile['meta']['pixel_scales'][()].decode('utf-8'))
-        im_pixel_scales = {band:u.Quantity(scale) for band, scale in im_pixel_scales.items()}
-        phot_pix_unit = ast.literal_eval(hfile['meta']['phot_pix_unit'][()].decode('utf-8'))
-        phot_pix_unit = {band:u.Unit(unit) for band, unit in phot_pix_unit.items()}
-        dont_psf_match_bands = ast.literal_eval(hfile['meta']['dont_psf_match_bands'][()].decode('utf-8'))
-        if hfile['meta'].get('already_psf_matched') is not None:
-            already_psf_matched = ast.literal_eval(hfile['meta']['already_psf_matched'][()].decode('utf-8'))
-        else:
-            print('Warning! Assuming already PSF matched')
-            already_psf_matched = True
-        if hfile['meta'].get('meta_properties') is not None:
-            meta_properties = {}
-            for prop in hfile['meta']['meta_properties'].keys():
-                meta_prop = hfile['meta']['meta_properties'][prop][()].decode('utf-8')
-                try:
-                    meta_prop = ast.literal_eval(meta_prop)
-                except:
-                    meta_prop = meta_prop
-                meta_properties[prop] = meta_prop
-        else:
-            meta_properties = None
-        if 'auto_photometry' in hfile.keys():
-            ap = hfile['auto_photometry']['auto_photometry'][()].decode('utf-8').replace('<Quantity', '').replace('>', '').replace('array([', '[').replace('])', ']')
-            print(type(ap), ap)
-            auto_photometry = ast.literal_eval(str(ap))
-        else:
-            auto_photometry = None
-
-        total_photometry = None
-        if 'total_photometry' in hfile.keys():
-            if hfile['total_photometry'].get('total_photometry') is not None:
-                total_photometry = ast.literal_eval(hfile['total_photometry']['total_photometry'][()].decode('utf-8').replace('<Quantity', '').replace('>', ''))
-        
-
-        # Load paths and exts
-        im_paths = ast.literal_eval(hfile['paths']['im_paths'][()].decode('utf-8'))
-        im_exts = ast.literal_eval(hfile['paths']['im_exts'][()].decode('utf-8'))
-        seg_paths = ast.literal_eval(hfile['paths']['seg_paths'][()].decode('utf-8'))
-        rms_err_paths = ast.literal_eval(hfile['paths']['rms_err_paths'][()].decode('utf-8'))
-        rms_err_exts = ast.literal_eval(hfile['paths']['rms_err_exts'][()].decode('utf-8'))
-        # Load aperture photometry
-        #aperture_dict = ast.literal_eval(hfile['aperture_photometry']['aperture_dict'][()].decode('utf-8'))
-        aperture_dict = {}
-        for aper in hfile['aperture_photometry'].keys():
-            aperture_dict[aper] = {}
-            for key in hfile['aperture_photometry'][aper].keys():
-                aperture_dict[aper][key] = hfile['aperture_photometry'][aper][key][()]
-        # Load raw data
-        phot_imgs = {}
-        rms_err_imgs = {}
-        seg_imgs = {}
-        phot_img_headers = {}
-        unmatched_data = {}
-        unmatched_rms_err = {}
-        unmatched_seg = {}
-
-        for band in bands:
-            phot_imgs[band] = hfile['raw_data'][f'phot_{band}'][()]
-            rms_err_imgs[band] = hfile['raw_data'][f'rms_err_{band}'][()]
-            seg_imgs[band] = hfile['raw_data'][f'seg_{band}'][()]
-            if hfile['headers'].get(band) is not None:
-                header = hfile['headers'][band][()].decode('utf-8')
-                phot_img_headers[band] = header
-            if hfile.get('unmatched_data') is not None:
-                if len(hfile['unmatched_data'].keys()) > 0:
-                    unmatched_data[band] = hfile['unmatched_data'][f'phot_{band}'][()]
-                    unmatched_rms_err[band] = hfile['unmatched_data'][f'rms_err_{band}'][()]
-                    unmatched_seg[band] = hfile['unmatched_data'][f'seg_{band}'][()]
             
-        if len(unmatched_data) == 0:
-            unmatched_data = None
-            unmatched_rms_err = None
-            unmatched_seg = None
+        with h5.File(h5path, 'r') as hfile:
+            # Load meta data
+            galaxy_id = hfile['meta']['galaxy_id'][()].decode('utf-8')
+            survey = hfile['meta']['survey'][()].decode('utf-8')
+            if hfile['meta'].get('sky_coord') is not None:
+                sky_coord = hfile['meta']['sky_coord'][()].split(b' ')
+                sky_coord = SkyCoord(ra=float(sky_coord[0]), dec=float(sky_coord[1]), unit=(u.deg, u.deg))
+            else:
+                sky_coord = None
+            redshift = hfile['meta']['redshift'][()]
+            bands = ast.literal_eval(hfile['meta']['bands'][()].decode('utf-8'))
+            cutout_size = int(hfile['meta']['cutout_size'][()])
+            im_zps = ast.literal_eval(hfile['meta']['zps'][()].decode('utf-8'))
+            if 'galfind_version' in hfile['meta'].keys():
+                galfind_version = hfile['meta']['galfind_version'][()].decode('utf-8')
+            else:
+                print('Warning! Assuming galfind version is v11')
+                galfind_version = 'v11'
+            if 'detection_band' in hfile['meta'].keys():
+                detection_band = hfile['meta']['detection_band'][()].decode('utf-8')
+            else:
+                detection_band = 'F277W+F356W+F444W'
+                print('Warning! Assuming detection band is F277W+F356W+F444W')
 
-        if hfile.get('psf_matched_data') is not None:
-            psf_matched_data = {}
-            for psf_type in hfile['psf_matched_data'].keys():
-                psf_matched_data[psf_type] = {}
-                for band in bands:
-                    psf_matched_data[psf_type][band] = hfile['psf_matched_data'][psf_type][band][()]
-        else:
-            psf_matched_data = None
+            im_pixel_scales = ast.literal_eval(hfile['meta']['pixel_scales'][()].decode('utf-8'))
+            im_pixel_scales = {band:u.Quantity(scale) for band, scale in im_pixel_scales.items()}
+            phot_pix_unit = ast.literal_eval(hfile['meta']['phot_pix_unit'][()].decode('utf-8'))
+            phot_pix_unit = {band:u.Unit(unit) for band, unit in phot_pix_unit.items()}
+            dont_psf_match_bands = ast.literal_eval(hfile['meta']['dont_psf_match_bands'][()].decode('utf-8'))
+            if hfile['meta'].get('already_psf_matched') is not None:
+                already_psf_matched = ast.literal_eval(hfile['meta']['already_psf_matched'][()].decode('utf-8'))
+            else:
+                print('Warning! Assuming already PSF matched')
+                already_psf_matched = True
+            if hfile['meta'].get('meta_properties') is not None:
+                meta_properties = {}
+                for prop in hfile['meta']['meta_properties'].keys():
+                    meta_prop = hfile['meta']['meta_properties'][prop][()].decode('utf-8')
+                    try:
+                        meta_prop = ast.literal_eval(meta_prop)
+                    except:
+                        meta_prop = meta_prop
+                    meta_properties[prop] = meta_prop
+            else:
+                meta_properties = None
+            if 'auto_photometry' in hfile.keys():
+                ap = hfile['auto_photometry']['auto_photometry'][()].decode('utf-8').replace('<Quantity', '').replace('>', '').replace('array([', '([').replace(', dtype=float64', '')
+                auto_photometry = ast.literal_eval(str(ap))
+            else:
+                auto_photometry = None
 
-        if hfile.get('psf_matched_rms_err') is not None:
-            psf_matched_rms_err = {}
-            for psf_type in hfile['psf_matched_rms_err'].keys():
-                psf_matched_rms_err[psf_type] = {}
-                for band in bands:
-                    psf_matched_rms_err[psf_type][band] = hfile['psf_matched_rms_err'][psf_type][band][()]
-        else:
-            psf_matched_rms_err = None
-        pixedfit_map = None
-        voronoi_map = None
-        if hfile.get('bin_maps') is not None:
-            if hfile['bin_maps'].get('pixedfit') is not None:
-                pixedfit_map = hfile['bin_maps']['pixedfit'][()]
-            if hfile['bin_maps'].get('voronoi') is not None:
-                voronoi_map = hfile['bin_maps']['voronoi'][()]
+            total_photometry = None
+            if 'total_photometry' in hfile.keys():
+                if hfile['total_photometry'].get('total_photometry') is not None:
+                    total_photometry = ast.literal_eval(hfile['total_photometry']['total_photometry'][()].decode('utf-8').replace('<Quantity', '').replace('>', ''))
+            
 
-        binned_flux_map = None
-        binned_flux_err_map = None
-        if hfile.get('bin_fluxes') is not None:
-            if hfile['bin_fluxes'].get('pixedfit') is not None:
-                binned_flux_map = hfile['bin_fluxes']['pixedfit'][()] * u.erg/u.s/u.cm**2/u.AA
-        
-        if hfile.get('bin_flux_err') is not None:
-            if hfile['bin_flux_err'].get('pixedfit') is not None:
-                binned_flux_err_map = hfile['bin_flux_err']['pixedfit'][()] * u.erg/u.s/u.cm**2/u.AA
-        
-        possible_phot_keys = []
-        possible_sed_keys = []
-        photometry_table = {}
-        if hfile.get('binned_photometry_table') is not None:
-            for psf_type in hfile['binned_photometry_table'].keys():
-                photometry_table[psf_type] = {}
-                for binmap_type in hfile['binned_photometry_table'][psf_type].keys():
-                    if not '__' in binmap_type:
-                        photometry_table[psf_type][binmap_type] = None
-                        possible_phot_keys.append(f'binned_photometry_table/{psf_type}/{binmap_type}')
-        
-        sed_fitting_table = {}
-        
-        if hfile.get('sed_fitting_table') is not None:
-            for tool in hfile['sed_fitting_table'].keys():
-                sed_fitting_table[tool] = {}
-                for run in hfile['sed_fitting_table'][tool].keys():
-                    if not '__' in run:
-                        sed_fitting_table[tool][run] = None
-                        possible_sed_keys.append(f'sed_fitting_table/{tool}/{run}')
-        
-        rms_background = None
-        if hfile.get('meta/rms_background') is not None:
-            rms_background = ast.literal_eval(hfile['meta/rms_background'][()].decode('utf-8'))
+            # Load paths and exts
+            im_paths = ast.literal_eval(hfile['paths']['im_paths'][()].decode('utf-8'))
+            im_exts = ast.literal_eval(hfile['paths']['im_exts'][()].decode('utf-8'))
+            seg_paths = ast.literal_eval(hfile['paths']['seg_paths'][()].decode('utf-8'))
+            rms_err_paths = ast.literal_eval(hfile['paths']['rms_err_paths'][()].decode('utf-8'))
+            rms_err_exts = ast.literal_eval(hfile['paths']['rms_err_exts'][()].decode('utf-8'))
+            # Load aperture photometry
+            #aperture_dict = ast.literal_eval(hfile['aperture_photometry']['aperture_dict'][()].decode('utf-8'))
+            aperture_dict = {}
+            for aper in hfile['aperture_photometry'].keys():
+                aperture_dict[aper] = {}
+                for key in hfile['aperture_photometry'][aper].keys():
+                    aperture_dict[aper][key] = hfile['aperture_photometry'][aper][key][()]
+            # Load raw data
+            phot_imgs = {}
+            rms_err_imgs = {}
+            seg_imgs = {}
+            phot_img_headers = {}
+            unmatched_data = {}
+            unmatched_rms_err = {}
+            unmatched_seg = {}
 
-        # Get PSFs
-        psfs = {}
-        psfs_meta = {}
-        if hfile.get('psfs') is not None:
-            for psf_type in hfile['psfs'].keys():
-                psfs[psf_type] = {}
-                for band in bands:
-                    if hfile['psfs'][psf_type].get(band) is not None:
-                        psfs[psf_type][band] = hfile['psfs'][psf_type][band][()]
+            for band in bands:
+                phot_imgs[band] = hfile['raw_data'][f'phot_{band}'][()]
+                rms_err_imgs[band] = hfile['raw_data'][f'rms_err_{band}'][()]
+                seg_imgs[band] = hfile['raw_data'][f'seg_{band}'][()]
+                if hfile['headers'].get(band) is not None:
+                    header = hfile['headers'][band][()].decode('utf-8')
+                    phot_img_headers[band] = header
+                if hfile.get('unmatched_data') is not None:
+                    if len(hfile['unmatched_data'].keys()) > 0:
+                        unmatched_data[band] = hfile['unmatched_data'][f'phot_{band}'][()]
+                        unmatched_rms_err[band] = hfile['unmatched_data'][f'rms_err_{band}'][()]
+                        unmatched_seg[band] = hfile['unmatched_data'][f'seg_{band}'][()]
+                
+            if len(unmatched_data) == 0:
+                unmatched_data = None
+                unmatched_rms_err = None
+                unmatched_seg = None
 
-        if hfile.get('psfs_meta') is not None:
-            for psf_type in hfile['psfs_meta'].keys():
-                psfs_meta[psf_type] = {}
-                for band in bands:
-                    if hfile['psfs_meta'][psf_type].get(band) is not None:
-                        psfs_meta[psf_type][band] = hfile['psfs_meta'][psf_type][band][()].decode('utf-8')
+            if hfile.get('psf_matched_data') is not None:
+                psf_matched_data = {}
+                for psf_type in hfile['psf_matched_data'].keys():
+                    psf_matched_data[psf_type] = {}
+                    for band in bands:
+                        psf_matched_data[psf_type][band] = hfile['psf_matched_data'][psf_type][band][()]
+            else:
+                psf_matched_data = None
 
-        galaxy_region = {}
-        if hfile.get('galaxy_region') is not None:
-            for binmap_type in hfile['galaxy_region'].keys():
-                galaxy_region[binmap_type] = hfile['galaxy_region'][binmap_type][()]
+            if hfile.get('psf_matched_rms_err') is not None:
+                psf_matched_rms_err = {}
+                for psf_type in hfile['psf_matched_rms_err'].keys():
+                    psf_matched_rms_err[psf_type] = {}
+                    for band in bands:
+                        psf_matched_rms_err[psf_type][band] = hfile['psf_matched_rms_err'][psf_type][band][()]
+            else:
+                psf_matched_rms_err = None
+            pixedfit_map = None
+            voronoi_map = None
+            if hfile.get('bin_maps') is not None:
+                if hfile['bin_maps'].get('pixedfit') is not None:
+                    pixedfit_map = hfile['bin_maps']['pixedfit'][()]
+                if hfile['bin_maps'].get('voronoi') is not None:
+                    voronoi_map = hfile['bin_maps']['voronoi'][()]
 
-        flux_map = {}
-        if hfile.get('flux_map') is not None:
-            for binmap_type in hfile['flux_map'].keys():
-                flux_map[binmap_type] = hfile['flux_map'][binmap_type][()]
-        
-        
-        if hfile.get('det_data') is not None:
-            det_data = {}
-            det_data['phot'] = hfile['det_data'][f'phot'][()]
-            det_data['rms_err'] = hfile['det_data'][f'rms_err'][()]
-            det_data['seg'] = hfile['det_data'][f'seg'][()]
-        else:
-            det_data = None
+            binned_flux_map = None
+            binned_flux_err_map = None
+            if hfile.get('bin_fluxes') is not None:
+                if hfile['bin_fluxes'].get('pixedfit') is not None:
+                    binned_flux_map = hfile['bin_fluxes']['pixedfit'][()] * u.erg/u.s/u.cm**2/u.AA
+            
+            if hfile.get('bin_flux_err') is not None:
+                if hfile['bin_flux_err'].get('pixedfit') is not None:
+                    binned_flux_err_map = hfile['bin_flux_err']['pixedfit'][()] * u.erg/u.s/u.cm**2/u.AA
+            
+            possible_phot_keys = []
+            possible_sed_keys = []
+            photometry_table = {}
+            if hfile.get('binned_photometry_table') is not None:
+                for psf_type in hfile['binned_photometry_table'].keys():
+                    photometry_table[psf_type] = {}
+                    for binmap_type in hfile['binned_photometry_table'][psf_type].keys():
+                        if not '__' in binmap_type:
+                            photometry_table[psf_type][binmap_type] = None
+                            possible_phot_keys.append(f'binned_photometry_table/{psf_type}/{binmap_type}')
+            
+            sed_fitting_table = {}
+            
+            if hfile.get('sed_fitting_table') is not None:
+                for tool in hfile['sed_fitting_table'].keys():
+                    sed_fitting_table[tool] = {}
+                    for run in hfile['sed_fitting_table'][tool].keys():
+                        if not '__' in run:
+                            sed_fitting_table[tool][run] = None
+                            possible_sed_keys.append(f'sed_fitting_table/{tool}/{run}')
+            
+            rms_background = None
+            if hfile.get('meta/rms_background') is not None:
+                rms_background = ast.literal_eval(hfile['meta/rms_background'][()].decode('utf-8'))
 
-        if hfile.get('resolved_mass') is not None:
-            resolved_mass = {}
-            for key in hfile['resolved_mass'].keys():
-                resolved_mass[key] = hfile['resolved_mass'][key][()]
-        else:
-            resolved_mass = None
-        
-        # Read in PSF 
-        psf_kernels = {}
-        if hfile.get('psf_kernels') is not None:
-            for psf_type in hfile['psf_kernels'].keys():
-                psf_kernels[psf_type] = {}
-                for band in bands:
-                    if hfile['psf_kernels'][psf_type].get(band) is not None:
-                        psf_kernels[psf_type][band] = hfile['psf_kernels'][psf_type][band][()]
+            # Get PSFs
+            psfs = {}
+            psfs_meta = {}
+            if hfile.get('psfs') is not None:
+                for psf_type in hfile['psfs'].keys():
+                    psfs[psf_type] = {}
+                    for band in bands:
+                        if hfile['psfs'][psf_type].get(band) is not None:
+                            psfs[psf_type][band] = hfile['psfs'][psf_type][band][()]
 
-        #hfile.close()
-        # Read in photometry table(s)
-        if len(possible_phot_keys) > 0:
-            for key in possible_phot_keys:
-                table = read_table_hdf5(hfile, key)
-                psf_type, binmap_type = key.split('/')[1:]
-                photometry_table[psf_type][binmap_type] = table
+            if hfile.get('psfs_meta') is not None:
+                for psf_type in hfile['psfs_meta'].keys():
+                    psfs_meta[psf_type] = {}
+                    for band in bands:
+                        if hfile['psfs_meta'][psf_type].get(band) is not None:
+                            psfs_meta[psf_type][band] = hfile['psfs_meta'][psf_type][band][()].decode('utf-8')
 
-        if len(possible_sed_keys) > 0:
-            for key in possible_sed_keys:
-                table = read_table_hdf5(hfile, key)
-                tool, run = key.split('/')[1:]
-                sed_fitting_table[tool][run] = table
+            galaxy_region = {}
+            if hfile.get('galaxy_region') is not None:
+                for binmap_type in hfile['galaxy_region'].keys():
+                    galaxy_region[binmap_type] = hfile['galaxy_region'][binmap_type][()]
 
-        photometry_properties = {}
-        photometry_meta_properties = {}
-        if hfile.get('photometry_properties') is not None:
-            for prop in hfile['photometry_properties'].keys():
-                photometry_properties[prop] = hfile['photometry_properties'][prop][()]
-                meta = hfile['photometry_properties'][prop].attrs
-                #print('meta', meta)
-                photometry_meta_properties[prop] = {}
-                for key in meta:
-                    #print(meta[key])
-                    #print(key)
-                    #print(meta[key])
-                    photometry_meta_properties[prop][key] = meta[key]
-                if 'unit' in photometry_meta_properties[prop].keys():
-                    unit = u.Unit(photometry_meta_properties[prop]['unit'])
-                else:
-                    unit = u.dimensionless_unscaled
+            flux_map = {}
+            if hfile.get('flux_map') is not None:
+                for binmap_type in hfile['flux_map'].keys():
+                    flux_map[binmap_type] = hfile['flux_map'][binmap_type][()]
+            
+            
+            if hfile.get('det_data') is not None:
+                det_data = {}
+                det_data['phot'] = hfile['det_data'][f'phot'][()]
+                det_data['rms_err'] = hfile['det_data'][f'rms_err'][()]
+                det_data['seg'] = hfile['det_data'][f'seg'][()]
+            else:
+                det_data = None
 
-                #print('unit', unit)
+            if hfile.get('resolved_mass') is not None:
+                resolved_mass = {}
+                for key in hfile['resolved_mass'].keys():
+                    resolved_mass[key] = hfile['resolved_mass'][key][()]
+            else:
+                resolved_mass = None
 
-                photometry_properties[prop] = photometry_properties[prop] * unit
-                #print(f'Loaded {prop} with shape {photometry_properties[prop].shape}')
+            # Read in resolved_sfh
+            if hfile.get('resolved_sfh') is not None:
+                resolved_sfh = {}
+                for key in hfile['resolved_sfh'].keys():
+                    resolved_sfh[key] = hfile['resolved_sfh'][key][()]
+                
+            else:
+                resolved_sfh = None
+            
+            # Read in resolved SED
+            if hfile.get('resolved_sed') is not None:
+                resolved_sed = {}
+                for key in hfile['resolved_sed'].keys():
+                    resolved_sed[key] = hfile['resolved_sed'][key][()]
+            else:
+                resolved_sed = None
+            
+            # Read in PSF 
+            psf_kernels = {}
+            if hfile.get('psf_kernels') is not None:
+                for psf_type in hfile['psf_kernels'].keys():
+                    psf_kernels[psf_type] = {}
+                    for band in bands:
+                        if hfile['psf_kernels'][psf_type].get(band) is not None:
+                            psf_kernels[psf_type][band] = hfile['psf_kernels'][psf_type][band][()]
 
+            #hfile.close()
+            # Read in photometry table(s)
+            if len(possible_phot_keys) > 0:
+                for key in possible_phot_keys:
+                    table = read_table_hdf5(hfile, key)
+                    psf_type, binmap_type = key.split('/')[1:]
+                    photometry_table[psf_type][binmap_type] = table
 
-        hfile.close()
+            if len(possible_sed_keys) > 0:
+                for key in possible_sed_keys:
+                    table = read_table_hdf5(hfile, key)
+                    tool, run = key.split('/')[1:]
+                    sed_fitting_table[tool][run] = table
+
+            photometry_properties = {}
+            photometry_meta_properties = {}
+            if hfile.get('photometry_properties') is not None:
+                for prop in hfile['photometry_properties'].keys():
+                    photometry_properties[prop] = hfile['photometry_properties'][prop][()]
+                    meta = hfile['photometry_properties'][prop].attrs
+                    #print('meta', meta)
+                    photometry_meta_properties[prop] = {}
+                    for key in meta:
+                        #print(meta[key])
+                        #print(key)
+                        #print(meta[key])
+                        photometry_meta_properties[prop][key] = meta[key]
+                    if 'unit' in photometry_meta_properties[prop].keys():
+                        unit = u.Unit(photometry_meta_properties[prop]['unit'])
+                    else:
+                        unit = u.dimensionless_unscaled
+
+                    #print('unit', unit)
+
+                    photometry_properties[prop] = photometry_properties[prop] * unit
+                    #print(f'Loaded {prop} with shape {photometry_properties[prop].shape}')
+
 
         out_dict = {'galaxy_id': galaxy_id, 'sky_coord': sky_coord, 'survey': survey, 'bands': bands, 'im_paths': im_paths,
                     'im_zps': im_zps, 'im_exts': im_exts, 'seg_paths': seg_paths, 'rms_err_paths': rms_err_paths,
@@ -1189,11 +1378,24 @@ class ResolvedGalaxy:
             for key in getattr(self, f'{property}_meta').keys():
                 hfile['photometry_properties'][property].attrs[key] = getattr(self, f'{property}_meta')[key]
 
+        # Add resolved mass
         if self.resolved_mass is not None:
             hfile.create_group('resolved_mass')
             for key in self.resolved_mass.keys():
                 hfile['resolved_mass'].create_dataset(key, data=self.resolved_mass[key])
         
+        # Add resolved SFH
+        if self.resolved_sfh is not None:
+            hfile.create_group('resolved_sfh')
+            for key in self.resolved_sfh.keys():
+                hfile['resolved_sfh'].create_dataset(key, data=self.resolved_sfh[key])
+        
+        # Add resolved SED
+        if self.resolved_sed is not None:
+            hfile.create_group('resolved_sed')
+            for key in self.resolved_sed.keys():
+                hfile['resolved_sed'].create_dataset(key, data=self.resolved_sed[key])
+                
         # Add MockGalaxy properties
         if type(self) == MockResolvedGalaxy:
             # Copy over the mock galaxy properties if they exist
@@ -1210,9 +1412,7 @@ class ResolvedGalaxy:
             if self.seds is not None:
                 hfile['mock_galaxy'].create_group('seds')
                 for key in self.seds.keys():
-                    print('h5', hfile['mock_galaxy']['seds'].keys())
                     if type(self.seds[key]) == np.ndarray:
-                        print('dataset', key)
                         hfile['mock_galaxy']['seds'].create_dataset(key, data=self.seds[key])
                     else:
                         hfile['mock_galaxy']['seds'].create_group(key)
@@ -1238,6 +1438,7 @@ class ResolvedGalaxy:
         # Add anything else from the old file to the new file
         if os.path.exists(self.h5_path) and append != '':
             old_hfile = h5.File(self.h5_path, 'r')
+            print('Removing temp', self.h5_path)
             hfile = h5.File(self.h5_path.replace('.h5', f'{append}.h5'), 'a')
             for key in old_hfile.keys():
                 if key not in hfile.keys():
@@ -1252,46 +1453,53 @@ class ResolvedGalaxy:
         
         
 
-    def convolve_with_psf(self, psf_type = 'webbpsf'):
-        '''Convolve the images with the PSF'''
+    def convolve_with_psf(self, psf_type = 'webbpsf', init_run = False):
+        '''Convolve the images with the PSF
+        psf_type: str - the type of PSF to use
+        init_run: bool - if this is the inital run, don't load from .h5 or create .h5 file'''
+
+
+
         if getattr(self, 'psf_matched_data', None) in [None, {}] or getattr(self, 'psf_matched_rms_err', None) in [None, {}] or psf_type not in self.psf_matched_data.keys():
             run = False
             # Try and load from .h5
-            h5file = h5.File(self.h5_path, 'a')
-            if 'psf_matched_data' in h5file.keys():
-                if psf_type in h5file['psf_matched_data'].keys():
-                    if len(self.bands) != len(list(h5file['psf_matched_data'][psf_type].keys())):
-                        run = True
+            if not init_run and os.path.exists(self.h5_path):
+                print('Creating PSF matched data', self.galaxy_id)
+                
+                h5file = h5.File(self.h5_path, 'a')
+                if 'psf_matched_data' in h5file.keys():
+                    if psf_type in h5file['psf_matched_data'].keys():
+                        if len(self.bands) != len(list(h5file['psf_matched_data'][psf_type].keys())):
+                            run = True
+                        else:
+                            self.psf_matched_data = {psf_type:{}}
+                            for band in self.bands:
+                                self.psf_matched_data[psf_type][band] = h5file['psf_matched_data'][psf_type][band][()]
                     else:
-                        self.psf_matched_data = {psf_type:{}}
-                        for band in self.bands:
-                            self.psf_matched_data[psf_type][band] = h5file['psf_matched_data'][psf_type][band][()]
+                        run = True
                 else:
+                    h5file.create_group('psf_matched_data')
                     run = True
-            else:
-                h5file.create_group('psf_matched_data')
-                run = True
 
-            if 'psf_matched_rms_err' in h5file.keys():
-                if psf_type in h5file['psf_matched_rms_err'].keys():
-                    if len(self.bands) != len(list(h5file['psf_matched_rms_err'][psf_type].keys())):
-                        run = True
+                if 'psf_matched_rms_err' in h5file.keys():
+                    if psf_type in h5file['psf_matched_rms_err'].keys():
+                        if len(self.bands) != len(list(h5file['psf_matched_rms_err'][psf_type].keys())):
+                            run = True
+                        else:
+                            self.psf_matched_rms_err = {psf_type:{}}
+                            for band in self.bands:
+                                self.psf_matched_rms_err[psf_type][band] = h5file['psf_matched_rms_err'][psf_type][band][()]
                     else:
-                        self.psf_matched_rms_err = {psf_type:{}}
-                        for band in self.bands:
-                            self.psf_matched_rms_err[psf_type][band] = h5file['psf_matched_rms_err'][psf_type][band][()]
+                        run = True
                 else:
+                    h5file.create_group('psf_matched_rms_err')
                     run = True
             else:
-                h5file.create_group('psf_matched_rms_err')
                 run = True
-            
 
             if run:
-                print('Am running')
                 # Do the convolution\
                 if getattr(self, "psf_matched_data", None) is None:
-
                     self.psf_matched_data = {psf_type:{}}
                 else:
                     self.psf_matched_data[psf_type] = {}
@@ -1301,6 +1509,7 @@ class ResolvedGalaxy:
                     self.psf_matched_rms_err[psf_type] = {}
 
                 for band in self.bands[:-1]:
+                    print(f'Convolving {band} with PSF')
                     if band in self.dont_psf_match_bands or self.already_psf_matched:
                         psf_matched_img = self.phot_imgs[band]
                         psf_matched_rms_err = self.rms_err_imgs[band]
@@ -1322,29 +1531,40 @@ class ResolvedGalaxy:
                     # Save to psf_matched_data
                     self.psf_matched_data[psf_type][band] = psf_matched_img
                     self.psf_matched_rms_err[psf_type][band] = psf_matched_rms_err
+                    
+                    if not init_run:
+                        if h5file.get(f'psf_matched_data/{psf_type}/{band}') is not None:
+                            del h5file[f'psf_matched_data/{psf_type}/{band}']
+                        if h5file.get(f'psf_matched_rms_err/{psf_type}/{band}') is not None:
+                            del h5file[f'psf_matched_rms_err/{psf_type}/{band}']
 
-                    if h5file.get(f'psf_matched_data/{psf_type}/{band}') is not None:
-                        del h5file[f'psf_matched_data/{psf_type}/{band}']
-                    if h5file.get(f'psf_matched_rms_err/{psf_type}/{band}') is not None:
-                        del h5file[f'psf_matched_rms_err/{psf_type}/{band}']
-
-                    h5file.create_dataset(f'psf_matched_data/{psf_type}/{band}', data=psf_matched_img)
-                    h5file.create_dataset(f'psf_matched_rms_err/{psf_type}/{band}', data=psf_matched_rms_err)
+                        h5file.create_dataset(f'psf_matched_data/{psf_type}/{band}', data=psf_matched_img)
+                        h5file.create_dataset(f'psf_matched_rms_err/{psf_type}/{band}', data=psf_matched_rms_err)
 
                     #h5file['psf_matched_data'][psf_type] = self.psf_matched_data
+                
+                print(self.phot_imgs.keys(), self.bands)
                 self.psf_matched_data[psf_type][self.bands[-1]] = self.phot_imgs[self.bands[-1]] # No need to convolve the last band
                 self.psf_matched_rms_err[psf_type][self.bands[-1]] = self.rms_err_imgs[self.bands[-1]]
 
-                # Deal with last band
-                if h5file.get(f'psf_matched_data/{psf_type}/{self.bands[-1]}') is not None:
-                    del h5file[f'psf_matched_data/{psf_type}/{self.bands[-1]}']
-                if h5file.get(f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}') is not None:
-                    del h5file[f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}']
-                h5file.create_dataset(f'psf_matched_data/{psf_type}/{self.bands[-1]}', data=self.phot_imgs[self.bands[-1]].value)
-                h5file.create_dataset(f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}', data=self.rms_err_imgs[self.bands[-1]].value)
-                h5file.close()
+                
+                if not init_run:
+                    # Deal with last band
+                    if h5file.get(f'psf_matched_data/{psf_type}/{self.bands[-1]}') is not None:
+                        del h5file[f'psf_matched_data/{psf_type}/{self.bands[-1]}']
+                    if h5file.get(f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}') is not None:
+                        del h5file[f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}']
+                    h5file.create_dataset(f'psf_matched_data/{psf_type}/{self.bands[-1]}', data=self.phot_imgs[self.bands[-1]].value)
+                    h5file.create_dataset(f'psf_matched_rms_err/{psf_type}/{self.bands[-1]}', data=self.rms_err_imgs[self.bands[-1]].value)
+                    
             else:
                 print('not running')
+
+            if not init_run:
+                h5file.close()
+        
+        else:
+            print('Already PSF matched data.')
  
     def __str__(self):
         str = f"Resolved Galaxy {self.galaxy_id} from {self.survey} survey\n"
@@ -1606,8 +1826,10 @@ class ResolvedGalaxy:
             except:
                 pass
             command = ['pypher', f'{dir}/{psf_type}_b.fits', f'{dir}/{psf_type}_a.fits', f'{dir}/kernel.fits', '-r', '3e-3']
-            print(' '.join(command))
+            #print(' '.join(command))
             os.system(' '.join(command))
+            if not os.path.exists(f'{dir}/kernel.fits'):
+                print('Pypher hasn\'t made a file!')
             kernel = fits.getdata(f'{dir}/kernel.fits')
             
             os.remove(f'{dir}/{psf_type}_b.fits')
@@ -1758,8 +1980,6 @@ class ResolvedGalaxy:
 
         remove_files = True
 
-        print(filters, sci_img)
-        
         img_process = images_processing(filters, sci_img, var_img, gal_ra, gal_dec, 
                         dir_images=dir_images, img_unit=img_unit, img_scale=scale_factors, 
                         img_pixsizes=img_pixsizes, run_image_processing=True, stamp_size=(self.cutout_size, self.cutout_size),
@@ -1936,7 +2156,10 @@ class ResolvedGalaxy:
         if not hasattr(self, 'img_process'):
             raise ValueError('No image processing done. Run pixedfit_processing() first')
 
-       
+        if self.pixedfit_map is not None and not overwrite:
+            print('Pixedfit map already exists. Set overwrite=True to re-run')
+            return 
+
         #ref_band_pos = np.argwhere(np.array([band == ref_band for band in self.bands])).flatten()[0]
         no_SNR_requirement = []
         # Should calculate SNR requirements intelligently based on redshift
@@ -1948,7 +2171,7 @@ class ResolvedGalaxy:
                 for band in self.bands:
                     instrument = self.filter_instruments[band]
                     if only_snr_instrument is not None and instrument != only_snr_instrument:
-                        print(f'Skipping {band} as it is not in {only_snr_instrument}')
+                        #print(f'Skipping {band} as it is not in {only_snr_instrument}')
                         no_SNR_requirement.append(band)    
                     
                     if self.filter_ranges[band][1] < min_snr_wav_obs:
@@ -1972,12 +2195,12 @@ class ResolvedGalaxy:
               SNR_reqs[band] = 0
 
         SNR = [SNR_reqs[band] for band in header_order]
-
+        '''
         for pos, band in enumerate(header_order):
             print(band, SNR_reqs[band])
             if pos == ref_band_pos:
                 print('Reference band.')
-            
+        '''
 
         pixel_binning(self.flux_map_path, ref_band=ref_band_pos, Dmin_bin=Dmin_bin, SNR=SNR, redc_chi2_limit=redc_chi2_limit, del_r=del_r,  name_out_fits=name_out_fits)
         
@@ -2182,9 +2405,7 @@ class ResolvedGalaxy:
         galaxy = [gal for gal in cat.gals if gal.ID == self.galaxy_id]
         if len(galaxy) == 0:
             raise ValueError(f'Galaxy with ID {self.galaxy_id} not found')
-        elif len(galaxy) > 1:
-            for gal in galaxy:
-                print(gal)
+ 
         
         assert len(galaxy) == 1, f'{len(galaxy)} galaxies found with ID {self.galaxy_id}'
         galaxy = galaxy[0]
@@ -2332,14 +2553,17 @@ class ResolvedGalaxy:
         hfile[group].create_dataset(name, data=data)
         if meta is not None:
             for key in meta.keys():
-                print('Setting meta', key, str(meta[key]))
+                sys.stdout.write(f"Setting meta, {key}, {str(meta[key])}")
+                sys.stdout.flush()
                 hfile[group][name].attrs[key] = str(meta[key])
             if setattr_gal_meta is not None:
                 setattr(self, setattr_gal_meta, meta)
 
-
-        print('added to ', hfile, group, name)
+        sys.stdout.write(f"\r added to {hfile}, {group}, {name}")
+        sys.stdout.flush()
+        
         hfile.close()
+
         if setattr_gal is not None:
             print(f'Setting {setattr_gal} attribute.')
             setattr(self, setattr_gal, original_data)
@@ -2432,8 +2656,11 @@ class ResolvedGalaxy:
                 flux_err = np.sqrt(np.sum(self.psf_matched_rms_err[psf_type][band][binmap == i]**2))
                 if type(flux) in [u.Quantity, u.Magnitude]:
                     assert flux.unit == self.phot_pix_unit[band]
-                    assert flux_err.unit == self.phot_pix_unit[band]
                     flux = flux.value
+                   
+                if type(flux_err) in [u.Quantity, u.Magnitude]:
+                    assert flux_err.unit == self.phot_pix_unit[band]
+                    flux_err = flux_err.value
                     
                 fluxes.append(flux)
                 flux_errs.append(flux_err)
@@ -2464,7 +2691,7 @@ class ResolvedGalaxy:
                     flux = mag.to(u.uJy, equivalencies=u.spectral_density(self.filter_wavs[band]))
                     flux_err = 0.4 * np.log(10) * flux * mag_err
 
-                except KeyError as e:
+                except (TypeError, KeyError) as e:
                     print(e)
                     print(f'WARNING! No {i} found for {band}, falling back to aperture photometry!! Should switch to SEP. ')
                     flux = self.aperture_dict[str(0.32*u.arcsec)]['flux'][pos] * u.Jy
@@ -2474,10 +2701,13 @@ class ResolvedGalaxy:
                 flux_err = flux_err.to(u.uJy)
                 row.append(flux)
                 row.append(flux_err)
+                print(row)
             table.add_row(row)
         # Add MAG_APER
         for aper in self.aperture_dict.keys():
-            row = [f'MAG_APER_{aper.value}', f'MAG_APER_{aper.value}']
+            if type(aper) == u.Quantity:
+                aper = aper.value
+            row = [f'MAG_APER_{aper}', f'MAG_APER_{aper}']
             for pos, band in enumerate(self.bands):
                 flux = self.aperture_dict[aper]['flux'][pos] * u.Jy
                 flux_err = self.aperture_dict[aper]['flux_err'][pos] * u.Jy
@@ -2505,8 +2735,10 @@ class ResolvedGalaxy:
             table.add_row(row)
 
 
-        if not (hasattr(self, 'photometry_table') and self.photometry_table is None):
+        if not hasattr(self, 'photometry_table') or self.photometry_table is None:
             self.photometry_table = {psf_type: {binmap_type: table}}
+        elif psf_type not in self.photometry_table.keys():
+            self.photometry_table[psf_type] = {binmap_type: table}
         else:
             self.photometry_table[psf_type][binmap_type] = table
         
@@ -2713,11 +2945,16 @@ class ResolvedGalaxy:
             if redshift == 'eazy':
                 print('Using EAZY redshift.')
                 redshift = self.meta_properties['zbest_fsps_larson_zfree']
+            elif redshift == 'self':
+                print('Using self redshift.')
+                redshift = self.redshift
             elif redshift in self.sed_fitting_table['bagpipes'].keys():
                 table = self.sed_fitting_table['bagpipes'][redshift]
                 redshift_id = meta.get('redshift_id', table['#ID'][0])
                 row_index = table['#ID'] == redshift_id
                 table = table[row_index]
+                if len(table) == 0:
+                    raise Exception(f'No ID {redshift_id} found in {redshift} table when attempting to fetch redshift for bagpipes')
 
                 if 'redshift_50' in table.colnames:
                     redshift = float(table['redshift_50'][0])
@@ -2726,25 +2963,29 @@ class ResolvedGalaxy:
             
 
         redshift_sigma = meta.get('redshift_sigma', 0)
+        min_redshift_sigma = meta.get('min_redshift_sigma', 0)
+        sampler = meta.get('sampler', 'multinest')
+
         if redshift_sigma == 'eazy':
             z50 = self.meta_properties['zbest_fsps_larson_zfree']
             z16 = self.meta_properties['zbest_16_fsps_larson_zfree']
             z84 = self.meta_properties['zbest_84_fsps_larson_zfree']
             if type(z84) in [list, np.ndarray]: z84 = z84[0]
             if type(z16) in [list, np.ndarray]: z16 = z16[0]
-            redshift_sigma = np.mean([z84 - z50, z50 - z16])      
+            redshift_sigma = np.mean([z84 - z50, z50 - z16])    
+        elif redshift_sigma == 'min':
+            # Ensures
+            redshift_sigma = min_redshift_sigma
 
-        min_redshift_sigma = meta.get('min_redshift_sigma', 0)
-        sampler = meta.get('sampler', 'multinest')
         if redshift_sigma != 0:
             redshift_sigma = max(redshift_sigma, min_redshift_sigma)  
         else:
             redshift_sigma = None
 
 
-        if type(redshift) == float and redshift_sigma is not None:
+        if type(redshift) in [float, np.float64] and redshift_sigma is not None:
             print(f'Fitting Redshift = {redshift}, Redshift sigma = {redshift_sigma}, allowed range = ({redshift - 3*redshift_sigma}, {redshift + 3*redshift_sigma})')
-        elif redshift_sigma is None and type(redshift) == float:
+        elif redshift_sigma is None and type(redshift) in [float, np.float64]:
             print(f'Fitting fixed redshift = {redshift}.')
         elif type(redshift) in [list, np.ndarray, tuple]:
             assert len(redshift) == 2, "Redshift must be a float or a list of length 2"
@@ -2884,7 +3125,6 @@ class ResolvedGalaxy:
             if os.path.exists(path) and not os.path.exists(nrun_name):
                 os.rename(path, rnun_name)
             
-        print('here', redshift_sigma)
         if not exist_already:
             fit_cat = pipes.fit_catalogue(ids, fit_instructions, self.provide_bagpipes_phot,
                                         spectrum_exists=False, photometry_exists=True, run=out_subdir_encoded,
@@ -3126,28 +3366,47 @@ class ResolvedGalaxy:
             if bin == 'RESOLVED':
                 ''' Special case where we sum the SFH of all the bins'''
                 dummy_fig, dummy_ax = plt.subplots(1, 1)
-                set = False
-                for pos, tbin in enumerate(np.unique(table['#ID'])):
-                    
-                    try:
-                        float(tbin)
-                        pipes_obj = self.load_pipes_object(run_name, tbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
-                        tx, tsfh = pipes_obj.plot_sfh(dummy_ax, color, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = bin, return_sfh=True)
-                        if pos == 0:
-                            x_all = tx
-                            y_all = tsfh
-                            set = True
-                        else:
-                            assert np.all(x_all == tx), "Time scales do not match"
-                            y_all = np.sum([y_all, tsfh], axis=0)
-                            set = True
+
+                if self.resolved_sfh is not None:
+                    if run_name in self.resolved_sfh.keys():
+                        resolved_sfh = self.resolved_sfh[run_name]
+                        x_all, y_all = resolved_sfh[:, 0], resolved_sfh[:, 1:]
+                        axes.plot(x_all, y_all, color='tomato', label='RESOLVED', lw = 2)
+                        axes.fill_between(x_all, resolved_sfh[:, 2], resolved_sfh[:, 0], color='tomato', alpha=0.5)
+                        continue
+
+                else:
+                    set = False
+                    for pos, tbin in enumerate(np.unique(table['#ID'])):
                         
-                    except ValueError: 
-                        pass
-                    
-                if set:
-                    axes.plot(x_all, y_all[:, 1], color='tomato', label='RESOLVED', lw = 2)
-                    axes.fill_between(x_all, y_all[:, 0], y_all[:, 2], color='tomato', alpha=0.5)
+                        try:
+                            float(tbin)
+                            pipes_obj = self.load_pipes_object(run_name, tbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
+                            tx, tsfh = pipes_obj.plot_sfh(dummy_ax, color, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = bin, return_sfh=True)
+                            if pos == 0:
+                                x_all = tx
+                                y_all = tsfh
+                                set = True
+                            else:
+                                assert np.all(x_all == tx), "Time scales do not match"
+                                y_all = np.sum([y_all, tsfh], axis=0)
+                                set = True
+                            
+                        except ValueError: 
+                            pass
+                        
+                    if set:
+                        axes.plot(x_all, y_all[:, 1], color='tomato', label='RESOLVED', lw = 2)
+                        axes.fill_between(x_all, y_all[:, 0], y_all[:, 2], color='tomato', alpha=0.5)
+
+                    # Save resolved SFH
+
+                    save_array = np.vstack((x_all, y_all[:, 1], y_all[:, 0], y_all[:, 2])).T
+                    self.add_to_h5(save_array, 'resolved_sfh', run_name, overwrite=True)
+                    if self.resolved_sfh is None:
+                        self.resolved_sfh = {}
+                    self.resolved_sfh[run_name] = save_array
+
                 
                 plt.close(dummy_fig)
             else:
@@ -3663,6 +3922,7 @@ class ResolvedGalaxy:
             hist1d(sum_samples, ax_samples,
                     smooth=True, color='black', percentiles=False, lw=1, alpha=1, fill_between=False, norm_height=True, label='$\Sigma$ Resolved')
 
+            
         # Fix xticks
         #ax_samples.set_xticks(np.arange(ax_samples.get_xlim()[0], ax_samples.get_xlim()[1], 0.5))
         ax_samples.legend(fontsize=6)
@@ -3691,8 +3951,6 @@ class ResolvedGalaxy:
             except:
                 pass
 
-        
-                
         pipes_objs = self.load_pipes_object(run_name, bins, get_advanced_quantities=True, run_dir = run_dir, plotpipes_dir=pipes_dir)
         
         print(pipes_objs)
@@ -3828,7 +4086,64 @@ class ResolvedGalaxy:
         for bin in bins:
             mask = self.pixedfit_map == bin
             map[mask] = map[mask] * pix_map_band[mask]
+    
+    def get_resolved_bagpipes_sed(self, run_name, run_dir = f'pipes/', plotpipes_dir = 'pipes_scripts/', overwrite = False):
+
+        if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys():
+            raise Exception("Need to run bagpipes first")
+
+        if self.resolved_sed is not None and run_name in self.resolved_sed.keys() and not overwrite:
+            return self.resolved_sed[run_name]
+
+
+        table = self.sed_fitting_table['bagpipes'][run_name]
+
+           # Make cmap for map
+        count = []
+        for i, id in enumerate(table['#ID']):
+            try:
+                id = float(id)
+                count.append(i)
+            except:
+                pass
+
+        for pos, galaxy_id in enumerate(count):
+            pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=None, plotpipes_dir=plotpipes_dir)
+            # Get SED
+
+            flux, wav = pipes_obj.plot_best_fit(None, wav_units=u.um, flux_units=u.uJy, return_flux = True)
+             
+            # Clip the SED to the wavelength range 0 to 8 um
+            flux = flux[(wav > 0.5) & (wav < 8)]
+            wav = wav[(wav > 0.5) & (wav < 8)]
+
+            if pos == 0:
+                total_flux = np.zeros_like(flux)
+                total_wav = wav
+            else:
+                assert wav == total_wav, f'Wavelengths do not match, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}'
+
+            total_flux += flux
+
+        out_array = np.zeros((len(total_flux), 2))
+        out_array[:, 0] = total_wav
+        out_array[:, 1] = total_flux
+
+        self.add_to_h5(total_flux, 'resolved_sed', run_name, overwrite=True)
         
+        if self.resolved_sed is None:
+            self.resolved_sed = {}
+
+        self.resolved_sed[run_name] = out_array
+        
+        return total_flux, total_wav
+        
+
+
+
+           
+
+
 
     def plot_bagpipes_sed(self, run_name, run_dir = f'pipes/', bins_to_show='all', plotpipes_dir = 'pipes_scripts/'):
         if not hasattr(self, 'sed_fitting_table') or 'bagpipes' not in self.sed_fitting_table.keys():
@@ -4191,7 +4506,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                             sky_coord = None, im_paths = [], im_exts = [], err_paths = [], rms_err_exts = [], 
                             seg_paths = [], rms_err_paths = [], phot_img_headers = {},
                             psf_matched_data = None, psf_matched_rms_err = None,    
-                            phot_imgs = None, rms_err_imgs = None, seg_imgs = None, aperture_dict = None, redshift = None,
+                            phot_imgs = {}, rms_err_imgs = {}, seg_imgs = {}, aperture_dict = None, redshift = None,
                             im_pixel_scales = None, im_zps = None, phot_pix_unit = None, det_data = None, 
                             synthesizer_galaxy = None, noise_images = None, meta_properties = None, 
                             property_images = None, auto_photometry = None, seds = None, **kwargs):
@@ -4259,6 +4574,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                         params['seds'][key][key2] = mock_galaxy['seds'][key][key2][()]
 
         # Get output of super init_from_h5
+
+        # Close h5!
+        hfile.close()
         
 
         variables = super().init_from_h5(h5_name = h5_name, h5_folder = h5_folder, return_attr = True)
@@ -4282,7 +4600,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         return cls(**variables)
         
 
-
     @classmethod
     def init_mock_from_synthesizer(cls, redshift_code, galaxy_index,
                                     tags = ['010_z005p000', '008_z007p000', '007_z008p000', '005_z010p000'],
@@ -4303,6 +4620,19 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                                     depth_file = {'NIRCam':'/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv',
                                                 'ACS_WFC':'/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv'},
                                     ):
+
+        update_cli_interface = is_cli()
+        update_cli_interface = False
+        if update_cli_interface:
+            cli = CLIInterface()
+            cli.start()
+
+            lines = [[f'Galaxy: {redshift_code}_{galaxy_index}', f'Survey: {mock_survey}', f'Version: {mock_version}'],
+                                [f'Synthesizer: Grid: {grid_name}'],
+                                [''], ['']]
+
+            lines[2][0] = f'Current Task: Initializing Mock Galaxy from Synthesizer'
+            cli.update(lines)
 
         if False:
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
@@ -4334,6 +4664,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             bands = ['F435W', 'F606W', 'F775W', 'F814W', 'F850LP', 'F090W', 'F115W', 'F150W', 'F162M', 'F182M', 'F200W', 'F210M', 'F250M', 'F277W', 'F300M', 'F335M', 'F356W', 'F410M', 'F444W']
             instruments = 5*['ACS_WFC'] + 14 * ['NIRCam']
             observatories = 5*['HST'] + 14 * ['JWST']
+
+        
         try:
             from scipy import signal
             from synthesizer.emission_models import IncidentEmission
@@ -4355,7 +4687,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         resolution = resolution * arcsecond
 
-        grid = Grid(grid_name, grid_dir=grid_dir)
+        grid = Grid(grid_name, grid_dir=grid_dir) # TODO: Apply reasonable wavelength limits to grid to reduce computation time and memory usage
 
         #tags = ['010_z005p000', '008_z007p000', '007_z008p000', '005_z010p000']
         #regions = [['00', '00', '01', '10', '18'], ['00', '02', '09'], ['21', '17'], ['15']]
@@ -4405,6 +4737,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         gal.tau_v = tau_v
 
+        message = f'Created Galaxy object from .h5 with {len(gal.tau_v)} particles.'
+        if update_cli_interface:
+            cli.update(current_task = message)
+        else:
+            print(message)
+
         model_assumptions = {'gridname': grid_name,
                             'dust_type': 'pacman',
                             'dust_curve': 'power_law',
@@ -4438,6 +4776,14 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         gal.stars.get_photo_fnu(filters)
         #gal.stars.get_photo_lnu(filters) # unneeded apparently
 
+        message = f'Generated spectra and photometry for Galaxy. Model assumptions: {model_assumptions}'
+        if update_cli_interface:
+            cli.update(current_task = message)
+        else:
+            print(message)
+
+
+
         if cutout_size == 'auto':
             flux_enclosed = 0.95
             size_bands = ['JWST/NIRCam.F277W', 'JWST/NIRCam.F356W', 'JWST/NIRCam.F444W']
@@ -4451,12 +4797,23 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             # convert to pixels
             pixel_scale = 0.03 * u.arcsecond
             half_light_radius_pix = (half_light_radius_arcsec / pixel_scale)
-            
-            print( f'Galaxy size: {half_light_radius:.2f} == {half_light_radius_arcsec:.2f} == {half_light_radius_pix:.2f} pixels')
 
+            message = f'Galaxy size: {half_light_radius:.2f} == {half_light_radius_arcsec:.2f} == {half_light_radius_pix:.2f} pixels'
+
+            if not update_cli_interface:
+                print(message)
+            else:
+                cli.update(current_task = message)
             # Cutout size 2 * 95% flux radius + 10% padding
             cutout_size = int(np.ceil(2 * half_light_radius_pix + 0.3 * 2 * half_light_radius_pix))
-            print(f'Cutout size is {cutout_size} pixels')
+
+            # Min cutout size 65 pixels
+            cutout_size = np.max([65, cutout_size])
+
+
+        if update_cli_interface:
+            lines[1].append(f'Cutout size: {cutout_size} pix')
+            cli.update(lines)
 
            
         sph_kernel = Kernel()
@@ -4475,6 +4832,13 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         resolution_kpc = re_kpc.value * kpc
         width = cutout_size * resolution_kpc
 
+        message = f'Creating smoothed image cutouts with resolution {resolution_kpc:.2f} and width {width:.2f}'
+        if update_cli_interface:
+            cli.update(current_task = message)
+        else:
+            print(message)
+
+
         # Get the image
         imgs = gal.get_images_flux(
             resolution_kpc,
@@ -4491,6 +4855,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         for prop in ['stellar_mass', 'sfr', 'ssfr', 'stellar_age', 'stellar_metallicity']:
             func = getattr(gal, f'get_map_{prop}')
             arguments = {'resolution':resolution_kpc, 'fov':width, 'img_type':img_type, 'kernel':kernel_data, 'kernel_threshold':1}
+            
+            if update_cli_interface:
+                cli.update(current_task = f'Generating {prop} map')
+                
+                
             if prop in ['ssfr', 'sfr']:
                 if prop == 'ssfr':
                     unit = yr**-1
@@ -4525,6 +4894,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             psf = fits.open(psf_file)[0].data
             psfs[code] = psf
         
+        if update_cli_interface:
+            message = f'Applying PSF models from {psfs_dir}'
+            cli.update(current_task = message)
+
         # Apply the PSFs
         psf_imgs = imgs.apply_psfs(psfs)
         
@@ -4550,6 +4923,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             data = row['median_depth']
             band_depths[band] = data * u.ABmag
 
+        if update_cli_interface:
+            message = f'Applying noise from local depths in {depth_file}'
+            cli.update(current_task = message)
+
         wavs = {f:np.squeeze(filters.pivot_lams[pos].value) for pos, f in enumerate(bands)}
         # Convert to uJy from AB mag
         depths = {img_key:band_depths[f].to(u.uJy, equivalencies=u.spectral_density(wavs)).value * uJy for f, img_key in zip(bands, imgs.keys())}
@@ -4563,12 +4940,16 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         noise_app_imgs = psf_imgs.apply_noise_from_snrs(snrs=snrs, depths=depths, aperture_radius=radius_kpc)
         
         # Convert to uJy
+
         for img in [imgs, psf_imgs, noise_app_imgs]:
             for key in img.keys():
                 unit = img[key].units
                 if unit != uJy:
                     img[key].arr = (img[key].arr * unit).to(uJy).value
                     img[key].units = uJy
+
+                    cutout_size = img[key].arr.shape[0]
+
         
 
         possible_galaxies = glob.glob(f'galaxies/{mock_survey}_*.h5')
@@ -4584,19 +4965,31 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         final_images = {}
 
         if len(ids) > 0:
-            print('Found real ResolvedGalaxies to approximate errors from.')
-            print(f'Using {ids}')
-            ids = [ids[0]] # TEMP
+            ids = ids[:2]
+            if update_cli_interface:
+                message = f'Approximating RMS error maps from {len(ids)} real galaxies.'
+                cli.update(current_task = message)
+            else:
+                print('Warning! Cropping IDs')
+                print('Found real ResolvedGalaxies to approximate errors from.')
+                print(f'Using {ids}')
+            
             galaxies = ResolvedGalaxy.init(ids, 'JOF_psfmatched', 'v11')
 
             data_type = 'ORIGINAL'
-            for band in tqdm(bands, desc='Generating RMS error fits'):
+            for prog, band in enumerate(bands):
+                if update_cli_interface:
+                    message = f'Generating RMS error fits for {band}'
+                    cli.update(current_task = message, progress = prog/len(bands))
+
                 # Get data to generate RMS error from
                 image_band = noise_app_imgs[filter_code_from_band[band]]
                 unit = image_band.units
                 image_data = image_band.arr * unit
                 # have to do this for conversion
-                unit = image_data.to_astropy().unit
+                image_data = image_data.to_astropy()
+                unit = image_data.unit
+
                 #image_data = image_data.
                 total_err, total_data = [],[]
                 for pos, galaxy in enumerate(galaxies):
@@ -4655,6 +5048,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         else:
             # Add rms of noise map as rms_err_iamges
             raise NotImplementedError('Need to add noise map rms errors')
+
+        if update_cli_interface:
+            cli.update(current_task = f'Finished approximating RMS error maps.', progress = 0)
+
         # Generate noise to add from the RMS error
         noise_images = {}
         for band in bands:
@@ -4688,6 +5085,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         
         import sep
 
+        if update_cli_interface:
+            cli.update(current_task = f'Running SEP to get segmentation maps and measured fluxes.')
+
         # Our convolution kernel (gauss_2.5_5x5.conv) is:
 
         conv = np.array([[0.034673, 0.119131, 0.179633, 0.119131, 0.034673],
@@ -4701,8 +5101,14 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         # Detection band - 
 
+       
+
         detection_band = '+'.join(mock_forced_phot_band)
         # inverse variance weighted stack of mock_forced_phot_band
+
+        if update_cli_interface:
+            cli.update(current_task = f'Stacking {detection_band} images to get detection image.')
+
 
         inv_var_weights = {band: 1 / rms_err_images[band]**2 for band in mock_forced_phot_band}
     
@@ -4730,6 +5136,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             plt.title(f'{mock_forced_phot_band[0]}')
             plt.show()
 
+        if update_cli_interface:
+            cli.update(current_task = f'Running sep.extract()')
+
+
         detection_objects, detection_segmap = sep.extract(detection_image, thresh = 1.8, err = detection_rms_error, 
                             minarea = 9,
                             deblend_nthresh = 32,
@@ -4747,6 +5157,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         det_data['phot'] = detection_image
         det_data['rms_err'] = detection_rms_error
         det_data['seg'] = detection_segmap
+        detect_seg_id = detection_segmap[int(detection_segmap.shape[0]/2), int(detection_segmap.shape[1]/2)]
 
         # Plot the detection image and objects
         #if debug:
@@ -4765,17 +5176,20 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         ax[1].imshow(detection_segmap, origin='lower', cmap='viridis')
         ax[0].set_title('Detection image')
         ax[1].set_title('Detection segmentation map')
-        plt.show()
+        #plt.show()
 
         print(f'Found {len(detection_objects)} objects in detection band {detection_band}')
 
         assert len(detection_objects) > 0, 'No objects found in detection band'
-        assert len(detection_objects) == 1, 'More than one object found in detection band'
+        #assert len(detection_objects) == 1, 'More than one object found in detection band'
         
         # Get aperture photometry 
         auto_photometry = {}
         flux_aper, flux_err_aper, aper_depths, wave = [], [], [], []
         for band in bands:
+            if update_cli_interface:
+                cli.update(current_task = f'Running detection and segmentation for {band}')
+
             band_objects, segmap = sep.extract(final_images[band], thresh = 1.8, err = rms_err_images[band],
                             minarea = 9,
                             deblend_nthresh = 32,
@@ -4787,17 +5201,23 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
             seg_imgs[band] = segmap
 
+            # get seg ID in center
+            seg_id = segmap[int(segmap.shape[0]/2), int(segmap.shape[1]/2)]
+
             pixel_radius = (0.16 * u.arcsec)/resolution
 
             flux, fluxerr, flag = sep.sum_circle(final_images[band], detection_objects['x'], detection_objects['y'],
             pixel_radius, err=rms_err_images[band], gain=1.0)
 
-            flux_aper.append(flux)
+            flux = flux[detect_seg_id-1] * u.uJy
+            flux_aper.append(flux.to(u.Jy).value)
 
             # SHOULD SET THIS BASED ON DEPTH! 
-            flux_err_aper.append(fluxerr)
+            flux_err_aper_i = depths[filter_code_from_band[band]] * u.uJy
+            flux_err_aper.append(flux_err_aper_i.to(u.Jy).value)
+            
 
-            aper_depths.append(depths[filter_code_from_band[band]])
+            aper_depths.append(-2.5 * np.log10(5*depths[filter_code_from_band[band]]) + 23.9)
             wave.append(wavs[band])
 
             # Get aperture photometry
@@ -4806,6 +5226,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             auto_photometry[band] = {}
 
             # FLUX_AUTO
+
+            if update_cli_interface:
+                cli.update(current_task = f'Doing aperture photometry and kron fluxes for {band}')
+
 
             kronrad, krflag = sep.kron_radius(final_images[band], band_objects['x'], band_objects['y'], band_objects['a'], band_objects['b'], band_objects['theta'], 6.0)
             kron_flux, kron_fluxerr, kron_flag = sep.sum_ellipse(final_images[band], band_objects['x'], band_objects['y'], band_objects['a'], band_objects['b'], band_objects['theta'], 2.5*kronrad, subpix=1)
@@ -4825,18 +5249,57 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             r, flag = sep.flux_radius(final_images[band], band_objects['x'], band_objects['y'], 6.*band_objects['a'], 0.5,
             normflux=kron_flux, subpix=5)
 
-            auto_photometry[band]['X_IMAGE'] = band_objects['x']
-            auto_photometry[band]['Y_IMAGE'] = band_objects['y']
-            auto_photometry[band]['A_IMAGE'] = band_objects['a']
-            auto_photometry[band]['B_IMAGE'] = band_objects['b']
-            auto_photometry[band]['THETA_IMAGE'] = band_objects['theta']
-            auto_photometry[band]['FLUX_RADIUS'] = r
-            auto_photometry[band]['MAG_AUTO'] = -2.5 * np.log10(kron_flux) + 23.9 # 23.9 is the zero point for a uJy image
-            auto_photometry[band]['MAGERR_AUTO'] = kron_fluxerr/kron_flux * 2.5/np.log(10)
-            auto_photometry[band]['MAG_BEST'] = -99
-            auto_photometry[band]['MAGERR_BEST'] = -99
-            auto_photometry[band]['MAG_ISO'] = -99
-            auto_photometry[band]['MAGERR_ISO'] = -99
+            
+            obj_mask = seg_id-1 # 
+
+            if seg_id != 0:
+                
+                
+                #add dimension on last axis of band_objects
+                
+                x = band_objects['x']
+                #print('here')
+                #print(x, type(x))
+                x = x[obj_mask] if type(x) == np.ndarray else x
+                #print(x)
+                y = band_objects['y']
+                y = y[obj_mask] if type(y) == np.ndarray else y
+                a = band_objects['a']
+                a = a[obj_mask] if type(a) == np.ndarray else a
+                b = band_objects['b']
+                b = b[obj_mask] if type(b) == np.ndarray else b
+                theta = band_objects['theta']
+                theta = theta[obj_mask] if type(theta) == np.ndarray else theta
+
+                r = r[obj_mask] if type(r) == np.ndarray else r
+                kron_flux = kron_flux[obj_mask] if type(kron_flux) == np.ndarray else kron_flux
+                kron_fluxerr = kron_fluxerr[obj_mask] if type(kron_fluxerr) == np.ndarray else kron_fluxerr
+                
+
+                auto_photometry[band]['X_IMAGE'] = np.atleast_1d(x)[0]
+                auto_photometry[band]['Y_IMAGE'] = np.atleast_1d(y)[0]
+                auto_photometry[band]['A_IMAGE'] = np.atleast_1d(a)[0]
+                auto_photometry[band]['B_IMAGE'] = np.atleast_1d(b)[0]
+                auto_photometry[band]['THETA_IMAGE'] = np.atleast_1d(theta)[0]
+                auto_photometry[band]['FLUX_RADIUS'] = np.atleast_1d(r)[0]
+                auto_photometry[band]['MAG_AUTO'] = -2.5 * np.log10(np.atleast_1d(kron_flux)) + 23.9 # 23.9 is the zero point for a uJy image
+                auto_photometry[band]['MAGERR_AUTO'] = np.atleast_1d(kron_fluxerr)/np.atleast_1d(kron_flux) * 2.5/np.log(10)
+
+            else:
+                # No object found
+                auto_photometry[band]['X_IMAGE'] = None
+                auto_photometry[band]['Y_IMAGE'] = None
+                auto_photometry[band]['A_IMAGE'] = None
+                auto_photometry[band]['B_IMAGE'] = None
+                auto_photometry[band]['THETA_IMAGE'] = None
+                auto_photometry[band]['FLUX_RADIUS'] = None
+                auto_photometry[band]['MAG_AUTO'] = None
+                auto_photometry[band]['MAGERR_AUTO'] = None
+            
+            auto_photometry[band]['MAG_BEST'] = None
+            auto_photometry[band]['MAGERR_BEST'] = None
+            auto_photometry[band]['MAG_ISO'] = None
+            auto_photometry[band]['MAGERR_ISO'] = None
 
         aperture_dict = {str(0.32*u.arcsec): {'flux': flux_aper, 'flux_err': flux_err_aper, 'depths': aper_depths, 'wave': wave}} 
 
@@ -4890,6 +5353,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         seds = {}
 
+        if update_cli_interface:
+                cli.update(current_task = f'Saving Synthesizer SEDs.')
+
+
         seds['wav'] = gal.stars.spectra['total'].obslam.to(Angstrom).value
 
         seds["total_fnu"] = {}
@@ -4900,6 +5367,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         seds["det_segmap_fnu"]["total"] = get_spectra_in_mask(gal, pixel_mask = det_data["seg"] , spectra_type = 'total').to(uJy).value
 
         # other maps - tau_v
+
+        if update_cli_interface:
+            message = f'Finished generating mock galaxy.'
+            cli.update(current_task = message)
+            cli.stop()
+
 
 
         return cls(galaxy_id, mock_survey, mock_version, instruments = mock_instruments, bands = bands,
@@ -4912,9 +5385,40 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                     det_data = det_data, phot_imgs = final_images,
                     noise_images = noise_images, meta_properties = meta_properties, property_images = property_images, seds = seds)
 
-    def plot_mock_spectra(self, components, fig = None, ax = None, wav_unit = u.um, flux_unit = u.uJy, label = True, **kwargs):
+
+    @classmethod
+
+    def init(cls, mock_survey = None, redshift_code = None, galaxy_index = None,  galaxy_id = None, overwrite = False, h5_folder = 'galaxies/', **kwargs):
+        # load from h5 if it exists
+        # Initialize CLI if relevant
+
+        assert (mock_survey is not None) and (redshift_code is not None) and (galaxy_index is not None) or (galaxy_id is not None), 'Need to provide either galaxy_id or mock_survey, redshift_code, and galaxy_index'
+        if galaxy_id is None:
+            galaxy_id = f'{mock_survey}_{redshift_code}_{galaxy_index}_mock'
+
+        if not galaxy_id.startswith(mock_survey) and mock_survey is not None:
+            galaxy_id = f'{mock_survey}_{galaxy_id}'
+
+        file_path = f'{h5_folder}/{galaxy_id}'
+        if not file_path.endswith('.h5'):
+            file_path += '.h5'
+
+        if os.path.exists(file_path) and not overwrite:
+            print(f'Loading from .h5')
+            return cls.init_from_h5(galaxy_id, h5_folder = h5_folder)
+        else:
+            print(f'Generating from synthesizer.')
+            return cls.init_mock_from_synthesizer(redshift_code, galaxy_index, mock_survey = mock_survey, **kwargs)
+
+
+    @classmethod
+    def init_mock_from_ramses(cls):
+        # TODO: Implement this method
+        raise NotImplementedError('Need to implement this method.')
+
+    def plot_mock_spectra(self, components, fig = None, ax = None, facecolor = 'white', wav_unit = u.um, flux_unit = u.uJy, label = True, **kwargs):
         if fig is None:
-            fig, ax = plt.subplots(1, 1, figsize=(5, 5), facecolor='white', dpi = 200)
+            fig, ax = plt.subplots(1, 1, figsize=(8, 4.5), facecolor=facecolor, dpi = 200)
         
         if type(components) == str:
             components = [components]
@@ -4922,17 +5426,25 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         for component in components:
             wav = self.seds['wav'] * u.Angstrom
             flux = self.seds[component]['total'] * u.uJy
-            ax.plot(wav.to(wav_unit), flux.to(flux_unit, equivalencies=u.spectral_density(wav)), **kwargs, label = 'component' if label else '')
+            ax.plot(wav.to(wav_unit), flux.to(flux_unit, equivalencies=u.spectral_density(wav)), **kwargs, label = component if label else '')
+
         
         if label:
+            ax.set_xlim(0.5, 5)
+
+            # Get max flux in the xlim range
+            max_flux = np.max(flux[(wav > 0.5*u.um) & (wav < 5*u.um)])
+            ax.set_ylim(0, 1.1*max_flux.to(flux_unit).value)
+
+            #ax.set_ylim(0, 5)
             ax.legend()
-            ax.set_xlabel('Wavelength (Angstrom)')
+            ax.set_xlabel('Wavelength (um)')
             ax.set_ylabel('Flux (uJy)')
 
         return fig
 
 
-    def plot_property_maps(self, parameters=['stellar_mass', 'sfr', 'ssfr', 'stellar_age', 'stellar_metallicity'], save=False, facecolor='white', max_on_row=4, weight_mass_sfr = True, norm = 'linear', total_params = []):
+    def plot_property_maps(self, parameters=['stellar_mass', 'sfr_10 Myr', 'ssfr_10 Myr', 'stellar_age', 'stellar_metallicity'], save=False, facecolor='white', max_on_row=4, weight_mass_sfr = True, norm =  'linear', logmap = [True, True, True, True, False], total_params = []):
         
         cmaps = ['magma','RdYlBu', 'cmr.ember', 'cmr.cosmic', 'cmr.lilac', 'cmr.eclipse', 'cmr.sapphire', 'cmr.dusk', 'cmr.emerald']
         
@@ -4946,12 +5458,26 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             fig.delaxes(axes[i])
 
         redshift = self.redshift
+
+        if type(norm) == str:
+            norm = [norm]*len(parameters)
+        
         
         for i, param in enumerate(parameters):
             ax_divider = make_axes_locatable(axes[i])
             cax = ax_divider.append_axes('top', size='5%', pad='2%')
 
             map = self.property_images[param]
+
+            # replace inf with nan
+            map = np.nan_to_num(map, nan=np.nan, posinf=np.nan, neginf=np.nan)
+
+
+            if logmap[i]:
+                map = np.log10(map)
+
+            map = np.nan_to_num(map, nan=np.nan, posinf=np.nan, neginf=np.nan)
+
             '''
             if param in ['stellar_mass', 'sfr']:
                 ref_band = {'stellar_mass':'F444W', 'sfr':'1500A'}
@@ -4969,10 +5495,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 param = f'{param}_density'
             '''
 
-            if norm == 'log':
-                norm = LogNorm(vmin=np.nanmin(map), vmax=np.nanmax(map))
+
+            if norm[i] == 'log':
+                anorm = LogNorm(vmin=np.nanmin(map), vmax=np.nanmax(map))
             else:
-                norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
+                anorm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
             
             '''
             gunit = self.param_unit(param.split(':')[-1])
@@ -5002,14 +5529,15 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             # Create actual normalisation
             
 
-            mappable = axes[i].imshow(map, origin='lower', interpolation='none', cmap=cmaps[i], norm=norm)
+            mappable = axes[i].imshow(map, origin='lower', interpolation='none', cmap=cmaps[i], norm=anorm)
             cbar = fig.colorbar(mappable, cax=cax, orientation='horizontal')
             
             # ensure cbar is using ScalarFormatter
             cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
             cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
             
-            
+            param_str = param.replace("_", r"\ ")
+            unit = ''
             cbar.set_label(rf'$\rm{{{param_str}}}${unit}', labelpad=10, fontsize=8)
             cbar.ax.xaxis.set_ticks_position('top')
             cbar.ax.xaxis.set_tick_params(labelsize=6, which='both')
@@ -5019,7 +5547,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             # Fix colorbar tick size and positioning if log
             if norm == 'log':
                 # Generate reasonable ticks
-                ticks = np.logspace(np.log10(np.nanmin(map)), np.log10(np.nanmax(map)), num=5)
+                if logmap[i]:
+                    ticks = np.linspace(np.nanmin(map), np.nanmax(map), num=5)
+                else:
+                    ticks = np.logspace(np.log10(np.nanmin(map)), np.log10(np.nanmax(map)), num=5)
                 cbar.set_ticks(ticks)
                 cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
                 cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
@@ -5036,7 +5567,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
 
 
-
 class MultipleResolvedGalaxy:
     def __init__(self, list_of_galaxies):
         self.galaxies = list_of_galaxies
@@ -5046,9 +5576,9 @@ class MultipleResolvedGalaxy:
         list_of_galaxies = []
         for id in list_of_ids:
             if 'mock' in id:
-                galaxy = MockResolvedGalaxy(id, survey, version, **kwargs)
+                galaxy = MockResolvedGalaxy.init(galaxy_id = id, mock_survey = survey, mock_version = version, **kwargs)
             else:
-                galaxy = ResolvedGalaxy(id, survey, version, **kwargs)
+                galaxy = ResolvedGalaxy.init(galaxy_id = id, survey = survey, version = version, **kwargs)
             list_of_galaxies.append(galaxy)
 
         return cls(list_of_galaxies)
@@ -5103,8 +5633,6 @@ class MultipleResolvedGalaxy:
 
 
 
-
-
     def scatter_plot(self, x_attr, y_attr, c_attr = None, facecolor = 'white', cmap = 'viridis', **kwargs):
 
         fig, ax = plt.subplots(1, 1, figsize=(5, 5), facecolor=facecolor)
@@ -5147,6 +5675,30 @@ class MultipleResolvedGalaxy:
             if type(function) == str:
                 function = getattr(galaxy, function)
             function(*args, **kwargs)
+
+def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field = 'JOF_psfmatched', version = 'v11'):
+        try:
+            if 'mock' in galaxy_id:
+                galaxy = MockResolvedGalaxy.init(galaxy_id = galaxy_id, mock_survey = field, mock_version = version, cutout_size = cutout_size, h5_folder = h5_folder)
+            else:
+                galaxy = ResolvedGalaxy.init(galaxy_id, field, version, cutout_size = cutout_size, h5_folder = h5_folder)
+
+            # Run bagpipes
+            galaxy.run_bagpipes(resolved_dict)
+            # Save the resolved SED
+            galaxy.get_resolved_bagpipes_sed(resolved_dict['meta']['run_name'])
+            # Save the resolved SFH
+            fig, _ = galaxy.plot_bagpipes_sfh(resolved_dict['meta']['run_name'])
+            plt.close(fig)
+            # Save the resolved mass
+            galaxy.get_total_resolved_mass(resolved_dict['meta']['run_name'])
+
+            return galaxy
+
+
+        except Exception as e:
+            print(f'Error in {galaxy_id}: {e}')
+            return None
 
 
 if __name__ == "__main__":
@@ -5279,9 +5831,6 @@ if __name__ == "__main__":
         # Run Bagpipes in parallel
 
 
-    def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field = 'JOF_psfmatched', version = 'v11'):
-        galaxy = ResolvedGalaxy.init(galaxy_id, field, version, cutout_size = cutout_size, h5_folder = h5_folder)
-        return galaxy.run_bagpipes(resolved_dict)
 
     for run_dicts in [dicts, resolved_dicts]:
         size = 1

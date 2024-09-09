@@ -530,7 +530,7 @@ class PipesFit:
         else:
             return -99.99
           
-    def plot_best_fit(self, ax, colour='black',  wav_units=u.um, flux_units=u.ABmag, lw=1,fill_uncertainty=False,zorder=5, label=None, **kwargs):
+    def plot_best_fit(self, ax, colour='black',  wav_units=u.um, flux_units=u.ABmag, lw=1,fill_uncertainty=False,zorder=5, label=None, return_flux = False, **kwargs):
         if "redshift" in self.fit.fitted_model.params:
             redshift = np.median(self.fit.posterior.samples["redshift"])
         else:
@@ -557,6 +557,10 @@ class PipesFit:
             label = self.name
 
         wavs = wavs_aa.to(wav_units).value
+
+        if return_flux:
+            return wavs, flux
+
         ax.plot(wavs, flux[:, 1], lw=lw, color=colour, alpha=0.7, zorder=zorder, label = label, **kwargs)
         if fill_uncertainty:
             ax.fill_between(wavs, flux[:,0], flux[:,2], alpha=0.5, color=colour, lw=lw, zorder=zorder)
