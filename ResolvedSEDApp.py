@@ -226,7 +226,9 @@ def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fit
     
     multi_choice_bins_param_safe = []
     for i in multi_choice_bins_param:
-        if i != np.nan:
+        if i == 'RESOLVED':
+            multi_choice_bins_param_safe.append(i)
+        elif i != np.nan:
             multi_choice_bins_param_safe.append(int(i))
         else:
             pass
@@ -441,6 +443,10 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 def plot_bagpipes_pdf(resolved_galaxy, map, cmap, param_property, which_run_aperture_param, which_run_resolved_param, multi_choice_bins_param, total_fit_options_param, which_sed_fitter_param, run_dir = run_dir):
     cmap = cm.get_cmap(cmap)
     #print(multi_choice_bins_param + total_fit_options_param)
+    # Ignore resolved
+    if 'RESOLVED' in multi_choice_bins_param:
+        multi_choice_bins_param.remove('RESOLVED')
+
     colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin)) for pos, rbin in enumerate(multi_choice_bins_param)] 
     colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
    
@@ -501,7 +507,7 @@ def plot_bins(bin_type, cmap, scale_alpha, show_galaxy, show_kron, psf_matched, 
     im_array = xr.DataArray(array, dims=['y', 'x'], name=f'{bin_type} bins', coords={'x': dimensions, 'y': dimensions})
     hvplot = im_array.hvplot('x','y').opts(cmap=cmap, xaxis=None, yaxis=None, clabel=f'{bin_type} Bin', alpha=scale_alpha)
     opts = np.unique(array)
-    multi_choice_bins.options = list(opts[~np.isnan(opts)])
+    multi_choice_bins.options = ['RESOLVED']+list(opts[~np.isnan(opts)])
 
     if show_kron:
         center = resolved_galaxy.cutout_size/2
@@ -534,7 +540,16 @@ def plot_bins(bin_type, cmap, scale_alpha, show_galaxy, show_kron, psf_matched, 
 def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_aperture_param, which_run_resolved_param, total_fit_options_param, x_unit = 'Gyr', facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
+    remove = False
+    if 'RESOLVED' in multi_choice_bins_param:
+        # get index
+        index = multi_choice_bins_param.index('RESOLVED')
+        multi_choice_bins_param.remove('RESOLVED')
+        remove = True
+
     colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin)) for pos, rbin in enumerate(multi_choice_bins_param)]
+    # add black for resolved
+    
     colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
     # FIX HERE
     if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and (which_run_aperture_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys() or which_run_resolved_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys()):
@@ -549,7 +564,15 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
                 cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = {}
 
             if which_run_resolved_param is not None:
+                
+
                 bins_to_show = [int(i) for i in multi_choice_bins_param]
+                if remove:
+                    colors_bins.insert(index, 'black')
+                    # reinstall resolved
+                    multi_choice_bins_param.insert(index, 'RESOLVED')
+                    bins_to_show.insert(index, 'RESOLVED')
+
                 cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_resolved_param)
                 fig, cache = resolved_galaxy.plot_bagpipes_sfh(run_name=which_run_resolved_param, bins_to_show = bins_to_show, save=False, facecolor=facecolor, marker_colors=colors_bins, time_unit=x_unit, run_dir=run_dir, cache=cache) 
                 cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = cache
@@ -662,6 +685,10 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_aperture_param, which_run_resolved_param, total_fit_options_param, facecolor='#f7f7f7'):
     # Can't always directly compare as models may have different parameters
     cmap = cm.get_cmap(cmap)
+    # Ignore resolved
+    if 'RESOLVED' in multi_choice_bins_param:
+        multi_choice_bins_param.remove('RESOLVED')
+
     colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin)) for pos, rbin in enumerate(multi_choice_bins_param)]
     colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
 
@@ -1012,9 +1039,9 @@ def handle_file_upload(value, components):
 
     which_flux_unit = pn.widgets.Select(name='Flux Unit', value='uJy', options=['uJy', 'ABmag', 'ergscma'])
 
-    multi_choice_bins = pn.widgets.MultiChoice(name='Bins', options=[], delete_button=True, placeholder='Click on bin map to add bins')
+    multi_choice_bins = pn.widgets.MultiChoice(name='Bins', options=['RESOLVED'], delete_button=True, placeholder='Click on bin map to add bins')
 
-    total_fit_options = pn.widgets.MultiChoice(name='Aperture Fits', options=['TOTAL_BIN', 'MAG_AUTO', 'MAG_BEST', 'MAG_ISO', 'MAG_APER_TOTAL', 'RESOLVED'], value=['TOTAL_BIN'], delete_button=True, placeholder='Select combined fits to show')
+    total_fit_options = pn.widgets.MultiChoice(name='Aperture Fits', options=['TOTAL_BIN', 'MAG_AUTO', 'MAG_BEST', 'MAG_ISO', 'MAG_APER_TOTAL'], value=['TOTAL_BIN'], delete_button=True, placeholder='Select combined fits to show')
 
     #which_run = pn.widgets.Select(name='Run', value=None, options=[])
     which_run_resolved = pn.widgets.Select(name='Resolved SED Fitting Run', value=None, options=[])

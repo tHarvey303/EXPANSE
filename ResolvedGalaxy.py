@@ -33,6 +33,7 @@ from astropy.wcs import WCS
 from astropy.io.misc.hdf5 import write_table_hdf5, read_table_hdf5
 # can write astropy to h5
 import copy
+import traceback
 import cmasher as cm
 import sys
 from tqdm import tqdm
@@ -43,6 +44,7 @@ import threading
 import time
 import sys
 import os
+import types
 # import Ellipse
 from matplotlib.patches import Ellipse
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
@@ -1049,6 +1051,7 @@ class ResolvedGalaxy:
         filter_wavs = {}
         filter_instruments = {}
         filter_ranges = {}
+        band_codes = {}
 
         done_band = False
         for facility in facilities:
@@ -1080,6 +1083,8 @@ class ResolvedGalaxy:
                                 
                             filter_wavs[band] = wav[0] * wav.unit
 
+                            band_codes[band] = svo_table[mask]['filterID'][0]
+
                             filter_ranges[band] = range 
             
         assert len(filter_wavs.keys()) == len(self.bands), f"Not all filters found {filter_wavs.keys()} vs {self.bands}"
@@ -1087,6 +1092,7 @@ class ResolvedGalaxy:
         self.filter_wavs = filter_wavs
         self.filter_ranges = filter_ranges
         self.filter_instruments = filter_instruments
+        self.band_codes = band_codes
 
     def get_star_stack_psf(self, match_band = None):
         '''Get the PSF kernel from a star stack'''
@@ -1609,20 +1615,21 @@ class ResolvedGalaxy:
     def __repr__(self):
         return self.__str__()
 
-    def plot_cutouts(self, bands = None, psf_matched = False, save = False, psf_type = None, save_path = None, show = False, facecolor='white'):
+    def plot_cutouts(self, bands=None, psf_matched=False, save=False, psf_type=None, save_path=None, show=False, facecolor='white', fig=None):
         '''Plot the cutouts for the galaxy'''
         if bands is None:
             bands = self.bands
+        nrows = len(bands) // 6 + (1 if len(bands) % 6 else 0)
+        ncols = min(6, len(bands))
 
-        nrows = len(self.bands)//6 + 1
-        fig, axes = plt.subplots(nrows, 6, figsize=(18, 4*nrows), sharex=True, sharey=True, facecolor=facecolor)
+        if fig is None:
+            raise ValueError("A figure must be provided.")
+
+        # Create axes within the figure
+        axes = fig.subplots(nrows, ncols, squeeze=False)
         axes = axes.flatten()
 
-        for i in range(len(self.bands), len(axes)):
-            fig.delaxes(axes[i])
-        
-
-        for i, band in enumerate(bands):
+        for i, (ax, band) in enumerate(zip(axes, bands)):
             if psf_matched:
                 if psf_type is None:
                     psf_type = self.use_psf_type
@@ -1632,15 +1639,25 @@ class ResolvedGalaxy:
                     data = self.unmatched_data[band]
                 else:
                     data = self.phot_imgs[band]
+            
             norm = simple_norm(data, stretch='log', max_percent=99.9)
-            axes[i].imshow(data, origin='lower', interpolation='none', norm=norm)
-            axes[i].text(0.9, 0.9, band, color='w', transform=axes[i].transAxes, ha='right', va='top', fontsize=12, fontweight='bold', path_effects=[PathEffects.Stroke(linewidth=2, foreground='black'), PathEffects.Normal()])
-            #axes[].imshow(self.rms_err_imgs[band], origin='lower', interpolation='none')
-            #axes[].set_title(f'{band} RMS Err')
-        plt.tight_layout()
-        plt.subplots_adjust(hspace=-0.55, wspace=0)
+            im = ax.imshow(data, origin='lower', interpolation='none', norm=norm)
+            ax.text(0.9, 0.9, band, color='w', transform=ax.transAxes, ha='right', va='top', 
+                    fontsize=12, fontweight='bold', path_effects=[PathEffects.Stroke(linewidth=2, foreground='black'), 
+                                                                PathEffects.Normal()])
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_aspect('equal', adjustable='box')
+
+        # Remove any unused subplots
+        for ax in axes[len(bands):]:
+            fig.delaxes(ax)
+
+        # Adjust spacing between subplots
+        fig.subplots_adjust(wspace=0, hspace=0)
+
         if save:
-            plt.savefig(save_path)
+            plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
         if show:
             plt.show()
         else:
@@ -1865,7 +1882,7 @@ class ResolvedGalaxy:
 
 
       
-    def plot_lupton_rgb(self, red = [], green = [], blue = [], q = 1, stretch = 1, use_psf_matched=False, override_psf_type = None, return_array = True, save = False, save_path = None, show = False,):
+    def plot_lupton_rgb(self, red = [], green = [], blue = [], q = 1, stretch = 1, use_psf_matched=False, override_psf_type = None, return_array = True, save = False, save_path = None, show = False, fig = None, ax = None, label_bands = False):
         '''Plot the galaxy in Lupton RGB'''
 
         if hasattr(self, 'use_psf_type') and override_psf_type is None:
@@ -1906,8 +1923,23 @@ class ResolvedGalaxy:
         if return_array:
             return rgb
         
-        plt.imshow(rgb, origin='lower')
-        self.plot_kron_ellipse(ax=plt.gca())
+        if fig is None:
+            fig = plt.figure(figsize = (8, 8))
+        if ax is None:
+            ax = fig.add_subplot(111)
+
+        ax.imshow(rgb, origin='lower')
+
+        # disable x and y ticks
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        self.plot_kron_ellipse(ax=ax, center=self.cutout_size/2, band='detection')
+        if label_bands:
+            ax.text(0.05, 0.95, f'{"+".join(red)}', color='red', transform=ax.transAxes, ha='left', va='top', fontsize=12, fontweight='bold', path_effects=[PathEffects.Stroke(linewidth=2, foreground='white'), PathEffects.Normal()])
+            ax.text(0.05, 0.85, f'{"+".join(green)}', color='green', transform=ax.transAxes, ha='left', va='top', fontsize=12, fontweight='bold', path_effects=[PathEffects.Stroke(linewidth=2, foreground='white'), PathEffects.Normal()])
+            ax.text(0.05, 0.75, f'{"+".join(blue)}', color='blue', transform=ax.transAxes, ha='left', va='top', fontsize=12, fontweight='bold', path_effects=[PathEffects.Stroke(linewidth=2, foreground='white'), PathEffects.Normal()])
+
         if save:
             plt.savefig(save_path)
         if show:
@@ -2072,7 +2104,7 @@ class ResolvedGalaxy:
         self.flux_map_path = flux_maps_fits
         self.img_process = img_process
 
-        meta_dict = {'stacked_bands':'+'.join(seg_combine), 'seg_type':seg_type}
+        meta_dict = {'stacked_bands':'+'.join(seg_combine), 'seg_type':seg_type, 'use_all_pixels':use_all_pixels, 'gal_region_use':gal_region_use}
         
         self.add_to_h5(galaxy_region, 'galaxy_region', 'pixedfit', meta=meta_dict, overwrite=overwrite)
         
@@ -2822,9 +2854,9 @@ class ResolvedGalaxy:
 
         return final
 
-    def plot_photometry_bins(self, binmap_type='pixedfit', bins_to_show='all', 
-                            wav_unit = u.um, flux_unit = u.uJy, marker_colors='black',
-                            save=False, save_path=None, show=True, facecolor='white'):
+    def plot_photometry_bins(self, binmap_type='pixedfit', bins_to_show='all', fig = None, ax = None,
+                            wav_unit = u.um, flux_unit = u.uJy, label_individual = False,
+                            save=False, save_path=None, show=True, facecolor='white', cmap_bins = 'nipy_spectral_r'):
 
         self.get_filter_wavs()
         #from galfind import Filter
@@ -2838,21 +2870,27 @@ class ResolvedGalaxy:
             psf_type = 'webbpsf'
 
         table = self.photometry_table[psf_type][binmap_type]
-        
-        fig = plt.figure(figsize=(8, 6), facecolor=facecolor, constrained_layout=True)
-        ax = fig.add_subplot(111)
+        if fig is None:
+            fig = plt.figure(figsize=(8, 6), facecolor=facecolor, constrained_layout=True)
+        if ax is None:
+            ax = fig.add_subplot(111)
         
         if bins_to_show == 'all':
             bins_to_show = np.unique(table['ID'])
 
-        if type(marker_colors) == str:
-            marker_colors = [marker_colors for i in range(len(bins_to_show))]
+        # Set up color map
+        map = self.pixedfit_map
+        cmap = plt.get_cmap(cmap_bins)
+        norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
+        colors = {i: cmap(norm(i)) for i in np.unique(map)}
+
+       
         colorss = []
         for i, rbin in enumerate(bins_to_show):
             mask = table['ID'] == rbin
             name = table['type'][mask][0]
             if name == 'TOTAL_BIN':
-                color = 'red'
+                color = 'black'
             if name == 'MAG_AUTO':
                 color = 'blue'
             if name  == 'MAG_ISO':
@@ -2860,18 +2898,41 @@ class ResolvedGalaxy:
             if name  == 'MAG_BEST':
                 color = 'orange'
             if name == 'MAG_APER_TOTAL':
-                color = 'aqua'
+                color = 'violet'
             if name.startswith('MAG_APER'):
                 color = 'purple'
             if name  == 'bin':
-                color = marker_colors[i]
+                color = colors[int(rbin)]
             
             for j, band in enumerate(self.bands):
                 flux = table[mask][band]
                 flux_err = table[mask][f'{band}_err']
                 wav = self.filter_wavs[band]
                 #print(wav, flux, flux_err)
-                ax.errorbar(wav.to(wav_unit), flux.to(flux_unit), yerr=flux_err.to(flux_unit), fmt='o', color=color, label = name if color not in colorss else '')
+                if flux_unit == u.ABmag:
+                    fnu_jy = flux.to(u.uJy, equivalencies=u.spectral_density(wav))
+                    fnu_jy_err = flux_err.to(u.uJy, equivalencies=u.spectral_density(wav))                 
+                    inner = fnu_jy/(fnu_jy-fnu_jy_err)
+                    err_up = 2.5 * np.log10(inner)
+                    err_low = 2.5 * np.log10(1+(fnu_jy_err/fnu_jy))
+                    yerr = [np.atleast_1d(np.abs(err_low)), np.atleast_1d(np.abs(err_up))]
+                    flux = flux.to(flux_unit, equivalencies=u.spectral_density(wav)).value
+                else:
+                    yerr = flux_err.to(flux_unit, equivalencies=u.spectral_density(wav)).value
+                    flux = flux.to(flux_unit, equivalencies=u.spectral_density(wav)).value
+
+                if label_individual:
+                    if name == 'bin':
+                        label = f'bin {rbin}'
+                    else:
+                        label = f'{rbin}'
+                else:
+                    label = name
+
+                label = label if color not in colorss else ''
+               
+
+                ax.errorbar(wav.to(wav_unit), flux, yerr=yerr, fmt='o', color=color, label = label, markeredgecolor='black')
                 colorss.append(color)
             # Plot the Bagpipes input
             tab = self.provide_bagpipes_phot(rbin)
@@ -2884,7 +2945,10 @@ class ResolvedGalaxy:
 
         ax.set_xlabel(f'Wavelength ({wav_unit})')
         ax.set_ylabel(f'Flux ({flux_unit})')
-        ax.legend()
+        if flux_unit == u.ABmag:
+            ax.invert_yaxis()
+        ax.legend(loc = 'lower right', frameon=False)
+
 
     def run_dense_basis(self, db_atlas_name, db_dir=db_dir, overwrite=False, use_emcee=False, emcee_samples=10000, plot = False):
         
@@ -2939,8 +3003,152 @@ class ResolvedGalaxy:
             # the physical parameters - stellar mass, SFR, tx, dust, metallicity and redshift
             sedfit.evaluate_posterior_percentiles()
     
+
+    def plot_filter_transmission(self, bands = 'all', fig = None, ax = None, label = True, wav_unit = u.um):
+
+        self.get_filter_wavs()
+
+        if fig is None:
+            fig = plt.figure(figsize=(8, 6))
+        if ax is None:
+            ax = fig.add_subplot(111)
+
+        if bands == 'all':
+            bands = self.bands
+
+        from astroquery.svo_fps import SvoFps
+
+        for band in bands:
+            try:
+                filter_name = self.band_codes[band]
+                filter_profile = SvoFps.get_transmission_data(filter_name)
+                wav = np.array(filter_profile["Wavelength"]) * u.Angstrom
+                trans = np.array(filter_profile["Transmission"])
+                ax.plot(wav.to(wav_unit),trans, label=band if label else '')
+            except FileNotFoundError:
+                pass
+
+        ax.set_xlabel(f'Wavelength ({wav_unit:latex})')
+        ax.set_ylabel('T$_{\lambda}$')
+        
+
+
+    def plot_overview(self, figsize = (12, 8), bands_to_show = ['F814W', 'F115W', 'F200W', 'F335M', 'F444W'], show = True, save = False):
+        # GridSpec
+
+        fig = plt.figure(figsize=figsize, dpi=200, facecolor='white', constrained_layout=True)
+        gs = fig.add_gridspec(3, 2, width_ratios=[1.9, 1], height_ratios=[1, 1, 1.5])
+
+        fig_sed = fig.add_subfigure(gs[0:2, 0])
+        fig_bins = fig.add_subfigure(gs[0:2, 1])
+        fig_cutouts = fig.add_subfigure(gs[2, :])
+
+        # SED - single ax
+        gs = fig_sed.add_gridspec(2, 1, height_ratios=[3, 1], hspace=-0.1)
+
+        ax_sed = fig_sed.add_subplot(gs[0])
+
+        # Plot SED
+        self.plot_photometry_bins(ax=ax_sed, fig = fig_sed, show = False, bins_to_show = ['TOTAL_BIN', 'MAG_APER_TOTAL', '1'], flux_unit = u.ABmag, label_individual = True)
+
+        ax_filt = fig_sed.add_subplot(gs[1])
+        # remove xticks and xticklabels from ax_sed
+        ax_sed.set_xticks([])
+        ax_sed.set_xticklabels([])
+        ax_sed.set_xlabel('')
+
+
+        self.plot_filter_transmission(bands = 'all', fig = fig_sed, ax = ax_filt, label = False, wav_unit = u.um)
+
+        ax_filt.spines['top'].set_visible(False)
+        ax_sed.spines['bottom'].set_alpha(0.2)
+        #
+
+        # Set ax_filt xlim to match ax_sed
+        ax_filt.set_xlim(ax_sed.get_xlim())
+        
+        ax_filt.set_ylim(0.01, None)
+        ax_filt.set_yticklabels('')
+        # ax_filt remove upper xticks
+        ax_filt.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
+        ax_filt.set_yticks([])
+
+
+        # Plot cutouts
+        self.plot_cutouts(fig = fig_cutouts, show = False, bands = bands_to_show + ['F444W'])
+
+        last_cutout_ax = fig_cutouts.axes[-1]
+        # Plot detection segmap
+        if self.det_data is not None:
+            arr = self.det_data['seg']
+        else:
+            arr = self.seg_imgs['F444W']
+
+        # Renormalize arr so unique values are 0, 1, 2, 3, ...
+        unique_vals = np.unique(arr)
+        for i, val in enumerate(unique_vals):
+            arr[arr == val] = i
+        arr[arr == 0] == np.nan
+
+        # remove everything from last_cutout_ax
+        last_cutout_ax.clear()
+        norm = last_cutout_ax.imshow(arr, origin='lower', interpolation='none', cmap='magma')
+        # write 'Det Seg' or 'F444W Seg' on the plot
+
+        last_cutout_ax.text(0.9, 0.9, 'Det Seg' if self.det_data is not None else 'F444W Seg', color='w', transform=last_cutout_ax.transAxes, ha='right', va='top', 
+                            fontsize=12, fontweight='bold', path_effects=[PathEffects.Stroke(linewidth=2, foreground='black'), 
+                                                                        PathEffects.Normal()])
+        last_cutout_ax.axis('off')
+
+                
+        # Cente
+        # Plot RGB and pixedfit in fig_bins - 2 rows
+        ax_rgb = fig_bins.add_subplot(211)
+        ax_pixedfit = fig_bins.add_subplot(212)
+        
+        self.plot_lupton_rgb(ax = ax_rgb, fig = fig_bins, show = False, red = ['F444W'], green = ['F356W'], blue = ['F200W'], return_array = False, stretch = 0.001, q = 0.001, label_bands = True)
+
+        # plot pixedfit
+        norm = ax_pixedfit.imshow(self.pixedfit_map, origin='lower', interpolation='none', cmap = 'nipy_spectral_r')  
+        # steal space from ax_pixedfit for colorbar
+        ax_divider = make_axes_locatable(ax_pixedfit)
+        
+        cax = ax_divider.append_axes('top', size='5%', pad='2%')
+        fig.colorbar(norm, cax=cax, orientation='horizontal')
+        #move colorbar ticks to top
+        cax.xaxis.set_ticks_position('top')
+        cax.xaxis.set_label_position('top')
+
+        ax_pixedfit.axis('off')
+
+        #fig.suptitle(f'Galaxy {self.galaxy_id} Overview')
+
+        # Add a table with galaxy name, redshift (eazy), number of bins 
+        props = dict(boxstyle='square', facecolor='white', alpha=0.5)
+        try:
+            z50 = self.meta_properties['zbest_fsps_larson_zfree']
+            z16 = self.meta_properties['zbest_16_fsps_larson_zfree']
+            z84 = self.meta_properties['zbest_84_fsps_larson_zfree']
+            if type(z84) in [list, np.ndarray]: z84 = z84[0]
+            if type(z16) in [list, np.ndarray]: z16 = z16[0]
+            error = f'$^{{+{z84-z50:.2f}}}_{{-{z50-z16:.2f}}}$'
+        except:
+            z50 = self.redshift
+            error = ''
+
+        textstr = f'Galaxy {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nNumber of bins: {len(np.unique(self.pixedfit_map))}'
+        fig.text(0.05, 0.46, textstr, transform=fig.transFigure, fontsize=14, verticalalignment='top', bbox=props)
+        textstr = f'RA: {self.sky_coord.ra.degree:.4f}\nDec: {self.sky_coord.dec.degree:.4f}\nCutout size: {self.cutout_size} pix'
+        fig.text(0.5, 0.46, textstr, transform=fig.transFigure, fontsize=14, verticalalignment='top', bbox=props)
+
+        if save:
+            fig.savefig(f'galaxies/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png', dpi=200)
+
+
+        return fig
+
     def run_bagpipes(self, bagpipes_config, filt_dir = bagpipes_filter_dir, fit_photometry = 'all',
-    run_dir = f'pipes/', overwrite=False):
+    run_dir = f'pipes/', overwrite=False, overwrite_internal = False):
         #meta - run_name, use_bpass, redshift (override)
         assert type(bagpipes_config) == dict, "Bagpipes config must be a dictionary" # Could load from a file as well
         meta = bagpipes_config.get('meta', {})
@@ -3027,11 +3235,12 @@ class ResolvedGalaxy:
         if hasattr(self, 'sed_fitting_table'):
             if 'bagpipes' in self.sed_fitting_table.keys():
                 if run_name in self.sed_fitting_table['bagpipes'].keys():
-                    if not overwrite:
+                    if overwrite or overwrite_internal:
+                        print(f'Overwriting run {run_name}')
+                    else:
                         print(f'Run {run_name} already exists')
                         return
-                    else:
-                        print(f'Overwriting run {run_name}')
+                    
 
         flux_table = self.photometry_table[psf_type][binmap_type]
         if fit_photometry == 'all':
@@ -3084,7 +3293,7 @@ class ResolvedGalaxy:
 
         existing_files = []
         for i in [out_subdir, out_subdir_encoded]:
-            for j in ['posterior', 'plots', 'seds']:
+            for j in ['posterior']:
                 path = f'{run_dir}/{j}/{i}'
                 os.makedirs(path, exist_ok=True)
                 os.chmod(path, 0o777)
@@ -3105,9 +3314,11 @@ class ResolvedGalaxy:
         for file in existing_files:
             if out_subdir_encoded in file:
                 new_file = file.replace(out_subdir_encoded, out_subdir)
+                # If encoded file path, check if the new file exists and if not, rename
                 if not os.path.exists(new_file):
                     os.rename(file, new_file)
                 else:
+                    # If it does exist, remove the file if we are overwriting
                     if overwrite:
                         os.remove(new_file)
                         os.rename(file, new_file)
@@ -3132,7 +3343,7 @@ class ResolvedGalaxy:
 
         if np.any(mask == 1):
             # Rename the out_subdir to out_subdir_encoded
-            for i in ['posterior', 'plots', 'seds']:
+            for i in ['posterior']:
                 path = f'{run_dir}/{i}/{out_subdir}'
                 new_path = f'{run_dir}/{i}/{out_subdir_encoded}'
                 os.rename(path, new_path)
@@ -3142,12 +3353,13 @@ class ResolvedGalaxy:
             nrun_name = f'{run_dir}/cats/{out_subdir_encoded}.fits'
             if os.path.exists(path) and not os.path.exists(nrun_name):
                 os.rename(path, nrun_name)
+
             
         if not exist_already:
             fit_cat = pipes.fit_catalogue(ids, fit_instructions, self.provide_bagpipes_phot,
                                         spectrum_exists=False, photometry_exists=True, run=out_subdir_encoded,
                                         make_plots=False, cat_filt_list=nircam_filts, redshifts = redshifts,
-                                        redshift_sigma = redshift_sigma,
+                                        redshift_sigma = redshift_sigma, save_pdf_txts = False, 
                                         full_catalogue=True) #analysis_function=custom_plotting,
             print('Beginning fit')
             print(fit_instructions)
@@ -3156,7 +3368,7 @@ class ResolvedGalaxy:
             fit_cat.fit(verbose=False, mpi_serial = True, sampler = sampler)
 
         # Move files to the correct location
-        for i in ['posterior', 'plots', 'seds']:
+        for i in ['posterior']:
             new_path = f'{run_dir}/{i}/{out_subdir}'
             current_path = f'{run_dir}/{i}/{out_subdir_encoded}'
             # Make parent directory
@@ -3281,6 +3493,8 @@ class ResolvedGalaxy:
         for rbin, color, in zip(bins_to_show, colors):
             h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5'
 
+            if rbin == 'RESOLVED':
+                continue
             
             pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
            
@@ -3333,6 +3547,9 @@ class ResolvedGalaxy:
             cache = {}
         for rbin, color, in zip(bins_to_show, marker_colors):
             h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5'
+
+            if rbin == 'RESOLVED':
+                continue
 
             pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
 
@@ -3401,26 +3618,31 @@ class ResolvedGalaxy:
                             if pos == 0:
                                 x_all = tx
                                 y_all = tsfh
-                                set = True
                             else:
                                 assert np.all(x_all == tx), "Time scales do not match"
                                 y_all = np.sum([y_all, tsfh], axis=0)
-                                set = True
                             
-                        except ValueError: 
+                            set = True
+                            
+                        except ValueError as e:
+                            print('error!')
+                            print(run_name, tbin)
+                            print(e)
+                            print(traceback.format_exc())
+                            #  
                             pass
                         
                     if set:
                         axes.plot(x_all, y_all[:, 1], color='tomato', label='RESOLVED', lw = 2)
                         axes.fill_between(x_all, y_all[:, 0], y_all[:, 2], color='tomato', alpha=0.5)
 
-                    # Save resolved SFH
+                        # Save resolved SFH
 
-                    save_array = np.vstack((x_all, y_all[:, 0], y_all[:, 1], y_all[:, 2])).T
-                    self.add_to_h5(save_array, 'resolved_sfh', run_name, overwrite=True)
-                    if self.resolved_sfh is None:
-                        self.resolved_sfh = {}
-                    self.resolved_sfh[run_name] = save_array
+                        save_array = np.vstack((x_all, y_all[:, 0], y_all[:, 1], y_all[:, 2])).T
+                        self.add_to_h5(save_array, 'resolved_sfh', run_name, overwrite=True)
+                        if self.resolved_sfh is None:
+                            self.resolved_sfh = {}
+                        self.resolved_sfh[run_name] = save_array
 
                 
                 plt.close(dummy_fig)
@@ -3888,6 +4110,10 @@ class ResolvedGalaxy:
         
         
         for rbin in bins_to_show:
+
+            if rbin == 'RESOLVED':
+                continue
+
             pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
             
             bin_number = True
@@ -4213,7 +4439,7 @@ class ResolvedGalaxy:
             bins_to_show = bins_to_show
 
         for pos, rbin in enumerate(bins_to_show):
-
+            print('rbin', rbin)
             if rbin == 'RESOLVED':
                 total_flux, total_wav = self.get_resolved_bagpipes_sed(run_name, run_dir = run_dir, plotpipes_dir = plotpipes_dir)
                 ax_sed.plot(total_wav, total_flux, label='Resolved', color='black')
@@ -5810,6 +6036,29 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         return fig
 
 
+class MethodForwardingMeta(type):
+    def __new__(cls, name, bases, attrs):
+        def create_forwarding_method(method_name):
+            def forwarding_method(self, *args, **kwargs):
+                results = []
+                for obj in self.objects:
+                    if hasattr(obj, method_name):
+                        method = getattr(obj, method_name)
+                        results.append(method(*args, **kwargs))
+                return results
+            return forwarding_method
+
+        new_class = super().__new__(cls, name, bases, attrs)
+        
+        # Get methods from the contained class
+        contained_class = attrs.get('contained_class', None)
+        print('contained_class', contained_class)
+        if contained_class:
+            for method_name in dir(contained_class):
+                if not method_name.startswith('__') and isinstance(getattr(contained_class, method_name), types.FunctionType):
+                    setattr(new_class, method_name, create_forwarding_method(method_name))
+        
+        return new_class
 
 
 
@@ -5818,6 +6067,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
 class MultipleResolvedGalaxy:
     def __init__(self, list_of_galaxies):
+        contained_class = list_of_galaxies[0].__class__
+       
         self.galaxies = list_of_galaxies
 
     @classmethod
@@ -5916,15 +6167,19 @@ class MultipleResolvedGalaxy:
 
         return fig
 
-    
     # Run any function on all galaxies
     def run_function(self, function, *args, **kwargs):
         for galaxy in self.galaxies:
             if type(function) == str:
-                function = getattr(galaxy, function)
-            function(*args, **kwargs)
+                rfunction = getattr(galaxy, function)
+            else:
+                rfunction = function
+            rfunction(*args, **kwargs)
 
-def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field = 'JOF_psfmatched', version = 'v11', overwrite = False):
+def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field = 'JOF_psfmatched', version = 'v11', overwrite = False, overwrite_internal = False):
+        #print('Doing', galaxy_id, resolved_dict['meta']['run_name'], overwrite, overwrite_internal)
+        # return
+        
         try:
             if 'mock' in galaxy_id:
                 galaxy = MockResolvedGalaxy.init(galaxy_id = galaxy_id, mock_survey = field, mock_version = version, cutout_size = cutout_size, h5_folder = h5_folder)
@@ -5932,7 +6187,7 @@ def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field
                 galaxy = ResolvedGalaxy.init(galaxy_id, field, version, cutout_size = cutout_size, h5_folder = h5_folder)
 
             # Run bagpipes
-            galaxy.run_bagpipes(resolved_dict, overwrite = overwrite)
+            galaxy.run_bagpipes(resolved_dict, overwrite = overwrite, overwrite_internal = overwrite_internal)
 
             if resolved_dict['meta']['fit_photometry'] in ['bin', 'all']:
                 print(f'Adding resolved properties to .h5 for {galaxy.galaxy_id}')
@@ -5946,9 +6201,9 @@ def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field
 
             return galaxy
 
-
-        except FileNotFoundError as e:
+        except Exception as e:
             print(f'Error in {galaxy_id}: {e}')
+            print(traceback.format_exc())
             return None
 
 
@@ -5957,8 +6212,8 @@ if __name__ == "__main__":
         catalog_path_selected = '/nvme/scratch/work/tharvey/resolved_sedfitting/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits'
         cat_selected = Table.read(catalog_path_selected)
         ids = cat_selected['NUMBER']
-        cutout_size = cat_selected['CUTOUT_SIZE'][:10]
-        ids = ids[:10] # For testing
+        cutout_size = cat_selected['CUTOUT_SIZE'][10:]
+        ids = ids[10:] # For testing
         overwrite = False
         h5_folder = 'galaxies/'
     elif computer == 'singularity':
@@ -5967,85 +6222,13 @@ if __name__ == "__main__":
         h5_folder = '/mnt/galaxies/'
         cutout_size = None # Not used when loading from h5
     
+
     galaxies = ResolvedGalaxy.init(list(ids), 'JOF_psfmatched', 'v11', already_psf_matched = True, cutout_size = cutout_size, h5_folder = h5_folder)
     # Should speed it up?
     
-    # Initial model for photo-z 
-    sfh = {} # double-power-law
-    '''
-    sfh_type = 'dblplaw'
-                   
-    sfh["tau"] = (0., 15.)                # Vary the time of peak star-formation between
-                                            # the Big Bang at 0 Gyr and 15 Gyr later. In 
-                                            # practice the code automatically stops this
-                                            # exceeding the age of the universe at the 
-                                            # observed redshift.
-
-    sfh["tau_prior"] = 'uniform'         # Impose a prior which is uniform in log_10 of the
-    if sfh["tau"][0] == 0 and sfh["tau_prior"] == 'log_10':
-        sfh["tau"][0] = 0.01
-
-    sfh["alpha"] = (0.01, 1000.)          # Vary the falling power law slope from 0.01 to 1000.
-    sfh["beta"] = (0.01, 1000.)           # Vary the rising power law slope from 0.01 to 1000.
-    sfh["alpha_prior"] = "log_10"         # Impose a prior which is uniform in log_10 of the 
-    sfh["beta_prior"] = "log_10"          # parameter between the limits which have been set 
-                                            # above as in Carnall et al. (2017).
-    sfh["massformed"] = (5., 12.)
-    sfh['metallicity'] = (0, 3)
-    '''
-    sfh_type = 'delayed'
-    sfh["tau"] = (0.01, 15) # `Gyr`
-    sfh["massformed"] = (5., 12.)  # Log_10 total stellar mass formed: M_Solar
-
-    sfh["age"] = (0.001, 15) # Gyr
-    sfh['age_prior'] = 'uniform'
-    sfh['metallicity_prior'] = 'uniform'
-    sfh['metallicity'] = (0, 3)
-
-    
-    dust = {}
-    dust["type"] = "Calzetti"
-    dust["Av"] = (0, 5.0)
-
-    nebular = {}
-    nebular["logU"] = (-3.0, -1.0)
-
-    fit_instructions = {"t_bc":0.01,
-                    sfh_type:sfh,
-                    "nebular":nebular,
-                    "dust":dust}
-
-    meta = {'run_name':'photoz_delayed', 'redshift':'eazy', 'redshift_sigma':'eazy',
-            'min_redshift_sigma':0.5, 'fit_photometry':'TOTAL_BIN+MAG_APER_TOTAL',
-            'sampler':'multinest'}
-
-    overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
-
-    dicts = [copy.deepcopy(overall_dict) for i in range(len(galaxies))]
-
-    resolved_sfh = {
-    'age_max': (0.01, 2.5), # Gyr 
-    'age_min': (0, 2.5), # Gyr
-    'metallicity': (1e-3, 2.5), # solar
-    'massformed': (4, 12), # log mstar/msun
-    }
-
-    fit_instructions = {"t_bc":0.01,
-                    "constant":resolved_sfh,
-                    "nebular":nebular,
-                    "dust":dust,  
-                    }
-    # This means that we are fixing the photo-z to the results from the 'photoz_DPL' run,
-    # specifically the 'MAG_APER_TOTAL' photometry
-    # We are fitting only the resolved photometry in the 'TOTAL_BIN' bins
-    meta = {'run_name':'CNST_SFH_RESOLVED', 'redshift':'photoz_delayed', 'redshift_id':'MAG_APER_TOTAL',
-            'fit_photometry':'bin'}
-    resolved_dict = {'meta': meta, 'fit_instructions': fit_instructions}
-    resolved_dicts = [copy.deepcopy(resolved_dict) for i in range(len(galaxies))]
-
     cat = None
     num_of_bins = 0
-    initial_load = False # Set to True if you want to load the data from the catalogue
+    initial_load = True # Set to True if you want to load the data from the catalogue
     if rank == 0 and initial_load:
         for posi, galaxy in enumerate(galaxies):
 
@@ -6060,21 +6243,23 @@ if __name__ == "__main__":
             galaxy.add_detection_data(overwrite = overwrite)
 
             # Plot segmentation stamps
-            fig = galaxy.plot_seg_stamps()
-            fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
-            plt.close()
+            #fig = galaxy.plot_seg_stamps()
+            #fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
+            #plt.close()
             # Currently set to use segmentation map from detection image. May change this in future. 
             if galaxy.gal_region is None or overwrite:
                 galaxy.pixedfit_processing(gal_region_use = 'detection', overwrite = overwrite) # Maybe seg map should be from detection image?
 
-                fig = galaxy.plot_gal_region()
-                fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
-                plt.close()
+                #fig = galaxy.plot_gal_region()
+                #fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
+                #plt.close()
             if galaxy.pixedfit_map is None or overwrite:
                 galaxy.pixedfit_binning(overwrite = overwrite)
 
             if galaxy.photometry_table is None or overwrite:
                 galaxy.measure_flux_in_bins(overwrite = overwrite)
+
+            galaxy.overview_plot(save = True)
 
             num_of_bins += galaxy.get_number_of_bins()
 
@@ -6082,8 +6267,19 @@ if __name__ == "__main__":
         # Run Bagpipes in parallel
 
 
+    sys.path.insert(1, 'pipes_scripts/')
+    from plotpipes import calculate_bins
+    from pipes_models import delayed_dict, continuity_dict, dpl_dict, lognorm_dict, resolved_dict, create_dicts
 
-    for run_dicts in [dicts, resolved_dicts]:
+    override_meta = {'redshift':'eazy', 'redshift_sigma':'eazy'}
+    delayed_dicts = create_dicts(delayed_dict, override_meta = override_meta)
+    continuity_dicts = create_dicts(continuity_dict, override_meta = override_meta)
+    dpl_dicts = create_dicts(dpl_dict, override_meta = override_meta)
+    lognorm_dicts = create_dicts(lognorm_dict, override_meta = override_meta)
+    resolved_dicts = create_dicts(resolved_dict)
+
+    # Not fitting resolved yet
+    for run_dicts in [delayed_dicts, continuity_dicts, dpl_dicts, lognorm_dicts]:
         size = 1
         if size >= 2:
             # This option for running by with mpirun/mpiexec

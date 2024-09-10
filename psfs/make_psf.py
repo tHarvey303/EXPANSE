@@ -1731,35 +1731,40 @@ if __name__ == '__main__':
     err_paths = copy(im_paths) # Placeholder
     phot_zp = {band:28.08 for band in bands}
   
-    '''
     # Add HST seperately
     # Reset
     # For Nathan
     # Special case for nathan
-    name = 'L1_NEP-2_HST'
-    outdir = f'/nvme/scratch/work/tharvey/PSFs/{name}/'
-    bands = []
-    match_band = None
-    im_paths, wht_paths, err_paths, phot_zp = {}, {}, {}, {}
-    bands.insert(0, 'F606W')
-    psf_mask = '/nvme/scratch/work/tharvey/catalogs/regions/L1_NEP-2_HSTPSF_Mask.reg'
-    use_psf_masks = {'F606W':[psf_mask]} # None
-    im_paths['F606W'] = ['/raid/scratch/data/hst/NEP-2/ACS_WFC/30mas/ACS_WFC_F606W_NEP-2_drz.fits']
-    wht_paths['F606W'] = ['/raid/scratch/data/hst/NEP-2/ACS_WFC/30mas/ACS_WFC_F606W_NEP-2_wht.fits']
-    err_paths['F606W'] = ['']
-    band = 'F606W'
-    try:
-        hdr = fits.getheader(im_paths[band][0], ext=0)
-        if 'ZEROPNT' in hdr:
-            phot_zp[band] = hdr['ZEROPNT']
-        else:
-            phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
-    except KeyError:
-        hdr = fits.getheader(im_paths[band][0], ext=1)
-        phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
 
-    '''
+    for name in ['L5_NEP-2_HST', 'L15_NEP-3_HST', 'L8_NEP-1_HST', 'L7_NEP-1_HST', 'L6_NEP-4_HST','L4_NEP-2_HST']:
+
+        #name = 'L1_NEP-2_HST'
+        outdir = f'/nvme/scratch/work/tharvey/PSFs/{name}/'
+        bands = []
+        match_band = None
+        im_paths, wht_paths, err_paths, phot_zp = {}, {}, {}, {}
+        bands.insert(0, 'F606W')
+        psf_mask = f'/nvme/scratch/work/tharvey/catalogs/regions/{name}PSF_Mask.reg'
+        use_psf_masks = {'F606W':[psf_mask]} # None
+        field = name.split('_')[1]
+        im_paths['F606W'] = [f'/raid/scratch/data/hst/{field}/ACS_WFC/30mas/ACS_WFC_F606W_{field}_drz.fits']
+        wht_paths['F606W'] = [f'/raid/scratch/data/hst/{field}/ACS_WFC/30mas/ACS_WFC_F606W_{field}_wht.fits']
+        err_paths['F606W'] = ['']
+        band = 'F606W'
+        try:
+            hdr = fits.getheader(im_paths[band][0], ext=0)
+            if 'ZEROPNT' in hdr:
+                phot_zp[band] = hdr['ZEROPNT']
+            else:
+                phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+        except KeyError:
+            hdr = fits.getheader(im_paths[band][0], ext=1)
+            phot_zp[band] = -2.5 * np.log10(hdr["PHOTFLAM"]) - 21.10 - 5 * np.log10(hdr["PHOTPLAM"]) + 18.6921
+        
+        make_psf(bands, im_paths, outdir, kernel_dir, match_band = match_band, phot_zp = phot_zp, maglim=maglim, use_psf_masks=use_psf_masks, manual_id_remove = manual_id_remove, sigma=3.5, psf_fov = psf_fov, pypher_r = 1e-4)
     
+    crash_here
+        
     #bands = []
     for band in ['F850LP', 'F814W', 'F775W', 'F606W', 'F435W']:
         bands.insert(0, band)

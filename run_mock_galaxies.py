@@ -7,6 +7,7 @@ import astropy.units as u
 import sys
 sys.path.insert(1, 'pipes_scripts/')
 from plotpipes import calculate_bins
+from pipes_models import delayed_dict, continuity_dict, dpl_dict, lognorm_dict, resolved_dict, create_dicts
 
 
 if __name__ == "__main__":
@@ -27,96 +28,6 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------------------------- 
     # Setting up two Bagpipes fits - one for the unresolved photometry (delayed SFH) and one for the resolved photometry (constant SFH)
     # -------------------------------------------------------------------------------------
-    # First fit
-    sfh = {}
-    sfh_type = 'delayed'
-    sfh["tau"] = (0.01, 15) # `Gyr`
-    sfh["massformed"] = (5., 12.)  # Log_10 total stellar mass formed: M_Solar
-
-    sfh["age"] = (0.001, 15) # Gyr
-    sfh['age_prior'] = 'uniform'
-    sfh['metallicity_prior'] = 'uniform'
-    sfh['metallicity'] = (0, 3)
-
-    dust = {}
-    dust["type"] = "Calzetti"
-    dust["Av"] = (0, 5.0)
-
-    nebular = {}
-    nebular["logU"] = (-3.0, -1.0)
-
-    fit_instructions = {"t_bc":0.01,
-                    sfh_type:sfh,
-                    "nebular":nebular,
-                    "dust":dust}
-
-    meta = {'run_name':'photoz_delayed', 'redshift':'self', 'redshift_sigma':'min',
-            'min_redshift_sigma':0.5, 'fit_photometry':'TOTAL_BIN',
-            'sampler':'multinest'}
-
-    overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
-
-    dicts = [copy.deepcopy(overall_dict) for i in range(num_of_galaxies)]
-
-    # -------------------------------------------------------------------------------------
-    # Second fit
-    sfh = 'continuity'
-    continuity = {}
-	continuity["massformed"] = (5., 12.)  # Log_10 total stellar mass formed: M_Solar   
-    continuity['metallicity'] = (0, 3)
-	cont_nbins = 6
-    first_bin = 10 * u.Myr
-    second_bin = None
-	continuity['bin_edges'] = list(calculate_bins(redshift = 8, num_bins=cont_nbins, first_bin=first_bin, second_bin=second_bin, return_flat=True, output_unit='Myr', log_time=False))
-	scale = 0
-	if sfh == 'continuity':
-		scale = 0.3
-	if sfh == 'continuity_bursty':
-		scale = 1.0
-
-	for i in range(1, len(continuity["bin_edges"])-1):
-		continuity["dsfr" + str(i)] = (-10., 10.)
-		continuity["dsfr" + str(i) + "_prior"] = "student_t"
-		continuity["dsfr" + str(i) + "_prior_scale"] = scale  # Defaults to this value as in Leja19, but can be set
-		continuity["dsfr" + str(i) + "_prior_df"] = 2       # Defaults to this value as in Leja19, but can be set
-    
-    fit_instructions = {"t_bc":0.01,
-                    'continuity':continuity,
-                    "nebular":nebular,
-                    "dust":dust}
-    
-    meta = {'run_name':'photoz_continuity', 'redshift':'self', 'redshift_sigma':'min',
-            'min_redshift_sigma':0.5, 'fit_photometry':'TOTAL_BIN',
-            'sampler':'multinest'}
-
-    overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
-
-    continuity_dicts = [copy.deepcopy(overall_dict) for i in range(num_of_galaxies)]
-
-    # -------------------------------------------------------------------------------------
-
-    # Third fit
-
-    resolved_sfh = {
-    'age_max': (0.01, 2.5), # Gyr 
-    'age_min': (0, 2.5), # Gyr
-    'metallicity': (1e-3, 2.5), # solar
-    'massformed': (4, 12), # log mstar/msun
-    }
-
-    fit_instructions = {"t_bc":0.01,
-                    "constant":resolved_sfh,
-                    "nebular":nebular,
-                    "dust":dust,  
-                    }
-    # This means that we are fixing the photo-z to the results from the 'photoz_DPL' run,
-    # specifically the 'MAG_APER_TOTAL' photometry
-    # We are fitting only the resolved photometry in the 'TOTAL_BIN' bins
-    meta = {'run_name':'CNST_SFH_RESOLVED', 'redshift':'photoz_delayed', 'redshift_id':'TOTAL_BIN',
-            'fit_photometry':'bin'}
-
-    resolved_dict = {'meta': meta, 'fit_instructions': fit_instructions}
-    resolved_dicts = [copy.deepcopy(resolved_dict) for i in range(num_of_galaxies)]
     
     redshifts=[]
     for redshift_code in list(regions.keys())[::-1]:
@@ -136,21 +47,28 @@ if __name__ == "__main__":
                 print(f'Failed on {redshift_code} galaxy {galaxy_index}')
                 continue
     
+    continuity_dicts = create_dicts(continuity_dict, len(run_ids))
+    delayed_dicts = create_dicts(delayed_dict, len(run_ids))
+    dpl_dicts = create_dicts(dpl_dict, len(run_ids))
+    lognorm_dicts = create_dicts(lognorm_dict, len(run_ids))
+    resolved_dicts = create_dicts(resolved_dict, len(run_ids))
+
     # Update continuity_dicts_bins
     for pos, dict in enumerate(continuity_dicts):
-        continuity_dicts[pos]['fit_instructions']['continuity']['bin_edges'] = list(calculate_bins(redshift = redshifts[pos], num_bins=cont_nbins, first_bin=first_bin, second_bin=second_bin, return_flat=True, output_unit='Myr', log_time=False))
+        continuity_dicts[pos]['fit_instructions']['continuity']['bin_edges'] = list(calculate_bins(redshift = redshifts[pos], num_bins=6, first_bin=10*u.Myr, second_bin=None, return_flat=True, output_unit='Myr', log_time=False))
     
-    total_dicts = dicts + continuity_dicts + resolved_dicts
-    run_ids = run_ids + run_ids + run_ids
-
-    Parallel(n_jobs=n_jobs)(delayed(run_bagpipes_wrapper)(galaxy_id, 
-                                                            resolved_dict, 
-                                                            cutout_size = None, # PLACEHOLDER, not used
-                                                            overwrite = True,
-                                                            h5_folder=h5_folder) 
-                                            for galaxy_id, resolved_dict in zip(run_ids, total_dicts))
      
+    # Doesn't preserve order otherwise - can't guarantee they will be run in the input order
+    for dict in [delayed_dicts, continuity_dicts, dpl_dicts, lognorm_dicts, resolved_dicts]:
+        Parallel(n_jobs=n_jobs)(delayed(run_bagpipes_wrapper)(galaxy_id, 
+                                                                dic, 
+                                                                cutout_size = None, # PLACEHOLDER, not used
+                                                                overwrite = False,
+                                                                overwrite_internal = True if dic['meta']['run_name'] == 'CNST_SFH_RESOLVED' else False,
+                                                                h5_folder=h5_folder) 
+                                                for galaxy_id, dic in zip(run_ids, dict))
         
+            
 
 
-        
+            
