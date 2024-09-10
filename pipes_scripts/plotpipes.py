@@ -69,6 +69,38 @@ import sys
 import subprocess
 
 
+def calculate_bins(redshift, redshift_sfr_start=20, log_time=True, output_unit = 'yr', return_flat = False, num_bins=6, first_bin=10*u.Myr, second_bin=None, cosmo = FlatLambdaCDM(H0=70, Om0=0.3, Tcmb0=2.725)):
+    time_observed = cosmo.lookback_time(redshift)
+    time_sfr_start = cosmo.lookback_time(redshift_sfr_start)
+    time_dif = abs(time_observed - time_sfr_start)
+    if second_bin is not None:
+        assert second_bin > first_bin, "Second bin must be greater than first bin"
+
+    if second_bin is None:
+        diff = np.linspace(np.log10(first_bin.to(output_unit).value), np.log10(time_dif.to(output_unit).value), num_bins)
+    else:
+        diff = np.linspace(np.log10(second_bin.to(output_unit).value), np.log10(time_dif.to(output_unit).value), num_bins-1)
+    
+    if not log_time:
+        diff = 10**diff
+
+    if return_flat:
+        if second_bin is None:
+            return np.concatenate(([0],diff))
+        else:
+            if log_time:
+                return np.concatenate([[0, np.log10(first_bin.to(output_unit).value)], diff])
+            else:
+                return np.concatenate([[0, first_bin.to(output_unit).value], diff])
+    bins = []
+    bins.append([0, np.log10(first_bin.to('year').value) if log_time else first_bin.to('year').value])
+    if second_bin is not None:
+        bins.append([np.log10(first_bin.to('year').value) if log_time else first_bin.to('year').value, np.log10(second_bin.to('year').value) if log_time else second_bin.to('year').value])
+     
+    for i in range(1, len(diff)):
+        bins.append([diff[i-1], diff[i]])
+    
+    return  bins
 
 flexoki_colors = ["#D14D41", "#DA702C", "#D0A215", "#879A39", "#3AA99F", "#4385BE", "#8B7EC8", "#CE5D97"]
 #try:
@@ -387,7 +419,7 @@ class PipesFit:
             print('Adding excluded bands to name.')
             self.name += f' Exclude: {self.excluded_bands.replace("_", " ")}'
         
-
+        
         #print(self.name)
         try:
             shutil.rmtree(temp_file.parent)
@@ -536,7 +568,7 @@ class PipesFit:
         else:
             redshift = self.fit.fitted_model.model_components["redshift"]
         wavs_aa = self.fit.posterior.model_galaxy.wavelengths*(1.+redshift) * u.AA
-        
+
         spec_post = np.percentile(self.fit.posterior.samples["spectrum_full"],
                                         (16, 50, 84), axis=0).T
 
@@ -559,7 +591,8 @@ class PipesFit:
         wavs = wavs_aa.to(wav_units).value
 
         if return_flux:
-            return wavs, flux
+            # Return the median fluxes
+            return wavs, flux[:, 1]
 
         ax.plot(wavs, flux[:, 1], lw=lw, color=colour, alpha=0.7, zorder=zorder, label = label, **kwargs)
         if fill_uncertainty:

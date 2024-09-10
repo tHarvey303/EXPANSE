@@ -367,7 +367,7 @@ class ResolvedGalaxy:
                 cutout_size = 64, photometry_properties = None, photometry_meta_properties = None, total_photometry = None,
                 dont_psf_match_bands = [], already_psf_matched = False, auto_photometry = None, flux_map = None, redshift = None,
                 unmatched_data = None, unmatched_rms_err = None, unmatched_seg = None, meta_properties = None, det_data = None,
-                resolved_mass = None,
+                resolved_mass = None, resolved_sfh = None, resolved_sed = None,
                 h5_folder = 'galaxies/', 
                 psf_kernel_folder = 'psfs/kernels/', 
                 psf_folder = 'psfs/psf_models/',
@@ -449,6 +449,8 @@ class ResolvedGalaxy:
         self.psfs_meta = psfs_meta
         # print(len(psfs_meta))
         self.resolved_mass = resolved_mass
+        self.resolved_sfh = resolved_sfh
+        self.resolved_sed = resolved_sed
 
         self.binned_flux_map = binned_flux_map
         self.binned_flux_err_map = binned_flux_err_map
@@ -1019,7 +1021,8 @@ class ResolvedGalaxy:
                     'redshift': redshift, 'flux_map': flux_map, 'photometry_properties': photometry_properties, 'photometry_meta_properties': photometry_meta_properties,
                     'already_psf_matched': already_psf_matched, 'dont_psf_match_bands': dont_psf_match_bands, 'auto_photometry': auto_photometry,
                     'unmatched_data': unmatched_data, 'unmatched_rms_err': unmatched_rms_err, 'unmatched_seg': unmatched_seg, 'meta_properties': meta_properties,
-                    'det_data': det_data, 'total_photometry': total_photometry, 'resolved_mass': resolved_mass, 'cutout_size': cutout_size, 'h5_folder': h5_folder, 'psf_kernels': psf_kernels}
+                    'det_data': det_data, 'total_photometry': total_photometry, 'resolved_mass': resolved_mass, 'resolved_sfh': resolved_sfh, 'resolved_sed': resolved_sed,
+                    'cutout_size': cutout_size, 'h5_folder': h5_folder, 'psf_kernels': psf_kernels}
 
         if return_attr:
             return out_dict
@@ -1224,204 +1227,213 @@ class ResolvedGalaxy:
         else:
             append = ''
         new_h5_path = self.h5_path.replace('.h5', f'{append}.h5')
-        hfile = h5.File(new_h5_path, 'w')
-        #print('append is', append)
-
-        groups = ['meta', 'paths', 'raw_data', 'aperture_photometry', 'auto_photometry', 'headers', 'bin_maps', 'bin_fluxes', 'bin_flux_err']
-        for group in groups:
-            hfile.create_group(group) 
-
-        hfile['meta'].create_dataset('galaxy_id', data=str(self.galaxy_id), dtype=str_dt)
-        hfile['meta'].create_dataset('survey', data=self.survey, dtype=str_dt)
-        hfile['meta'].create_dataset('redshift', data=self.redshift)
-        if self.sky_coord is not None:
-            hfile['meta'].create_dataset('sky_coord', data=self.sky_coord.to_string(style='decimal', precision=8), dtype=str_dt)
-        hfile['meta'].create_dataset('bands', data=str(list(self.bands)), dtype=str_dt)
-        hfile['meta'].create_dataset('cutout_size', data=self.cutout_size)
-        hfile['meta'].create_dataset('zps', data=str(self.im_zps), dtype=str_dt)
-        hfile['meta'].create_dataset('pixel_scales', data=str({band:str(scale)
-            for band, scale in self.im_pixel_scales.items()}), dtype=str_dt)
-        hfile['meta'].create_dataset('phot_pix_unit', data=str({band:str(pix_unit) 
-            for band, pix_unit in self.phot_pix_unit.items()}), dtype=str_dt)
-        hfile['meta'].create_dataset('dont_psf_match_bands', data=str(self.dont_psf_match_bands), dtype=str_dt)
-        hfile['meta'].create_dataset('already_psf_matched', data=str(self.already_psf_matched), dtype=str_dt)
-        hfile['meta'].create_dataset('detection_band', data=self.detection_band, dtype=str_dt)
-        hfile['meta'].create_dataset('galfind_version', data=self.galfind_version, dtype=str_dt)
-        if self.meta_properties is not None:
-            hfile['meta'].create_group('meta_properties')
-            for prop in self.meta_properties.keys():
-                hfile['meta']['meta_properties'].create_dataset(prop, data=str(self.meta_properties[prop]), dtype=str_dt)
-    
-        if self.auto_photometry is not None:
-            hfile['auto_photometry'].create_dataset('auto_photometry', data=str(self.auto_photometry), dtype=str_dt)
-        if self.total_photometry is not None:
-            hfile.create_group('total_photometry')
-            hfile['total_photometry'].create_dataset('total_photometry', data=str(self.total_photometry), dtype=str_dt)
-        # Save paths and exts
-        keys_to_check = ['im_paths', 'seg_paths', 'rms_err_paths', 'im_exts', 'rms_err_exts']
-
-        hfile['paths'].create_dataset('im_paths', data=str(self.im_paths), dtype=str_dt)
-        hfile['paths'].create_dataset('seg_paths', data=str(self.seg_paths), dtype=str_dt)
-        hfile['paths'].create_dataset('rms_err_paths', data=str(self.rms_err_paths), dtype=str_dt)
-        hfile['paths'].create_dataset('im_exts', data=str(self.im_exts), dtype=str_dt)
-        hfile['paths'].create_dataset('rms_err_exts', data=str(self.rms_err_exts), dtype=str_dt)
-
-        for aper in self.aperture_dict.keys():
-            hfile['aperture_photometry'].create_group(aper)
-            for key in self.aperture_dict[aper].keys():
-                data = self.aperture_dict[aper][key]    
-                hfile['aperture_photometry'][aper].create_dataset(f'{key}', data=data)
         
-        # Save raw data
-        for band in self.bands:
-            hfile['raw_data'].create_dataset(f'phot_{band}', data=self.phot_imgs[band])
-            hfile['raw_data'].create_dataset(f'rms_err_{band}', data=self.rms_err_imgs[band])
-            hfile['raw_data'].create_dataset(f'seg_{band}', data=self.seg_imgs[band])
+        
+        with h5.File(new_h5_path, 'w') as hfile:
+            #print('append is', append)
 
-        if self.unmatched_data is not None:
-            hfile.create_group('unmatched_data')
+            groups = ['meta', 'paths', 'raw_data', 'aperture_photometry', 'auto_photometry', 'headers', 'bin_maps', 'bin_fluxes', 'bin_flux_err']
+            for group in groups:
+                hfile.create_group(group) 
+
+            hfile['meta'].create_dataset('galaxy_id', data=str(self.galaxy_id), dtype=str_dt)
+            hfile['meta'].create_dataset('survey', data=self.survey, dtype=str_dt)
+            hfile['meta'].create_dataset('redshift', data=self.redshift)
+            if self.sky_coord is not None:
+                hfile['meta'].create_dataset('sky_coord', data=self.sky_coord.to_string(style='decimal', precision=8), dtype=str_dt)
+            hfile['meta'].create_dataset('bands', data=str(list(self.bands)), dtype=str_dt)
+            hfile['meta'].create_dataset('cutout_size', data=self.cutout_size)
+            hfile['meta'].create_dataset('zps', data=str(self.im_zps), dtype=str_dt)
+            hfile['meta'].create_dataset('pixel_scales', data=str({band:str(scale)
+                for band, scale in self.im_pixel_scales.items()}), dtype=str_dt)
+            hfile['meta'].create_dataset('phot_pix_unit', data=str({band:str(pix_unit) 
+                for band, pix_unit in self.phot_pix_unit.items()}), dtype=str_dt)
+            hfile['meta'].create_dataset('dont_psf_match_bands', data=str(self.dont_psf_match_bands), dtype=str_dt)
+            hfile['meta'].create_dataset('already_psf_matched', data=str(self.already_psf_matched), dtype=str_dt)
+            hfile['meta'].create_dataset('detection_band', data=self.detection_band, dtype=str_dt)
+            hfile['meta'].create_dataset('galfind_version', data=self.galfind_version, dtype=str_dt)
+            if self.meta_properties is not None:
+                hfile['meta'].create_group('meta_properties')
+                for prop in self.meta_properties.keys():
+                    hfile['meta']['meta_properties'].create_dataset(prop, data=str(self.meta_properties[prop]), dtype=str_dt)
+        
+            if self.auto_photometry is not None:
+                hfile['auto_photometry'].create_dataset('auto_photometry', data=str(self.auto_photometry), dtype=str_dt)
+            if self.total_photometry is not None:
+                hfile.create_group('total_photometry')
+                hfile['total_photometry'].create_dataset('total_photometry', data=str(self.total_photometry), dtype=str_dt)
+            # Save paths and exts
+            keys_to_check = ['im_paths', 'seg_paths', 'rms_err_paths', 'im_exts', 'rms_err_exts']
+
+            hfile['paths'].create_dataset('im_paths', data=str(self.im_paths), dtype=str_dt)
+            hfile['paths'].create_dataset('seg_paths', data=str(self.seg_paths), dtype=str_dt)
+            hfile['paths'].create_dataset('rms_err_paths', data=str(self.rms_err_paths), dtype=str_dt)
+            hfile['paths'].create_dataset('im_exts', data=str(self.im_exts), dtype=str_dt)
+            hfile['paths'].create_dataset('rms_err_exts', data=str(self.rms_err_exts), dtype=str_dt)
+
+            for aper in self.aperture_dict.keys():
+                hfile['aperture_photometry'].create_group(aper)
+                for key in self.aperture_dict[aper].keys():
+                    data = self.aperture_dict[aper][key]    
+                    hfile['aperture_photometry'][aper].create_dataset(f'{key}', data=data)
+            
+            # Save raw data
             for band in self.bands:
-                hfile['unmatched_data'].create_dataset(f'phot_{band}', data=self.unmatched_data[band])
-                hfile['unmatched_data'].create_dataset(f'rms_err_{band}', data=self.unmatched_rms_err[band])
-                hfile['unmatched_data'].create_dataset(f'seg_{band}', data=self.unmatched_seg[band])
-        
-                  
-        if self.det_data is not None:
-            hfile.create_group('det_data')
-            hfile['det_data'].create_dataset('phot', data=self.det_data['phot'])
-            hfile['det_data'].create_dataset('rms_err', data=self.det_data['rms_err'])
-            hfile['det_data'].create_dataset('seg', data=self.det_data['seg'])
+                hfile['raw_data'].create_dataset(f'phot_{band}', data=self.phot_imgs[band])
+                hfile['raw_data'].create_dataset(f'rms_err_{band}', data=self.rms_err_imgs[band])
+                hfile['raw_data'].create_dataset(f'seg_{band}', data=self.seg_imgs[band])
 
-        # Save headers
-        for band in self.bands:
-            if self.phot_img_headers.get(band, None) is not None:
-                hfile['headers'].create_dataset(f'{band}', data=str(self.phot_img_headers[band]), dtype=str_dt)
-
-        if self.psf_matched_data is not None:
-            hfile.create_group('psf_matched_data')
-            for psf_type in self.psf_matched_data.keys():
-                hfile['psf_matched_data'].create_group(psf_type)
+            if self.unmatched_data is not None:
+                hfile.create_group('unmatched_data')
                 for band in self.bands:
-                    #print(band)
-                    #print(self.psf_matched_data[psf_type])
-                    hfile['psf_matched_data'][psf_type].create_dataset(band, data=self.psf_matched_data[psf_type][band])
-
-        if self.psf_matched_rms_err is not None:
-            hfile.create_group('psf_matched_rms_err')
-            for psf_type in self.psf_matched_rms_err.keys():
-                hfile['psf_matched_rms_err'].create_group(psf_type)
-                for band in self.bands:
-                    hfile['psf_matched_rms_err'][psf_type].create_dataset(band, data=self.psf_matched_rms_err[psf_type][band])
-        
-        # or here
-        # Save galaxy region
-         
-        # Save binned maps
-        if self.voronoi_map is not None:
-            hfile['bin_maps'].create_dataset('voronoi', data=self.voronoi_map)
-        if self.pixedfit_map is not None: 
-            hfile['bin_maps'].create_dataset('pixedfit', data=self.pixedfit_map)
-        if self.binned_flux_map is not None:
-            hfile['bin_fluxes'].create_dataset('pixedfit', data=self.binned_flux_map)
-        if self.binned_flux_err_map is not None:
-            hfile['bin_flux_err'].create_dataset('pixedfit', data=self.binned_flux_err_map)
-        if self.rms_background is not None:
-            hfile.create_dataset('meta/rms_background', data=str(self.rms_background))
-
-        # Small memory leak here - 0.2 MB per save    
-    
-        # Save PSFs
-        if self.psfs is not None and self.psfs != {}:
-            hfile.create_group('psfs')
-            for psf_type in self.psfs.keys():
-                hfile['psfs'].create_group(psf_type)
-                for band in self.bands:
-                    if self.psfs[psf_type].get(band) is not None:
-                        hfile['psfs'][psf_type].create_dataset(band, data=self.psfs[psf_type][band])
-        
-        if self.psfs_meta is not None and self.psfs_meta != {}:
-            hfile.create_group('psfs_meta')
-            for psf_type in self.psfs_meta.keys():
-                
-                hfile['psfs_meta'].create_group(psf_type)
-                for band in self.bands:
-                    if self.psfs_meta[psf_type].get(band) is not None:
-                        data = str(self.psfs_meta[psf_type][band])
-                        hfile['psfs_meta'][psf_type].create_dataset(band, data=data, dtype=str_dt)
-        
-        
-        # Add psf_Kernels
-        if self.psf_kernels is not None and self.psf_kernels != {}:
-            hfile.create_group('psf_kernels')
-            for psf_type in self.psf_kernels.keys():
-                hfile['psf_kernels'].create_group(psf_type)
-                for band in self.bands:
-                    if self.psf_kernels[psf_type].get(band) is not None:
-                        hfile['psf_kernels'][psf_type].create_dataset(band, data=self.psf_kernels[psf_type][band])
-
-        # Add galaxy region
-        if self.gal_region is not None:
-            hfile.create_group('galaxy_region')
-            for binmap_type in self.gal_region.keys():
-                hfile['galaxy_region'].create_dataset(binmap_type, data=self.gal_region[binmap_type])
-        # Add flux_map
-        if self.flux_map is not None:
-            hfile.create_group('flux_map')
-            for binmap_type in self.flux_map.keys():
-                hfile['flux_map'].create_dataset(binmap_type, data=self.flux_map[binmap_type])
-
-        for pos, property in enumerate(self.photometry_property_names):
-            if pos == 0:
-                hfile.create_group('photometry_properties')
-            hfile['photometry_properties'].create_dataset(property, data=getattr(self, property))
-            # Add meta data
-            for key in getattr(self, f'{property}_meta').keys():
-                hfile['photometry_properties'][property].attrs[key] = getattr(self, f'{property}_meta')[key]
-
-        # Add resolved mass
-        if self.resolved_mass is not None:
-            hfile.create_group('resolved_mass')
-            for key in self.resolved_mass.keys():
-                hfile['resolved_mass'].create_dataset(key, data=self.resolved_mass[key])
-        
-        # Add resolved SFH
-        if self.resolved_sfh is not None:
-            hfile.create_group('resolved_sfh')
-            for key in self.resolved_sfh.keys():
-                hfile['resolved_sfh'].create_dataset(key, data=self.resolved_sfh[key])
-        
-        # Add resolved SED
-        if self.resolved_sed is not None:
-            hfile.create_group('resolved_sed')
-            for key in self.resolved_sed.keys():
-                hfile['resolved_sed'].create_dataset(key, data=self.resolved_sed[key])
-                
-        # Add MockGalaxy properties
-        if type(self) == MockResolvedGalaxy:
-            # Copy over the mock galaxy properties if they exist
-            hfile.create_group('mock_galaxy')
-
-            if self.noise_images is not None:
-                hfile['mock_galaxy'].create_group('noise_images')
-                for key in self.noise_images.keys():
-                    hfile['mock_galaxy']['noise_images'].create_dataset(key, data=self.noise_images[key])
-            if self.property_images is not None:
-                hfile['mock_galaxy'].create_group('property_images')
-                for key in self.property_images.keys():
-                    hfile['mock_galaxy']['property_images'].create_dataset(key, data=self.property_images[key])
-            if self.seds is not None:
-                hfile['mock_galaxy'].create_group('seds')
-                for key in self.seds.keys():
-                    if type(self.seds[key]) == np.ndarray:
-                        hfile['mock_galaxy']['seds'].create_dataset(key, data=self.seds[key])
-                    else:
-                        hfile['mock_galaxy']['seds'].create_group(key)
-                        for key2 in self.seds[key].keys():
-                            hfile['mock_galaxy']['seds'][key].create_dataset(key2, data=self.seds[key][key2])
+                    hfile['unmatched_data'].create_dataset(f'phot_{band}', data=self.unmatched_data[band])
+                    hfile['unmatched_data'].create_dataset(f'rms_err_{band}', data=self.unmatched_rms_err[band])
+                    hfile['unmatched_data'].create_dataset(f'seg_{band}', data=self.unmatched_seg[band])
+            
                     
+            if self.det_data is not None:
+                hfile.create_group('det_data')
+                hfile['det_data'].create_dataset('phot', data=self.det_data['phot'])
+                hfile['det_data'].create_dataset('rms_err', data=self.det_data['rms_err'])
+                hfile['det_data'].create_dataset('seg', data=self.det_data['seg'])
+
+            # Save headers
+            for band in self.bands:
+                if self.phot_img_headers.get(band, None) is not None:
+                    hfile['headers'].create_dataset(f'{band}', data=str(self.phot_img_headers[band]), dtype=str_dt)
+
+            if self.psf_matched_data is not None:
+                hfile.create_group('psf_matched_data')
+                for psf_type in self.psf_matched_data.keys():
+                    hfile['psf_matched_data'].create_group(psf_type)
+                    for band in self.bands:
+                        #print(band)
+                        #print(self.psf_matched_data[psf_type])
+                        hfile['psf_matched_data'][psf_type].create_dataset(band, data=self.psf_matched_data[psf_type][band])
+
+            if self.psf_matched_rms_err is not None:
+                hfile.create_group('psf_matched_rms_err')
+                for psf_type in self.psf_matched_rms_err.keys():
+                    hfile['psf_matched_rms_err'].create_group(psf_type)
+                    for band in self.bands:
+                        hfile['psf_matched_rms_err'][psf_type].create_dataset(band, data=self.psf_matched_rms_err[psf_type][band])
+            
+            # or here
+            # Save galaxy region
+            
+            # Save binned maps
+            if self.voronoi_map is not None:
+                hfile['bin_maps'].create_dataset('voronoi', data=self.voronoi_map)
+            if self.pixedfit_map is not None: 
+                hfile['bin_maps'].create_dataset('pixedfit', data=self.pixedfit_map)
+            if self.binned_flux_map is not None:
+                hfile['bin_fluxes'].create_dataset('pixedfit', data=self.binned_flux_map)
+            if self.binned_flux_err_map is not None:
+                hfile['bin_flux_err'].create_dataset('pixedfit', data=self.binned_flux_err_map)
+            if self.rms_background is not None:
+                hfile.create_dataset('meta/rms_background', data=str(self.rms_background))
+
+            # Small memory leak here - 0.2 MB per save    
+        
+            # Save PSFs
+            if self.psfs is not None and self.psfs != {}:
+                hfile.create_group('psfs')
+                for psf_type in self.psfs.keys():
+                    hfile['psfs'].create_group(psf_type)
+                    for band in self.bands:
+                        if self.psfs[psf_type].get(band) is not None:
+                            hfile['psfs'][psf_type].create_dataset(band, data=self.psfs[psf_type][band])
+            
+            if self.psfs_meta is not None and self.psfs_meta != {}:
+                hfile.create_group('psfs_meta')
+                for psf_type in self.psfs_meta.keys():
                     
-        # Big memory leak here!!  
-        hfile.close()
+                    hfile['psfs_meta'].create_group(psf_type)
+                    for band in self.bands:
+                        if self.psfs_meta[psf_type].get(band) is not None:
+                            data = str(self.psfs_meta[psf_type][band])
+                            hfile['psfs_meta'][psf_type].create_dataset(band, data=data, dtype=str_dt)
+            
+            
+            # Add psf_Kernels
+            if self.psf_kernels is not None and self.psf_kernels != {}:
+                hfile.create_group('psf_kernels')
+                for psf_type in self.psf_kernels.keys():
+                    hfile['psf_kernels'].create_group(psf_type)
+                    for band in self.bands:
+                        if self.psf_kernels[psf_type].get(band) is not None:
+                            hfile['psf_kernels'][psf_type].create_dataset(band, data=self.psf_kernels[psf_type][band])
+
+            # Add galaxy region
+            if self.gal_region is not None:
+                hfile.create_group('galaxy_region')
+                for binmap_type in self.gal_region.keys():
+                    hfile['galaxy_region'].create_dataset(binmap_type, data=self.gal_region[binmap_type])
+            # Add flux_map
+            if self.flux_map is not None:
+                hfile.create_group('flux_map')
+                for binmap_type in self.flux_map.keys():
+                    hfile['flux_map'].create_dataset(binmap_type, data=self.flux_map[binmap_type])
+
+            for pos, property in enumerate(self.photometry_property_names):
+                if pos == 0:
+                    hfile.create_group('photometry_properties')
+                hfile['photometry_properties'].create_dataset(property, data=getattr(self, property))
+                # Add meta data
+                for key in getattr(self, f'{property}_meta').keys():
+                    hfile['photometry_properties'][property].attrs[key] = getattr(self, f'{property}_meta')[key]
+
+            # Add resolved mass
+            if self.resolved_mass is not None:
+                hfile.create_group('resolved_mass')
+                for key in self.resolved_mass.keys():
+                    hfile['resolved_mass'].create_dataset(key, data=self.resolved_mass[key])
+            
+            # Add resolved SFH
+            if self.resolved_sfh is not None:
+                hfile.create_group('resolved_sfh')
+                for key in self.resolved_sfh.keys():
+                    hfile['resolved_sfh'].create_dataset(key, data=self.resolved_sfh[key])
+            
+            # Add resolved SED
+            if self.resolved_sed is not None:
+                hfile.create_group('resolved_sed')
+                for key in self.resolved_sed.keys():
+                    hfile['resolved_sed'].create_dataset(key, data=self.resolved_sed[key])
+                    
+            # Add MockGalaxy properties
+            if type(self) == MockResolvedGalaxy:
+                # Copy over the mock galaxy properties if they exist
+                hfile.create_group('mock_galaxy')
+
+                if self.noise_images is not None:
+                    hfile['mock_galaxy'].create_group('noise_images')
+                    for key in self.noise_images.keys():
+                        hfile['mock_galaxy']['noise_images'].create_dataset(key, data=self.noise_images[key])
+                if self.property_images is not None:
+                    hfile['mock_galaxy'].create_group('property_images')
+                    for key in self.property_images.keys():
+                        hfile['mock_galaxy']['property_images'].create_dataset(key, data=self.property_images[key])
+                if self.seds is not None:
+                    hfile['mock_galaxy'].create_group('seds')
+                    for key in self.seds.keys():
+                        if type(self.seds[key]) == np.ndarray:
+                            hfile['mock_galaxy']['seds'].create_dataset(key, data=self.seds[key])
+                        else:
+                            hfile['mock_galaxy']['seds'].create_group(key)
+                            for key2 in self.seds[key].keys():
+                                hfile['mock_galaxy']['seds'][key].create_dataset(key2, data=self.seds[key][key2])
+                
+                if self.sfh is not None:
+                    hfile['mock_galaxy'].create_group('sfh')
+                    for key in self.sfh.keys():
+                        if type(self.sfh[key]) == np.ndarray:
+                            hfile['mock_galaxy']['sfh'].create_dataset(key, data=self.sfh[key])
+                        else:
+                            hfile['mock_galaxy']['sfh'].create_group(key)
+                            for key2 in self.sfh[key].keys():
+                                hfile['mock_galaxy']['sfh'][key].create_dataset(key2, data=self.sfh[key][key2])
+
          
         # Write photometry table(s)
         if self.photometry_table is not None:
@@ -2031,7 +2043,11 @@ class ResolvedGalaxy:
         
         if self.det_data is not None:
             det_galaxy_region = copy.copy(self.det_data['seg'])
-            det_galaxy_region[det_galaxy_region == self.galaxy_id] = 1
+            # Value of segmap in center
+            center = int(self.cutout_size//2)
+            center_val = det_galaxy_region[center, center]
+    
+            det_galaxy_region[det_galaxy_region == center_val] = 1
             det_galaxy_region[det_galaxy_region != 1] = 0
             self.gal_region['detection'] = det_galaxy_region
             if gal_region_use == 'detection':
@@ -2202,7 +2218,7 @@ class ResolvedGalaxy:
                 print('Reference band.')
         '''
 
-        pixel_binning(self.flux_map_path, ref_band=ref_band_pos, Dmin_bin=Dmin_bin, SNR=SNR, redc_chi2_limit=redc_chi2_limit, del_r=del_r,  name_out_fits=name_out_fits)
+        pixel_binning(self.flux_map_path, ref_band=ref_band_pos, Dmin_bin=Dmin_bin, SNR=SNR, redc_chi2_limit=redc_chi2_limit, del_r=del_r, name_out_fits=name_out_fits)
         
         self.pixedfit_binmap_path = name_out_fits
         self.add_to_h5(name_out_fits, 'bin_maps', 'pixedfit', ext='BIN_MAP', setattr_gal='pixedfit_map', overwrite=overwrite)
@@ -2748,7 +2764,7 @@ class ResolvedGalaxy:
 
         return table
 
-    def provide_bagpipes_phot(self, id):
+    def provide_bagpipes_phot(self, gal_id):
         '''Provide the fluxes in the correct format for bagpipes'''
         if not hasattr(self, 'photometry_table'):
             raise Exception("Need to run measure_flux_in_bins first")
@@ -2767,7 +2783,7 @@ class ResolvedGalaxy:
         else:
             min_percentage_error = 5
 
-        if id == 1:
+        if gal_id == 1:
             print(f'Using {psf_type} PSF and {binmap_type} binning derived fluxes')        
         flux_table = self.photometry_table[psf_type][binmap_type]
         
@@ -2782,12 +2798,12 @@ class ResolvedGalaxy:
             mask = (flux_table[fluxerr_col_name]/flux_table[flux_col_name] < min_percentage_error/100)  & (flux_table[flux_col_name]>0)
             flux_table[fluxerr_col_name][mask] = min_percentage_error/100 * flux_table[flux_col_name][mask]
         
-        row = flux_table[flux_table['ID'] == id]
+        row = flux_table[flux_table['ID'] == gal_id]
 
         if len(row) == 0:
-            raise Exception(f'ID {id} not found in flux table')
+            raise Exception(f'ID {gal_id} not found in flux table')
         elif len(row) > 1:
-            raise Exception(f'More than one ID {id} found in flux table')
+            raise Exception(f'More than one ID {gal_id} found in flux table')
 
 
         row = Table(row)
@@ -2832,8 +2848,8 @@ class ResolvedGalaxy:
         if type(marker_colors) == str:
             marker_colors = [marker_colors for i in range(len(bins_to_show))]
         colorss = []
-        for i, bin in enumerate(bins_to_show):
-            mask = table['ID'] == bin
+        for i, rbin in enumerate(bins_to_show):
+            mask = table['ID'] == rbin
             name = table['type'][mask][0]
             if name == 'TOTAL_BIN':
                 color = 'red'
@@ -2858,7 +2874,7 @@ class ResolvedGalaxy:
                 ax.errorbar(wav.to(wav_unit), flux.to(flux_unit), yerr=flux_err.to(flux_unit), fmt='o', color=color, label = name if color not in colorss else '')
                 colorss.append(color)
             # Plot the Bagpipes input
-            tab = self.provide_bagpipes_phot(bin)
+            tab = self.provide_bagpipes_phot(rbin)
             for row, band in zip(tab, self.bands):
                 
 
@@ -3014,6 +3030,8 @@ class ResolvedGalaxy:
                     if not overwrite:
                         print(f'Run {run_name} already exists')
                         return
+                    else:
+                        print(f'Overwriting run {run_name}')
 
         flux_table = self.photometry_table[psf_type][binmap_type]
         if fit_photometry == 'all':
@@ -3102,9 +3120,9 @@ class ResolvedGalaxy:
                 os.remove(file)
         else: # Check if already run
             mask = np.zeros(len(ids))
-            for pos, id in enumerate(ids):
-                if f'{id}.h5' in existing_filenames:
-                    print(f'{id}.h5 already exists')
+            for pos, gal_id in enumerate(ids):
+                if f'{gal_id}.h5' in existing_filenames:
+                    print(f'{gal_id}.h5 already exists')
                     mask[pos] = 1
             
             if np.all(mask == 1):
@@ -3123,7 +3141,7 @@ class ResolvedGalaxy:
             path = f'{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits'
             nrun_name = f'{run_dir}/cats/{out_subdir_encoded}.fits'
             if os.path.exists(path) and not os.path.exists(nrun_name):
-                os.rename(path, rnun_name)
+                os.rename(path, nrun_name)
             
         if not exist_already:
             fit_cat = pipes.fit_catalogue(ids, fit_instructions, self.provide_bagpipes_phot,
@@ -3149,7 +3167,7 @@ class ResolvedGalaxy:
         path = f'{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits'
         os.makedirs(f'{run_dir}/cats/{run_name}/{self.survey}', exist_ok=True)
         old_name = f'{run_dir}/cats/{out_subdir_encoded}.fits'
-        os.makedirs(f'{run_dir}/cats/{out_subdir_encoded}', exist_ok=True)
+        #os.makedirs(f'{run_dir}/cats/{out_subdir_encoded}', exist_ok=True)
         
         os.rename(old_name, path)
 
@@ -3190,14 +3208,14 @@ class ResolvedGalaxy:
         changed = np.zeros(map.shape)
         return_map = copy.deepcopy(map)
         for row in table:
-            id = row[id_col]
+            gal_id = row[id_col]
             try:
-                id = float(id)
+                gal_id = float(gal_id)
             except:
                 continue
             value = row[value_col]
-            return_map[map == float(id)] = value if not remove_log10 else 10**value
-            changed[map == float(id)] = 1
+            return_map[map == float(gal_id)] = value if not remove_log10 else 10**value
+            changed[map == float(gal_id)] = 1
         #print(f'changed {np.sum(changed)} pixels out of {len(map.flatten())} pixels')
         return_map[changed == 0] = np.nan
         return return_map
@@ -3260,11 +3278,11 @@ class ResolvedGalaxy:
         x_lims = []
         y_lims = []
 
-        for bin, color, in zip(bins_to_show, colors):
-            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+        for rbin, color, in zip(bins_to_show, colors):
+            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5'
 
             
-            pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
+            pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
            
             fig_xlim, fig_ylim = [], []
             fig = pipes_obj.plot_corner_plot(show=False, save=save, bins=corner_bins, type="fit_params", fig=fig, color=color, facecolor=facecolor)
@@ -3313,10 +3331,10 @@ class ResolvedGalaxy:
 
         if cache is None:
             cache = {}
-        for bin, color, in zip(bins_to_show, marker_colors):
-            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
+        for rbin, color, in zip(bins_to_show, marker_colors):
+            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5'
 
-            pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
+            pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
 
             pipes_obj.plot_best_fit(axes, color, wav_units=wav_units, flux_units=flux_units, lw=lw, fill_uncertainty=fill_uncertainty, zorder=zorder)
 
@@ -3331,7 +3349,7 @@ class ResolvedGalaxy:
         #cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
         return fig, cache
 
-    def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'all', save=False, 
+    def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'RESOLVED', save=False, 
                         facecolor='white', marker_colors='black', time_unit='Gyr', cmap = 'viridis',
                         plotpipes_dir='pipes_scripts/', 
                         run_dir = f'pipes/', cache=None, fig=None, axes=None):
@@ -3351,9 +3369,6 @@ class ResolvedGalaxy:
         if axes is None:
             axes = fig.add_subplot(111)
 
-        if bins_to_show == 'all':
-            bins_to_show = np.unique(table['bin'])
-
         if type(marker_colors) == str and len(bins_to_show) > 1:
             cmap = plt.get_cmap(cmap)
             marker_colors = cmap(np.linspace(0, 1, len(bins_to_show)))
@@ -3361,20 +3376,20 @@ class ResolvedGalaxy:
 
         if cache is None:
             cache = {}
-        for bin, color, in zip(bins_to_show, marker_colors):
-            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{bin}.h5'
-            if bin == 'RESOLVED':
+        for rbin, color, in zip(bins_to_show, marker_colors):
+            h5_path = f'{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5'
+            if rbin == 'RESOLVED':
                 ''' Special case where we sum the SFH of all the bins'''
                 dummy_fig, dummy_ax = plt.subplots(1, 1)
-
+                
                 if self.resolved_sfh is not None:
                     if run_name in self.resolved_sfh.keys():
                         resolved_sfh = self.resolved_sfh[run_name]
-                        x_all, y_all = resolved_sfh[:, 0], resolved_sfh[:, 1:]
-                        axes.plot(x_all, y_all, color='tomato', label='RESOLVED', lw = 2)
-                        axes.fill_between(x_all, resolved_sfh[:, 2], resolved_sfh[:, 0], color='tomato', alpha=0.5)
+                        x_all = resolved_sfh[:, 0]
+                        axes.plot(x_all, resolved_sfh[:, 2], color='tomato', label='RESOLVED', lw = 2)
+                        axes.fill_between(x_all, resolved_sfh[:, 1], resolved_sfh[:, 3], color='tomato', alpha=0.5)
                         continue
-
+                    
                 else:
                     set = False
                     for pos, tbin in enumerate(np.unique(table['#ID'])):
@@ -3382,7 +3397,7 @@ class ResolvedGalaxy:
                         try:
                             float(tbin)
                             pipes_obj = self.load_pipes_object(run_name, tbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
-                            tx, tsfh = pipes_obj.plot_sfh(dummy_ax, color, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = bin, return_sfh=True)
+                            tx, tsfh = pipes_obj.plot_sfh(dummy_ax, color, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = rbin, return_sfh=True)
                             if pos == 0:
                                 x_all = tx
                                 y_all = tsfh
@@ -3401,7 +3416,7 @@ class ResolvedGalaxy:
 
                     # Save resolved SFH
 
-                    save_array = np.vstack((x_all, y_all[:, 1], y_all[:, 0], y_all[:, 2])).T
+                    save_array = np.vstack((x_all, y_all[:, 0], y_all[:, 1], y_all[:, 2])).T
                     self.add_to_h5(save_array, 'resolved_sfh', run_name, overwrite=True)
                     if self.resolved_sfh is None:
                         self.resolved_sfh = {}
@@ -3410,8 +3425,8 @@ class ResolvedGalaxy:
                 
                 plt.close(dummy_fig)
             else:
-                pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
-                pipes_obj.plot_sfh(axes, color, modify_ax = True, add_zaxis=True, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = bin)
+                pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
+                pipes_obj.plot_sfh(axes, color, modify_ax = True, add_zaxis=True, timescale=time_unit, plottype='lookback', logify=False, cosmo=None, label = rbin)
         
         axes.legend(fontsize=8)
 
@@ -3492,12 +3507,12 @@ class ResolvedGalaxy:
 
         objects = self.load_pipes_object(run_name, values, cache=cache, get_advanced_quantities=False)
         if not lazy:
-            for pos, bin in enumerate(values):
+            for pos, rbin in enumerate(values):
                 obj = objects[pos]
                 samples = obj.plot_pdf(None, parameter, return_samples=True)
                 draws = np.random.choice(samples, n_samples)
                 # For all pixels in map that are equal to bin, set the 1st dimension of map_3d to the draw
-                mask = (map == bin)
+                mask = (map == rbin)
                 mask_x, mask_y = np.where(mask)
                 # Generate random draws
                 draws = np.random.choice(samples, n_samples)
@@ -3686,11 +3701,11 @@ class ResolvedGalaxy:
         else:
             raise Exception('Only pixedfit binning is supported for now')
         
-        for id in np.unique(pixel_map):
+        for gal_id in np.unique(pixel_map):
             #print(id)
-            if id == 0:
+            if gal_id == 0:
                 continue
-            mask = pixel_map == id
+            mask = pixel_map == gal_id
         
             if redshift is None:
                 z = self.redshift
@@ -3703,7 +3718,7 @@ class ResolvedGalaxy:
             pix_area = np.sum(mask) * pix_kpc**2 #Area of pixels with id in kpc^2
             # Check if all values in map[mask] are equal
             if len(np.unique(map[mask])) > 1:
-                raise Exception(f'This was supposed to be equal {id}')
+                raise Exception(f'This was supposed to be equal {gal_id}')
             
             if weight_by_band:
 
@@ -3754,39 +3769,35 @@ class ResolvedGalaxy:
 
         return density_map
     
-    def load_pipes_object(self, run_name, bin, run_dir = f'pipes/', bagpipes_filter_dir=bagpipes_filter_dir, cache=None, plotpipes_dir='pipes_scripts/', get_advanced_quantities = True, n_cores = 1):
+    def load_pipes_object(self, run_name, rbin, run_dir = f'pipes/', bagpipes_filter_dir=bagpipes_filter_dir, cache=None, plotpipes_dir='pipes_scripts/', get_advanced_quantities = True, n_cores = 1):
         plotpipes_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), plotpipes_dir)
         sys.path.insert(1, plotpipes_dir)
         #print(plotpipes_dir)
 
-        if type(bin) not in [list, np.ndarray]:
+        if type(rbin) not in [list, np.ndarray]:
             single = True
-            bin = [bin]
+            rbin = [rbin]
         else:
             single = False
-
-        print('bin', bin)
 
         output = {}
         from plotpipes import PipesFit
         found = False
         if cache is not None:
-            for b in bin:
+            for b in rbin:
                 if b in cache.keys():
                     output[b] = cache[b]
                     
 
         if run_name in self.internal_bagpipes_cache.keys():
-            for b in bin:
+            for b in rbin:
                 if b in self.internal_bagpipes_cache[run_name].keys():    
                     output[b] = self.internal_bagpipes_cache[run_name][b]
         else:
             self.internal_bagpipes_cache[run_name] = {}
         
-        still_to_load = [b for b in bin if b not in output.keys()]
+        still_to_load = [b for b in rbin if b not in output.keys()]
 
-        print('still to load', still_to_load)
-        print(output.keys())
         if len(still_to_load) > 0:
             params_dict = {'galaxy_id':None, 'field':self.survey, 'h5_path':None, 'pipes_path':run_dir, 'catalog':None, 'overall_field':None,
                 'load_spectrum':False, 'filter_path':bagpipes_filter_dir, 'ID_col':'NUMBER', 'field_col':'field', 'catalogue_flux_unit':u.MJy/u.sr,
@@ -3810,7 +3821,7 @@ class ResolvedGalaxy:
                 self.internal_bagpipes_cache[run_name][b] = obj
         
         # Set output as list in order of input
-        pipes_obj = [output[b] for b in bin]
+        pipes_obj = [output[b] for b in rbin]
         if get_advanced_quantities:
             for obj in pipes_obj:
                 if not obj.has_advanced_quantities:
@@ -3850,11 +3861,11 @@ class ResolvedGalaxy:
         if bins_to_show == 'all':
             show_all = True
             bins_to_show = table['#ID']
-            for bin in bins_to_show:
+            for rbin in bins_to_show:
                 try:
-                    bin = float(bin)
+                    rbin = float(rbin)
                 except:
-                    bins.append(bin)
+                    bins.append(rbin)
 
         else:
             show_all = False
@@ -3870,30 +3881,30 @@ class ResolvedGalaxy:
         all_samples = []
         if colors is None:
             colors = mcm.get_cmap('cmr.guppy', len(bins))
-            colors = {bin:colors(i) for i, bin in enumerate(bins)}
+            colors = {rbin:colors(i) for i, rbin in enumerate(bins)}
         if type(colors) == list:
             assert len(colors) == len(bins), "Need to provide a color for each bin"
-            colors = {bin:colors[i] for i, bin in enumerate(bins)}
+            colors = {rbin:colors[i] for i, rbin in enumerate(bins)}
         
         
-        for bin in bins_to_show:
-            pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
+        for rbin in bins_to_show:
+            pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=cache, plotpipes_dir=plotpipes_dir)
             
             bin_number = True
             try:
-                bin = float(bin)
+                rbin = float(rbin)
             except:
                 bin_number = False
             # This will need to change huh. 
             if show_all:
                 datta = ax_samples if not bin_number else None
-                collors = colors[bin] if not bin_number else 'black'
-                labbels = str(bin) if not bin_number else None
+                collors = colors[rbin] if not bin_number else 'black'
+                labbels = str(rbin) if not bin_number else None
                 ret_samples = True
             else:
                 datta = ax_samples
-                collors = colors[bin]
-                labbels = str(bin)
+                collors = colors[rbin]
+                labbels = str(rbin)
                 ret_samples = False
             #print('parameter', parameter)
             samples = pipes_obj.plot_pdf(datta, parameter,
@@ -3944,10 +3955,10 @@ class ResolvedGalaxy:
             if self.resolved_mass is not None and run_name in self.resolved_mass.keys() and not overwrite:
                 return self.resolved_mass[run_name]
 
-        for bin in bins_to_show:
+        for rbin in bins_to_show:
             try:
-                float(bin)
-                bins.append(bin)
+                float(rbin)
+                bins.append(rbin)
             except:
                 pass
 
@@ -4083,8 +4094,8 @@ class ResolvedGalaxy:
         pix_map_band = self.self.psf_matched_data[binmap_type][band]
 
         bins = np.unique(self.pixedfit_map)
-        for bin in bins:
-            mask = self.pixedfit_map == bin
+        for rbin in bins:
+            mask = self.pixedfit_map == rbin
             map[mask] = map[mask] * pix_map_band[mask]
     
     def get_resolved_bagpipes_sed(self, run_name, run_dir = f'pipes/', plotpipes_dir = 'pipes_scripts/', overwrite = False):
@@ -4100,28 +4111,36 @@ class ResolvedGalaxy:
 
            # Make cmap for map
         count = []
-        for i, id in enumerate(table['#ID']):
+        for i, gal_id in enumerate(table['#ID']):
             try:
-                id = float(id)
-                count.append(i)
+                gal_id = float(gal_id)
+                count.append(gal_id)
             except:
                 pass
 
+        if 0 in count:
+            count.remove(0)
+
+        
+        if len(count) == 0:
+            return False, False
+        
         for pos, galaxy_id in enumerate(count):
-            pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=None, plotpipes_dir=plotpipes_dir)
+            pipes_obj = self.load_pipes_object(run_name, galaxy_id, run_dir = run_dir, cache=None, plotpipes_dir=plotpipes_dir)
             # Get SED
 
-            flux, wav = pipes_obj.plot_best_fit(None, wav_units=u.um, flux_units=u.uJy, return_flux = True)
-             
+            wav, flux = pipes_obj.plot_best_fit(None, wav_units=u.um, flux_units=u.uJy, return_flux = True)
+            
             # Clip the SED to the wavelength range 0 to 8 um
-            flux = flux[(wav > 0.5) & (wav < 8)]
-            wav = wav[(wav > 0.5) & (wav < 8)]
+            flux = flux[(wav >= 0) & (wav < 8)]
+            wav = wav[(wav >= 0) & (wav < 8)]
 
+            #print(galaxy_id, np.min(wav), np.max(wav), len(wav))
             if pos == 0:
                 total_flux = np.zeros_like(flux)
                 total_wav = wav
             else:
-                assert wav == total_wav, f'Wavelengths do not match, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}'
+                assert all(wav == total_wav), f'Wavelengths do not match, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}'
 
             total_flux += flux
 
@@ -4165,9 +4184,9 @@ class ResolvedGalaxy:
         # Make cmap for map
         count = []
         other_count = []
-        for i, id in enumerate(table['#ID']):
+        for i, gal_id in enumerate(table['#ID']):
             try:
-                id = float(id)
+                gal_id = float(gal_id)
                 count.append(i)
             except:
                 other_count.append(i)
@@ -4193,27 +4212,34 @@ class ResolvedGalaxy:
         else:
             bins_to_show = bins_to_show
 
-        for pos, bin in enumerate(bins_to_show):
-            pipes_obj = self.load_pipes_object(run_name, bin, run_dir = run_dir, cache=None, plotpipes_dir=plotpipes_dir)
+        for pos, rbin in enumerate(bins_to_show):
 
-            # This plots the observed SED
-            #pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
-            #                y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
-            #                label=None,  marker="o", rerun_fluxes=False)
-            # This plots the best fit SED
-            #print(color)
-            pipes_obj.plot_best_fit(ax_sed, colour=color[str(bin)],  wav_units=u.um, flux_units=u.ABmag, lw=1, fill_uncertainty=False, zorder=5, linestyle = '-.' if pos in other_count else 'solid', label = bin if pos in other_count else "")
-            # Plot photometry
-            pipes_obj.plot_sed(ax_sed, colour=color[str(bin)], wav_units=u.um, flux_units=u.ABmag, zorder = 6, fcolour=color[str(bin)], ptsize=15)
-            try:
-                float(bin)
-                # find CoM of pixels in map
-                y, x = np.where(map == bin)
-                y = np.mean(y)
-                x = np.mean(x)
-                ax_map.text(x, y, bin, fontsize=8, color='black', path_effects=[PathEffects.withStroke(linewidth=1, foreground='white')])
-            except ValueError:
-                pass
+            if rbin == 'RESOLVED':
+                total_flux, total_wav = self.get_resolved_bagpipes_sed(run_name, run_dir = run_dir, plotpipes_dir = plotpipes_dir)
+                ax_sed.plot(total_wav, total_flux, label='Resolved', color='black')
+                continue
+
+            else:
+                pipes_obj = self.load_pipes_object(run_name, rbin, run_dir = run_dir, cache=None, plotpipes_dir=plotpipes_dir)
+                # This plots the observed SED
+                #pipes_obj.plot_sed(ax=ax_sed, colour=color[bin], wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
+                #                y_scale=None, lw=1., skip_no_obs=False, fcolour='blue',
+                #                label=None,  marker="o", rerun_fluxes=False)
+                # This plots the best fit SED
+                #print(color)
+            
+                pipes_obj.plot_best_fit(ax_sed, colour=color[str(rbin)],  wav_units=u.um, flux_units=u.ABmag, lw=1, fill_uncertainty=False, zorder=5, linestyle = '-.' if pos in other_count else 'solid', label = rbin if pos in other_count else "")
+                # Plot photometry
+                pipes_obj.plot_sed(ax_sed, colour=color[str(rbin)], wav_units=u.um, flux_units=u.ABmag, zorder = 6, fcolour=color[str(rbin)], ptsize=15)
+                try:
+                    float(rbin)
+                    # find CoM of pixels in map
+                    y, x = np.where(map == rbin)
+                    y = np.mean(y)
+                    x = np.mean(x)
+                    ax_map.text(x, y, rbin, fontsize=8, color='black', path_effects=[PathEffects.withStroke(linewidth=1, foreground='white')])
+                except ValueError:
+                    pass
         # Set x-axis limits
         ax_sed.set_xlim(0.5, 5)
         # Set y-axis limits
@@ -4350,12 +4376,12 @@ class ResolvedGalaxy:
         num_pdfs = len(property_name)
         PDFs = [[] for i in range(num_pdfs)]       
 
-        for pos, id in enumerate(tqdm(np.unique(map))):
-            if str(id) in ['0', 'nan']:
+        for pos, gal_id in enumerate(tqdm(np.unique(map))):
+            if str(gal_id) in ['0', 'nan']:
                 value = np.nan
                 continue
             
-            phot = copy.deepcopy(self.galfind_photometry_rest[str(int(id))])
+            phot = copy.deepcopy(self.galfind_photometry_rest[str(int(gal_id))])
             loaded = False
             for prop_name in property_name:
                 #print('checking', f'{prop_name}')
@@ -4409,7 +4435,7 @@ class ResolvedGalaxy:
             
                 if pos_param == len(param_names) - 1:
                     pname = param_name
-                    map[map == id] = value
+                    map[map == gal_id] = value
         if density:
             map = self.map_to_density_map(map, redshift = self.redshift, logmap = logmap)
             
@@ -4509,13 +4535,14 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                             phot_imgs = {}, rms_err_imgs = {}, seg_imgs = {}, aperture_dict = None, redshift = None,
                             im_pixel_scales = None, im_zps = None, phot_pix_unit = None, det_data = None, 
                             synthesizer_galaxy = None, noise_images = None, meta_properties = None, 
-                            property_images = None, auto_photometry = None, seds = None, **kwargs):
+                            property_images = None, auto_photometry = None, seds = None, sfh=None, **kwargs):
         
         self.synthesizer_galaxy = synthesizer_galaxy
         self.noise_images = noise_images
         self.property_images = property_images
         self.meta_properties = meta_properties
         self.seds = seds
+        self.sfh = sfh
 
         super().__init__(galaxy_id = galaxy_id, sky_coord = sky_coord, survey = mock_survey, bands = bands, 
                             im_paths = im_paths, im_exts = im_exts, im_zps = im_zps, seg_paths = seg_paths,
@@ -4530,53 +4557,61 @@ class MockResolvedGalaxy(ResolvedGalaxy):
     @classmethod
     def init_from_h5(cls, h5_name, h5_folder = 'galaxies/', return_attr = False):
         # Just get the mock data then call the super init_from h5
-        if type(h5_name) == BytesIO:
-            hfile = h5.File(h5_name, 'r')
-        else:
+        if type(h5_name) != BytesIO:
             if not h5_name.endswith('.h5'):
                 h5_name = f'{h5_name}.h5'
             if h5_name.startswith('/'):
                 h5path = h5_name
             else:
                 h5path = f'{h5_folder}{h5_name}'
-            hfile = h5.File(h5path, 'r')
-
-        mock_galaxy = hfile['mock_galaxy']
-
-        params = {}
-        
-        if 'synthesizer_galaxy' in mock_galaxy.keys():
-            params['synthesizer_galaxy'] = mock_galaxy['synthesizer_galaxy'][:]
-
-        if 'noise_images' in mock_galaxy.keys():
-            params['noise_images'] = {}
-            for key in mock_galaxy['noise_images'].keys():
-                params['noise_images'][key] = mock_galaxy['noise_images'][key][:]
-
-        if 'property_images' in mock_galaxy.keys():
-            params['property_images'] = {}
-            for key in mock_galaxy['property_images'].keys():
-                params['property_images'][key] = mock_galaxy['property_images'][key][:]
+        else:
+            h5path = h5_name
             
-        if 'meta_properties' in mock_galaxy.keys():
-            params['meta_properties'] = ast.literal_eval(mock_galaxy['meta_properties'][()].decode('utf-8'))
 
-        # seds
+        with h5.File(h5path, 'r') as hfile:
+            mock_galaxy = hfile['mock_galaxy']
 
-        if 'seds' in mock_galaxy.keys():
-            params['seds'] = {}
-            for key in mock_galaxy['seds'].keys():
-                if type(mock_galaxy['seds'][key]) == h5.Dataset:
-                    params['seds'][key] = mock_galaxy['seds'][key][()]
-                elif type(mock_galaxy['seds'][key]) == h5.Group:
-                    params['seds'][key] = {}
-                    for key2 in mock_galaxy['seds'][key].keys():
-                        params['seds'][key][key2] = mock_galaxy['seds'][key][key2][()]
+            params = {}
+            
+            if 'synthesizer_galaxy' in mock_galaxy.keys():
+                params['synthesizer_galaxy'] = mock_galaxy['synthesizer_galaxy'][:]
 
-        # Get output of super init_from_h5
+            if 'noise_images' in mock_galaxy.keys():
+                params['noise_images'] = {}
+                for key in mock_galaxy['noise_images'].keys():
+                    params['noise_images'][key] = mock_galaxy['noise_images'][key][:]
 
-        # Close h5!
-        hfile.close()
+            if 'property_images' in mock_galaxy.keys():
+                params['property_images'] = {}
+                for key in mock_galaxy['property_images'].keys():
+                    params['property_images'][key] = mock_galaxy['property_images'][key][:]
+                
+            if 'meta_properties' in mock_galaxy.keys():
+                params['meta_properties'] = ast.literal_eval(mock_galaxy['meta_properties'][()].decode('utf-8'))
+
+            # seds
+
+            if 'seds' in mock_galaxy.keys():
+                params['seds'] = {}
+                for key in mock_galaxy['seds'].keys():
+                    if type(mock_galaxy['seds'][key]) == h5.Dataset:
+                        params['seds'][key] = mock_galaxy['seds'][key][()]
+                    elif type(mock_galaxy['seds'][key]) == h5.Group:
+                        params['seds'][key] = {}
+                        for key2 in mock_galaxy['seds'][key].keys():
+                            params['seds'][key][key2] = mock_galaxy['seds'][key][key2][()]
+
+            # sfh
+
+            if 'sfh' in mock_galaxy.keys():
+                params['sfh'] = {}
+                for key in mock_galaxy['sfh'].keys():
+                    if type(mock_galaxy['sfh'][key]) == h5.Dataset:
+                        params['sfh'][key] = mock_galaxy['sfh'][key][()]
+                    elif type(mock_galaxy['sfh'][key]) == h5.Group:
+                        params['sfh'][key] = {}
+                        for key2 in mock_galaxy['sfh'][key].keys():
+                            params['sfh'][key][key2] = mock_galaxy['sfh'][key][key2][()]
         
 
         variables = super().init_from_h5(h5_name = h5_name, h5_folder = h5_folder, return_attr = True)
@@ -4613,7 +4648,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                                     mock_aper_diams = [0.32] * u.arcsec,
                                     resolution = 0.03, # in arcsed
                                     psf_type = '',
-                                    file_path = './flares_flags_balmer_project.hdf5',
+                                    file_path = '/nvme/scratch/work/tharvey/synthesizer/flares_flags_balmer_project.hdf5',
                                     grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03",
                                     grid_dir = "./grids/",
                                     debug = False,
@@ -4700,7 +4735,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         regions = {'010_z005p000':['00', '00', '01', '10', '18'], '008_z007p000':['00', '02', '09'], '007_z008p000':['21', '17'], '005_z010p000':['15']}
         ids = {'010_z005p000':[12, 96, 1424, 1006, 233], '008_z007p000':[6, 46, 298], '007_z008p000':[111, 16], '005_z010p000':[99]}
 
-        id = ids[redshift_code][galaxy_index] - 1
+        gal_id = ids[redshift_code][galaxy_index] - 1
         tag = redshift_code
         region = regions[redshift_code][galaxy_index]
 
@@ -4708,20 +4743,20 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         with h5.File(file_path,'r') as hf:  #opening the hdf5 file
             # coordinates of the stellar particles 
-            coordinates = np.array(hf[f"{tag}/{region}/{id}"].get('coordinates'), dtype=np.float64) * Mpc
+            coordinates = np.array(hf[f"{tag}/{region}/{gal_id}"].get('coordinates'), dtype=np.float64) * Mpc
             # initial masses of the stellar particles
-            initial_masses = np.array(hf[f"{tag}/{region}/{id}"].get('initial_masses'), dtype=np.float64) * Msun
+            initial_masses = np.array(hf[f"{tag}/{region}/{gal_id}"].get('initial_masses'), dtype=np.float64) * Msun
             # current masses of the stellar particles, mass change due to mass loss as stars age
-            current_masses = np.array(hf[f"{tag}/{region}/{id}"].get('initial_masses'), dtype=np.float64) * Msun
+            current_masses = np.array(hf[f"{tag}/{region}/{gal_id}"].get('current_masses'), dtype=np.float64) * Msun
             # ages of stars in log10, which is in units of years
-            log10ages = np.array(hf[f"{tag}/{region}/{id}"].get('log10ages'), dtype=np.float64)
+            log10ages = np.array(hf[f"{tag}/{region}/{gal_id}"].get('log10ages'), dtype=np.float64)
             # metallicities of the stars in log10
-            log10metallicities = np.array(hf[f"{tag}/{region}/{id}"].get('log10metallicities'), dtype=np.float64)
+            log10metallicities = np.array(hf[f"{tag}/{region}/{gal_id}"].get('log10metallicities'), dtype=np.float64)
             # optical depth in the V-band, it is the same prescription as shown in Vijayan+21, which
             # includes the V-band dust optical depth due to the diffuse ISM dust and birth cloud dust
-            tau_v = np.array(hf[f"{tag}/{region}/{id}"].get('tau_v'), dtype=np.float64)
+            tau_v = np.array(hf[f"{tag}/{region}/{gal_id}"].get('tau_v'), dtype=np.float64)
             # the smoothing lengths of star particles
-            smoothing_lengths = np.array(hf[f"{tag}/{region}/{id}"].get('smoothing_lengths'), dtype=np.float64) * Mpc
+            smoothing_lengths = np.array(hf[f"{tag}/{region}/{gal_id}"].get('smoothing_lengths'), dtype=np.float64) * Mpc
 
 
             gal = Galaxy(redshift=zed)
@@ -4744,6 +4779,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             print(message)
 
         model_assumptions = {'gridname': grid_name,
+                            'grid_dir': grid_dir,
+                            'file_path': file_path,
                             'dust_type': 'pacman',
                             'dust_curve': 'power_law',
                             'dust_slope': -0.7,
@@ -5309,11 +5346,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         # Things to save - background cutouts, background error maps, background position, noise_data
         # Properties - mass, SFR, tau_v, age, metallicity, ID, redshift etc. 
         meta_properties = {'redshift':gal.redshift,
-                            'id':id,
+                            'id':gal_id,
                             'tag':tag,
                             'region':region,
                             'grid':grid_name,
-                            'filters':bands,
+                            'filters':filter_codes,
                             'stellar_mass':gal.stellar_mass.value,
                             'tau_v':np.median(gal.tau_v),
                             'age':gal.stellar_mass_weighted_age.value,
@@ -5387,7 +5424,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
 
     @classmethod
-
     def init(cls, mock_survey = None, redshift_code = None, galaxy_index = None,  galaxy_id = None, overwrite = False, h5_folder = 'galaxies/', **kwargs):
         # load from h5 if it exists
         # Initialize CLI if relevant
@@ -5412,7 +5448,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
 
     @classmethod
-    def init_mock_from_ramses(cls):
+    def init_mock_from_sphinx(cls):
         # TODO: Implement this method
         raise NotImplementedError('Need to implement this method.')
 
@@ -5565,7 +5601,220 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         
         return fig
 
+    def regenerate_synthesizer_galaxy(self, file_path = '/nvme/scratch/work/tharvey/synthesizer/flares_flags_balmer_project.hdf5', basic = False):
+        # Regenerate the synthesizer galaxy
+        
+        if self.synthesizer_galaxy is not None:
+            return self.synthesizer_galaxy
 
+        try:
+            from scipy import signal
+            from synthesizer.emission_models import IncidentEmission
+            from synthesizer.filters import FilterCollection as Filters
+            from synthesizer.grid import Grid
+            from synthesizer.kernel_functions import Kernel
+            from synthesizer.particle.galaxy import Galaxy
+            from unyt import Hz, erg, Mpc, kpc, Msun, yr, s, arcsecond, nJy, K, uJy, unyt_array, um, Angstrom, Myr, Gyr
+            from synthesizer.emission_models.attenuation.igm import Inoue14, Madau96
+            from synthesizer.emission_models import PacmanEmission
+            from synthesizer.emission_models.attenuation import PowerLaw
+            from synthesizer.emission_models.dust.emission import Greybody
+            from synthesizer_functions import convert_coordinates, apply_pixel_coordinate_mask, get_spectra_in_mask
+            from synthesizer.imaging.image import Image
+
+        except ImportError:
+            raise Exception('Synthesizer not installed. Please clone from Github and install using pip install .')
+
+        grid = Grid(grid_name = self.meta_properties['grid'], grid_dir = "/nvme/scratch/work/tharvey/synthesizer/grids/")
+
+
+        # Get the synthesizer galaxy
+
+        #filter_codes = self.meta_properties.get('filters', None)
+        filter_codes = None
+        if filter_codes is None:
+            print('No filter codes found in meta_properties. Using default filters.')
+            observatories = 5*['HST'] + 14 * ['JWST'] 
+            instruments = 5*['ACS_WFC'] + 14 * ['NIRCam']
+            bands = self.bands
+
+            filter_codes = [f'{obs}/{inst}.{band}' for obs, inst, band in zip(observatories, instruments, bands)]
+            print(filter_codes)
+        filters = Filters(filter_codes,  new_lam=grid.lam)
+
+        filter_code_from_band = {band:code for band, code in zip(bands, filter_codes)}
+        
+        gal_id = self.meta_properties['id']
+        tag = self.meta_properties['tag']
+        region = self.meta_properties['region']
+
+        #file_path = self.meta_properties['file_path']
+
+        zed = float(tag[5:].replace("p", "."))
+
+        with h5.File(file_path,'r') as hf:  #opening the hdf5 file
+            # coordinates of the stellar particles 
+            coordinates = np.array(hf[f"{tag}/{region}/{gal_id}"].get('coordinates'), dtype=np.float64) * Mpc
+            # initial masses of the stellar particles
+            initial_masses = np.array(hf[f"{tag}/{region}/{gal_id}"].get('initial_masses'), dtype=np.float64) * Msun
+            # current masses of the stellar particles, mass change due to mass loss as stars age
+            current_masses = np.array(hf[f"{tag}/{region}/{gal_id}"].get('initial_masses'), dtype=np.float64) * Msun
+            # ages of stars in log10, which is in units of years
+            log10ages = np.array(hf[f"{tag}/{region}/{gal_id}"].get('log10ages'), dtype=np.float64)
+            # metallicities of the stars in log10
+            log10metallicities = np.array(hf[f"{tag}/{region}/{gal_id}"].get('log10metallicities'), dtype=np.float64)
+            # optical depth in the V-band, it is the same prescription as shown in Vijayan+21, which
+            # includes the V-band dust optical depth due to the diffuse ISM dust and birth cloud dust
+            tau_v = np.array(hf[f"{tag}/{region}/{gal_id}"].get('tau_v'), dtype=np.float64)
+            # the smoothing lengths of star particles
+            smoothing_lengths = np.array(hf[f"{tag}/{region}/{gal_id}"].get('smoothing_lengths'), dtype=np.float64) * Mpc
+
+
+            gal = Galaxy(redshift=zed)
+            gal.load_stars(
+                initial_masses=initial_masses,
+                ages=10**log10ages * yr,
+                metallicities=10**log10metallicities,
+                coordinates=coordinates,
+                current_masses=current_masses,
+                smoothing_lengths=smoothing_lengths,
+                centre=np.zeros(3)*Mpc
+            )
+
+        gal.tau_v = tau_v
+
+        if not basic:
+
+            model_assumptions = self.meta_properties['model_assumptions']
+            if 'dust_type' in model_assumptions.keys():
+                if model_assumptions['dust_type'] == 'pacman':
+                    dust_object = PacmanEmission
+
+            if model_assumptions['dust_curve'] == 'power_law':
+                dust_curve = PowerLaw(slope=model_assumptions['dust_slope'])
+
+            if 'dust_emission' in model_assumptions.keys():
+                if model_assumptions['dust_emission'] == 'greybody':
+                    dust_emission = Greybody(model_assumptions['dust_temp'] * K, model_assumptions['dust_beta'])
+            
+            if 'igm' in model_assumptions.keys():
+                if model_assumptions['igm'] == 'inoue14':
+                    igm = Inoue14
+                elif model_assumptions['igm'] == 'madau96':
+                    igm = Madau96
+            
+            if 'cosmo' in model_assumptions.keys():
+                cosmo = model_assumptions['cosmo']
+                # Check if cosmo is a string or a Cosmology object
+                if cosmo.startswith('FlatLambdaCDM'):
+                    from astropy.cosmology import FlatLambdaCDM
+                    
+                    H0 = float(cosmo.split('H0=')[1].split(' ')[0])
+                    Om0 = float(cosmo.split('Om0=')[1].split(',')[0])
+
+                    cosmo = FlatLambdaCDM(H0=H0, Om0=Om0)
+                    
+
+            emission_model = dust_object(grid=grid,
+                                        tau_v=gal.tau_v,
+                                        dust_curve=dust_curve,
+                                        dust_emission=dust_emission)
+
+            gal.stars.get_particle_spectra(emission_model)
+            models = gal.stars.particle_spectra.keys()
+            for model in models:
+                # Generate spectra for each particle for each model component
+                gal.stars.particle_spectra[model].get_fnu(cosmo, gal.redshift, igm=igm)
+                # Need this for making luminosity images only
+                gal.stars.particle_spectra[model].get_photo_lnu(filters)
+
+            # Combines the spectra of all the particles
+            gal.stars.integrate_particle_spectra()
+
+            gal.stars.get_particle_photo_fnu(filters)
+
+            gal.stars.get_photo_fnu(filters)
+            #gal.stars.get_photo_lnu(filters) # unneeded apparently
+
+            
+        self.synthesizer_galaxy = gal
+
+    def plot_bagpipes_sfh(self, run_name=None, bins_to_show = 'RESOLVED', save=False, 
+                        facecolor='white', marker_colors='black', time_unit='Gyr', cmap = 'viridis',
+                        plotpipes_dir='pipes_scripts/',
+                        run_dir = f'pipes/', cache=None, fig=None, axes=None, add_true = True):
+
+        # Call parent method
+
+        fig, cache = super().plot_bagpipes_sfh(run_name = run_name, bins_to_show = bins_to_show, save = save, 
+                                                facecolor = facecolor, marker_colors = marker_colors, 
+                                                time_unit = time_unit, cmap = cmap, plotpipes_dir = plotpipes_dir, 
+                                                run_dir = run_dir, cache = cache, fig = fig, axes = axes)
+        if add_true:
+
+            axes = fig.get_axes()
+            if len(axes) == 1:
+                axes = axes[0]
+                # Plot the true SFH
+                self.plot_real_sfh(mask = {'attr':'gal_region', 'key':'pixedfit'}, ax = axes, fig = fig, time_unit = time_unit, mask_str = 'pixedfit')
+
+        return fig, cache
+
+    def plot_real_sfh(self, mask = None, ax = None, fig = None, mask_str = None, time_unit = 'Gyr', overwrite = False):
+
+        if self.sfh is not None and not overwrite:
+            if mask_str in self.sfh.keys():
+                print('Found SFH in cache. Not regenerating.')
+                time, sfh = self.sfh[mask_str][:, 0], self.sfh[mask_str][:, 1]
+
+        else:
+            if mask is not None:
+                if type(mask) == dict:
+                    d = getattr(self, mask['attr'])
+                    mask = d[mask['key']]
+                    
+                if type(mask) == str:
+                    mask_str = copy.copy(mask)
+                
+                mask = mask.astype(bool)
+
+            from synthesizer_functions import calculate_sfh
+
+            if self.synthesizer_galaxy is None:
+                self.regenerate_synthesizer_galaxy(basic = True)
+
+            time, sfh = calculate_sfh(self.synthesizer_galaxy, pixel_mask = mask)
+
+            time = time.to_astropy().to(time_unit).value
+            sfh = sfh.to_astropy().to(u.Msun/u.yr).value
+
+            # add to h5
+            savedata = np.vstack([time, sfh]).T
+
+            if mask_str is None:
+                mask_str = 'total'
+            
+            self.add_to_h5(savedata, 'mock_galaxy/sfh', mask_str)
+
+            if self.sfh is None:
+                self.sfh = {}
+            
+            self.sfh[mask_str] = savedata
+
+
+        if fig is None:
+            fig, ax = plt.subplots(1, 1, figsize=(5, 5), facecolor='white', dpi = 200)
+        
+        ax.plot(time, sfh, linestyle = 'solid', color = 'black', label = 'True SFH')
+
+        return fig
+
+
+
+
+
+
+        
 
 class MultipleResolvedGalaxy:
     def __init__(self, list_of_galaxies):
@@ -5574,11 +5823,11 @@ class MultipleResolvedGalaxy:
     @classmethod
     def init(cls, list_of_ids, survey, version, **kwargs):
         list_of_galaxies = []
-        for id in list_of_ids:
-            if 'mock' in id:
-                galaxy = MockResolvedGalaxy.init(galaxy_id = id, mock_survey = survey, mock_version = version, **kwargs)
+        for gal_id in list_of_ids:
+            if 'mock' in gal_id:
+                galaxy = MockResolvedGalaxy.init(galaxy_id = gal_id, mock_survey = survey, mock_version = version, **kwargs)
             else:
-                galaxy = ResolvedGalaxy.init(galaxy_id = id, survey = survey, version = version, **kwargs)
+                galaxy = ResolvedGalaxy.init(galaxy_id = gal_id, survey = survey, version = version, **kwargs)
             list_of_galaxies.append(galaxy)
 
         return cls(list_of_galaxies)
@@ -5597,7 +5846,6 @@ class MultipleResolvedGalaxy:
 
     def total_number_of_bins(self):
         return sum([galaxy.get_number_of_bins() for galaxy in self.galaxies])
-
 
     def mass_comparison_plot(self, aperture_run, resolved_run, sed_fitting_tool ='bagpipes', aperture_label = 'TOTAL_BIN', label = False, **kwargs):
         fig, ax = plt.subplots(1, 1, figsize=(5, 5), facecolor='white', dpi = 200)
@@ -5676,7 +5924,7 @@ class MultipleResolvedGalaxy:
                 function = getattr(galaxy, function)
             function(*args, **kwargs)
 
-def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field = 'JOF_psfmatched', version = 'v11'):
+def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field = 'JOF_psfmatched', version = 'v11', overwrite = False):
         try:
             if 'mock' in galaxy_id:
                 galaxy = MockResolvedGalaxy.init(galaxy_id = galaxy_id, mock_survey = field, mock_version = version, cutout_size = cutout_size, h5_folder = h5_folder)
@@ -5684,19 +5932,22 @@ def run_bagpipes_wrapper(galaxy_id, resolved_dict, cutout_size, h5_folder, field
                 galaxy = ResolvedGalaxy.init(galaxy_id, field, version, cutout_size = cutout_size, h5_folder = h5_folder)
 
             # Run bagpipes
-            galaxy.run_bagpipes(resolved_dict)
-            # Save the resolved SED
-            galaxy.get_resolved_bagpipes_sed(resolved_dict['meta']['run_name'])
-            # Save the resolved SFH
-            fig, _ = galaxy.plot_bagpipes_sfh(resolved_dict['meta']['run_name'])
-            plt.close(fig)
-            # Save the resolved mass
-            galaxy.get_total_resolved_mass(resolved_dict['meta']['run_name'])
+            galaxy.run_bagpipes(resolved_dict, overwrite = overwrite)
+
+            if resolved_dict['meta']['fit_photometry'] in ['bin', 'all']:
+                print(f'Adding resolved properties to .h5 for {galaxy.galaxy_id}')
+                # Save the resolved SED
+                galaxy.get_resolved_bagpipes_sed(resolved_dict['meta']['run_name'])
+                # Save the resolved SFH
+                fig, _ = galaxy.plot_bagpipes_sfh(resolved_dict['meta']['run_name'], bins_to_show=['RESOLVED'])
+                plt.close(fig)
+                # Save the resolved mass
+                galaxy.get_total_resolved_mass(resolved_dict['meta']['run_name'])
 
             return galaxy
 
 
-        except Exception as e:
+        except FileNotFoundError as e:
             print(f'Error in {galaxy_id}: {e}')
             return None
 

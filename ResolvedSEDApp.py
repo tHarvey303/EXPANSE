@@ -57,6 +57,7 @@ LOGO = "https://assets.holoviz.org/panel/tutorials/matplotlib-logo.png"
 
 plotpipes_dir = 'pipes_scripts/'
 run_dir = 'pipes/'
+galaxies_dir = 'galaxies/'
 cache_pipes = {}
 
 pn.extension(sizing_mode="stretch_width", design='material')
@@ -72,7 +73,7 @@ facecolor = '#f7f7f7'
 
 MAX_SIZE_MB = 150
 
-TOTAL_FIT_COLORS = {'TOTAL_BIN': 'red', 'MAG_AUTO': 'blue', 'MAG_APER': 'green', 'MAG_ISO': 'purple', 'MAG_APER_TOTAL': 'orange', 'MAG_BEST': 'cyan'}
+TOTAL_FIT_COLORS = {'TOTAL_BIN': 'red', 'MAG_AUTO': 'blue', 'MAG_APER': 'green', 'MAG_ISO': 'purple', 'MAG_APER_TOTAL': 'orange', 'MAG_BEST': 'cyan', 'RESOLVED': 'black'}
 
 stream = hv.streams.Tap(transient=True)
 
@@ -218,10 +219,10 @@ def handle_map_click(x, y, resolved_galaxy, cmap, which_map_param, which_sed_fit
     map = resolved_galaxy.pixedfit_map
     if use:
         # Need logic here to know which map to use
-        bin = map[int(np.ceil(y)), int(np.ceil(x))]
-        if bin not in multi_choice_bins_param:
-            multi_choice_bins.value = multi_choice_bins_param + [bin]
-            print(f'Added bin. {bin}')
+        rbin = map[int(np.ceil(y)), int(np.ceil(x))]
+        if rbin not in multi_choice_bins_param:
+            multi_choice_bins.value = multi_choice_bins_param + [rbin]
+            print(f'Added bin. {rbin}')
     
     multi_choice_bins_param_safe = []
     for i in multi_choice_bins_param:
@@ -333,26 +334,26 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
     cmap = cm.get_cmap(cmap)
 
     if table is not None:
-        for bin_pos, bin in enumerate(multi_choice_bins_param + total_fit_options_param):
+        for bin_pos, rbin in enumerate(multi_choice_bins_param + total_fit_options_param):
             
-            if type(bin) == str:
-                color = TOTAL_FIT_COLORS[bin]
+            if type(rbin) == str:
+                color = TOTAL_FIT_COLORS[rbin]
                 colors_total.append(color)
             else:
                 # Get color between min and max of map
-                color = cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(bin))
+                color = cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin))
                 
                 colors_bin.append(color)
 
             colors.append(color)
-            mask = np.array([True if str(i) == str(bin) else False for i in table['ID']])
+            mask = np.array([True if str(i) == str(rbin) else False for i in table['ID']])
             table_row = table[mask]
             
             if len(table_row) == 0:
-                print(f'No SED bins for {bin}, psf_type {psf_type} and which_map_param {which_map_param}')
+                print(f'No SED bins for {rbin}, psf_type {psf_type} and which_map_param {which_map_param}')
                 continue
 
-            #assert str(table_row['ID']) == str(bin), f'Error: ID {str(table_row["ID"])} != {str(bin)}'
+            #assert str(table_row['ID']) == str(rbin), f'Error: ID {str(table_row["ID"])} != {str(rbin)}'
             # loop through markers
             if bin_pos > len(list_of_markers) - 1:
                 bin_pos = bin_pos % len(list_of_markers)
@@ -387,7 +388,7 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
                     yerr[0][0], yerr[1][0] = yerr[1][0], yerr[0][0]
                 else:
                     yerr = flux_err.to(y_unit, equivalencies = u.spectral_density(wav)).value
-                lab = int(bin) if type(bin) == float else bin
+                lab = int(rbin) if type(rbin) == float else rbin
                 lab = lab if pos == 0 else ''
                 #print(band)
                 #print(flux.to(y_unit, equivalencies = u.spectral_density(wav)).value, yerr)
@@ -440,8 +441,8 @@ def plot_sed(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 def plot_bagpipes_pdf(resolved_galaxy, map, cmap, param_property, which_run_aperture_param, which_run_resolved_param, multi_choice_bins_param, total_fit_options_param, which_sed_fitter_param, run_dir = run_dir):
     cmap = cm.get_cmap(cmap)
     #print(multi_choice_bins_param + total_fit_options_param)
-    colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(bin)) for pos, bin in enumerate(multi_choice_bins_param)] 
-    colors_total = [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
+    colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin)) for pos, rbin in enumerate(multi_choice_bins_param)] 
+    colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
    
     if which_sed_fitter_param == 'bagpipes' and (which_run_aperture_param != None or which_run_resolved_param != None):
         # Check if bagpipes run exists
@@ -533,8 +534,8 @@ def plot_bins(bin_type, cmap, scale_alpha, show_galaxy, show_kron, psf_matched, 
 def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_aperture_param, which_run_resolved_param, total_fit_options_param, x_unit = 'Gyr', facecolor='#f7f7f7'):
     
     cmap = cm.get_cmap(cmap)
-    colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(bin)) for pos, bin in enumerate(multi_choice_bins_param)]
-    colors_total = [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
+    colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin)) for pos, rbin in enumerate(multi_choice_bins_param)]
+    colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
     # FIX HERE
     if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and (which_run_aperture_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys() or which_run_resolved_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys()):
         if which_sed_fitter_param == 'bagpipes':
@@ -572,6 +573,8 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
                 #ax.set_xlim(0, 1)
             
             # Maybe fix
+
+            '''
             try:
                 import plotly as py
                 import plotly.tools as tls
@@ -633,21 +636,21 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
                     yanchor="top"
                     ),
                 ])
-                '''
+                
                 # label buttons
-                fig.update_layout(
-                    annotations=[
-                        dict(text="Y-scale", x=0, xref="paper", y=1.22, yref="paper", align="left", bgcolor="rgba(0, 0, 0, 0)",
-                             showarrow=False),
-                        dict(text="X-scale", x=0.2, xref="paper", y=1.22, yref="paper", align="left", bgcolor="rgba(0, 0, 0, 0)",
-                             showarrow=False)
-                    ]
-                )
-                '''
+                #fig.update_layout(
+                #    annotations=[
+                #        dict(text="Y-scale", x=0, xref="paper", y=1.22, yref="paper", align="left", bgcolor="rgba(0, 0, 0, 0)",
+                #             showarrow=False),
+                #        dict(text="X-scale", x=0.2, xref="paper", y=1.22, yref="paper", align="left", bgcolor="rgba(0, 0, 0, 0)",
+                #             showarrow=False)
+                #    ]
+                #)
+                
                 return pn.pane.Plotly(fig, sizing_mode="scale_both", config={"scrollZoom": True}, max_width=400)
             except ImportError:
                 pass
-            
+            '''
 
             plt.close(fig)
 
@@ -659,8 +662,8 @@ def plot_sfh(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param
 def plot_corner(resolved_galaxy, map, cmap, which_map_param, which_sed_fitter_param, multi_choice_bins_param, which_run_aperture_param, which_run_resolved_param, total_fit_options_param, facecolor='#f7f7f7'):
     # Can't always directly compare as models may have different parameters
     cmap = cm.get_cmap(cmap)
-    colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(bin)) for pos, bin in enumerate(multi_choice_bins_param)]
-    colors_total = [TOTAL_FIT_COLORS[bin] for bin in total_fit_options_param]
+    colors_bins = [cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin)) for pos, rbin in enumerate(multi_choice_bins_param)]
+    colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
 
     # FIX HERE
     if hasattr(resolved_galaxy, 'sed_fitting_table') and 'bagpipes' in resolved_galaxy.sed_fitting_table.keys() and (which_run_resolved_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys() or which_run_aperture_param in resolved_galaxy.sed_fitting_table['bagpipes'].keys()):
@@ -1011,7 +1014,7 @@ def handle_file_upload(value, components):
 
     multi_choice_bins = pn.widgets.MultiChoice(name='Bins', options=[], delete_button=True, placeholder='Click on bin map to add bins')
 
-    total_fit_options = pn.widgets.MultiChoice(name='Aperture Fits', options=['TOTAL_BIN', 'MAG_AUTO', 'MAG_BEST', 'MAG_ISO', 'MAG_APER_TOTAL'], value=['TOTAL_BIN'], delete_button=True, placeholder='Select combined fits to show')
+    total_fit_options = pn.widgets.MultiChoice(name='Aperture Fits', options=['TOTAL_BIN', 'MAG_AUTO', 'MAG_BEST', 'MAG_ISO', 'MAG_APER_TOTAL', 'RESOLVED'], value=['TOTAL_BIN'], delete_button=True, placeholder='Select combined fits to show')
 
     #which_run = pn.widgets.Select(name='Run', value=None, options=[])
     which_run_resolved = pn.widgets.Select(name='Resolved SED Fitting Run', value=None, options=[])
@@ -1165,18 +1168,36 @@ def handle_file_upload(value, components):
     pn.param.ParamFunction(pn.bind(update_sidebar, galaxy_tabs.param.active, sidebar, watch=True), loading_indicator = True)
 
 
+def choose_file(value, components):
+
+    path = f'{galaxies_dir}/{value}'
+
+    # check if path exists
+    if os.path.exists(path):
+        # make a bytesstream
+        with open(path, 'rb') as f:
+            value = f.read()
+        
+    handle_file_upload(value, components)
+
+
 def resolved_sed_interface():
     global file_input
 
     tabs = pn.Tabs(closable=True, dynamic=True, scroll=False, min_height=2000)
     
     file_input = pn.widgets.FileInput(accept='.h5')
-    
-    sidebar = pn.Column("### Upload .h5", file_input)
+
+    choose_file_input = pn.widgets.Select(name='Select Remote File', options = [None], value = None, width = 200)
+
+    choose_file_input.options = [None] + sorted([f for f in os.listdir(galaxies_dir) if f.endswith('.h5')])
+
+    sidebar = pn.Column("### Upload .h5", file_input, '### or', choose_file_input)
     
     components = [sidebar, tabs]
 
-    pn.bind(handle_file_upload, file_input, components, watch=True)
+    pn.bind(handle_file_upload, file_input, components, watch=True) # watch = True is required for these!
+    pn.bind(choose_file, choose_file_input, components, watch=True)
 
     return pn.template.FastListTemplate(
         title="Resolved SED Viewer", sidebar=[sidebar], main=[tabs], accent=ACCENT

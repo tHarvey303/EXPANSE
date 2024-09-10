@@ -1,7 +1,9 @@
 from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
 import numpy as np
-from unyt import unyt_array
+from unyt import unyt_array, Msun, yr, Myr, Gyr
+import matplotlib.pyplot as plt
+
 
 cosmo = FlatLambdaCDM(H0 = 70, Om0 = 0.3)
 
@@ -70,3 +72,48 @@ def get_spectra_in_mask(gal, spectra_type = 'total', aperture_mask_radii = None,
     spectra_mask_total = np.sum(spectra_mask, axis = 0)
 
     return spectra_mask_total
+
+
+def calculate_sfh(galaxy, binw = 5 * Myr, pixel_mask = None, plot = False):
+    
+    if pixel_mask is not None:
+        mask = apply_pixel_coordinate_mask(galaxy, pixel_mask)
+    else:
+        mask = np.ones(len(galaxy.stars.ages), dtype=bool)
+
+    max_age = galaxy.stars.ages[mask].max()
+    bins = np.arange(0.0 * Myr, max_age, binw) 
+    binc = 0.5*(bins[:-1]+bins[1:])
+
+    ages = galaxy.stars.ages.to(Myr)[mask]
+    masses = galaxy.stars.initial_masses[mask]
+    sorted_indexes = np.argsort(ages)
+
+    ages = ages[sorted_indexes]
+    masses = masses[sorted_indexes]
+
+    # Calculate the SFR on the bins grid
+
+    sfr = np.zeros(len(bins)-1) * Msun/yr
+
+    # Count backwards, so that the oldest stars are added first, and only once
+    for i in range(len(ages)-1, 0, -1):
+        age = ages[i]
+        mass = masses[i]
+        for j in range(len(bins)-1):
+            if bins[j] < age < bins[j+1]:
+                sfr[j] += mass / binw.to(yr)
+
+
+
+    if plot:
+        fig, ax = plt.subplots()
+        ax.plot(binc, sfr.to(Msun/yr))
+        ax.set_xlabel('Time (Myr)')
+        ax.set_ylabel('SFR ($M_{\odot}/yr)$')
+
+        plt.show()
+
+    binc *= Myr
+
+    return binc, sfr
