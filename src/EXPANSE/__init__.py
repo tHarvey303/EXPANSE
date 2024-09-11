@@ -14,6 +14,8 @@ from .bagpipes.plotpipes import (calculate_bins, PlotPipes, PipesFit)
 
 from . import bagpipes
 
+from . import dense_basis
+
 from .ResolvedSEDApp import expanse_viewer
 
 __all__ = ['ResolvedGalaxy', 'MockResolvedGalaxy', 'MultipleResolvedGalaxy',

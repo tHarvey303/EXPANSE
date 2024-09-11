@@ -3647,12 +3647,7 @@ class ResolvedGalaxy:
 
         flux_table = self.photometry_table[psf_type][binmap_type]
 
-        path = glob.glob(f"{db_dir}/{db_atlas_name}*.dbatlas")[0]
-        N_param = int(atlas_path.split("N_param_")[1].split(".dbatlas")[0])
-        N_pregrid = int(atlas_path.split("N_pregrid_")[1].split("_N_param")[0])
-        atlas = db.load_atlas(
-            atlas_path, N_pregrid=N_pregrid, N_param=N_param, path=db_dir
-        )
+       
 
         # Need to generate obs_sed, obs_err, and fit_mask based on the input filter files
 
