@@ -95,25 +95,24 @@ elif "nvme" in file_path:
     computer = "morgan"
 elif "Users" in file_path:
     computer = "mac"
-
+else:
+    computer = "unknown"
 
 if computer == "mac":
     bagpipes_dir = "/Users/user/Documents/PhD/bagpipes_dir/"
     print("Running on Mac.")
     bagpipes_filter_dir = bagpipes_dir + "inputs/filters/"
-
 elif computer == "morgan":
     bagpipes_dir = "/nvme/scratch/work/tharvey/bagpipes/"
     db_dir = "/nvme/scratch/work/tharvey/dense_basis/pregrids/"
     print("Running on Morgan.")
     bagpipes_filter_dir = bagpipes_dir + "inputs/filters/"
-
-
 elif computer == "singularity":
     print("Running in container.")
     bagpipes_filter_dir = "filters/"
-
-
+elif computer == "unknown":
+    print("Unknown computer.")
+    bagpipes_filter_dir = "filters/"
 
 
 class ResolvedGalaxy:
