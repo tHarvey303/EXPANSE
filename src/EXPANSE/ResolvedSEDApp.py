@@ -4,20 +4,15 @@ import sys
 from io import BytesIO
 
 import click
-import h5py
 import h5py as h5
-import holoviews as hv
 import matplotlib as mpl
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
-import panel as pn
-import xarray as xr
 from astropy import units as u
 from astropy.io import fits
 from astropy.wcs import WCS
 from matplotlib.colors import Normalize
-from panel.layout.gridstack import GridStack
 
 # package imports
 from .ResolvedGalaxy import MockResolvedGalaxy, ResolvedGalaxy
@@ -126,7 +121,7 @@ def cached_function(func):
 @pn.cache
 def get_h5(url):
     response = requests.get(url)
-    return h5py.File(BytesIO(response.content), "r")
+    return h5.File(BytesIO(response.content), "r")
 
 
 def update_image(value):
@@ -2137,6 +2132,16 @@ def cli():
 @click.command()
 @click.option("--port", default=8000, help="Port to run the server on.")
 def expanse_viewer(port):
+    try:
+        from panel.layout.gridstack import GridStack
+        import panel as pn
+        import holoviews as hv
+        import xarray as xr
+    except ImportError:
+        print("Please install the following packages:")
+        print("panel, holoviews, xarray")
+        return False
+
     ## resolved_sed_interface().servable()
     pn.serve(
         resolved_sed_interface,
