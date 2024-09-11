@@ -28,6 +28,20 @@ logging.getLogger("panel").setLevel(logging.ERROR)
 # Supress boken warnings
 import warnings
 
+facecolor = "#f7f7f7"
+
+MAX_SIZE_MB = 150
+
+TOTAL_FIT_COLORS = {
+    "TOTAL_BIN": "red",
+    "MAG_AUTO": "blue",
+    "MAG_APER": "green",
+    "MAG_ISO": "purple",
+    "MAG_APER_TOTAL": "orange",
+    "MAG_BEST": "cyan",
+    "RESOLVED": "black",
+}
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 resource.setrlimit(resource.RLIMIT_STACK, [0x10000000, resource.RLIM_INFINITY])
@@ -48,38 +62,11 @@ elif "Users" in file_path:
 # panel serve ResolvedSEDApp.py --autoreload --port 5003
 
 ACCENT = "goldenrod"
-LOGO = "https://assets.holoviz.org/panel/tutorials/matplotlib-logo.png"
 
 plotpipes_dir = "pipes_scripts/"
 run_dir = "pipes/"
 galaxies_dir = "galaxies/"
 cache_pipes = {}
-
-pn.extension(sizing_mode="stretch_width", design="material")
-pn.extension("gridstack")
-pn.extension(notifications=True)
-try:
-    import plotly
-
-    pn.extension("plotly")
-except ImportError:
-    pass
-
-facecolor = "#f7f7f7"
-
-MAX_SIZE_MB = 150
-
-TOTAL_FIT_COLORS = {
-    "TOTAL_BIN": "red",
-    "MAG_AUTO": "blue",
-    "MAG_APER": "green",
-    "MAG_ISO": "purple",
-    "MAG_APER_TOTAL": "orange",
-    "MAG_BEST": "cyan",
-    "RESOLVED": "black",
-}
-
-stream = hv.streams.Tap(transient=True)
 
 
 def make_hashable(args):
@@ -2132,6 +2119,8 @@ def cli():
 @click.command()
 @click.option("--port", default=8000, help="Port to run the server on.")
 def expanse_viewer(port):
+    global stream
+
     try:
         from panel.layout.gridstack import GridStack
         import panel as pn
@@ -2141,6 +2130,18 @@ def expanse_viewer(port):
         print("Please install the following packages:")
         print("panel, holoviews, xarray")
         return False
+
+    pn.extension(sizing_mode="stretch_width", design="material")
+    pn.extension("gridstack")
+    pn.extension(notifications=True)
+    try:
+        import plotly
+
+        pn.extension("plotly")
+    except ImportError:
+        pass
+
+    stream = hv.streams.Tap(transient=True)
 
     ## resolved_sed_interface().servable()
     pn.serve(
