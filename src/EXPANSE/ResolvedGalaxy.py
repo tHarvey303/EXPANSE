@@ -537,7 +537,7 @@ class ResolvedGalaxy:
             for prop in properties_to_load:
                 attr = getattr(galaxy, f"{prop}", None)
                 if attr is not None:
-                    if type(attr) is in [list, np.ndarray] and len(attr) == 1:
+                    if type(attr) in [list, np.ndarray] and len(attr) == 1:
                         attr = attr[0]
                     meta_properties[prop] = attr.value
 
@@ -4015,7 +4015,7 @@ class ResolvedGalaxy:
             mask = flux_table["type"] == "MAG_APER"
         elif fit_photometry == "TOTAL_BIN+MAG_APER_TOTAL":
             mask = (flux_table["type"] == "MAG_APER_TOTAL") | (
-                flux_table["type"] is "TOTAL_BIN"
+                flux_table["type"] == "TOTAL_BIN"
             )
         else:
             raise ValueError(
@@ -6190,7 +6190,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             if "seds" in mock_galaxy.keys():
                 params["seds"] = {}
                 for key in mock_galaxy["seds"].keys():
-                    if type(mock_galaxy["seds"][key] is h5.Dataset:
+                    if type(mock_galaxy["seds"][key]) is h5.Dataset:
                         params["seds"][key] = mock_galaxy["seds"][key][()]
                     elif type(mock_galaxy["seds"][key]) is h5.Group:
                         params["seds"][key] = {}
