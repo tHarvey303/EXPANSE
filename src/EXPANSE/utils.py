@@ -88,8 +88,12 @@ def scale_fluxes(
         np.sqrt(a * b) * kron_radius
         # encircled_energy = # enclosed_energy in F444W from band
     else:
-        elliptical_aperture = EllipticalAperture(center, a=6 * a, b=6 * b, theta=theta)
-        elliptical_aperture_phot = aperture_photometry(psf, elliptical_aperture)
+        elliptical_aperture = EllipticalAperture(
+            center, a=6 * a, b=6 * b, theta=theta
+        )
+        elliptical_aperture_phot = aperture_photometry(
+            psf, elliptical_aperture
+        )
         encircled_energy = elliptical_aperture_phot["aperture_sum"][0]
 
     flux_aper_total = flux_aper_corrected / encircled_energy
@@ -105,6 +109,7 @@ def make_EAZY_SED_fit_params_arr(SED_code_arr, templates_arr, lowz_zmax_arr):
         )
         for lowz_zmax in lowz_zmaxs
     ]
+
 
 class CLIInterface:
     def __init__(self):
@@ -225,7 +230,9 @@ class CLIInterface:
                     # flatten index
                     index = index.flatten()
 
-                    temp = psutil.sensors_temperatures()["coretemp"][index[0]][1]
+                    temp = psutil.sensors_temperatures()["coretemp"][index[0]][
+                        1
+                    ]
                 else:
                     temp = "N/A"
                 # Core clock and temperature
@@ -265,7 +272,10 @@ class CLIInterface:
 
             progress_width = int(self.progress * (width - 2))
             progress_bar = (
-                "[" + "#" * progress_width + " " * (width - 2 - progress_width) + "]"
+                "["
+                + "#" * progress_width
+                + " " * (width - 2 - progress_width)
+                + "]"
             )
             self.screen.addstr(
                 height - 1, 0, progress_bar[: width - 1], curses.color_pair(3)
@@ -279,7 +289,9 @@ class CLIInterface:
         self.screen.addstr(
             height // 2, width // 2 - 11, "Keyboard Interrupt", curses.A_BOLD
         )
-        self.screen.addstr(height // 2 + 1, width // 2 - 9, "Exiting...", curses.A_BOLD)
+        self.screen.addstr(
+            height // 2 + 1, width // 2 - 9, "Exiting...", curses.A_BOLD
+        )
         self.screen.refresh()
         time.sleep(2)  # Show the message for 2 seconds before exiting
 
@@ -293,7 +305,10 @@ def is_cli():
         pass
 
     # Check for common notebook environments
-    if "JUPYTER_RUNTIME_DIR" in os.environ or "IPYTHON_KERNEL_PATH" in os.environ:
+    if (
+        "JUPYTER_RUNTIME_DIR" in os.environ
+        or "IPYTHON_KERNEL_PATH" in os.environ
+    ):
         return False
 
     # Check if it's an interactive Python shell
@@ -308,16 +323,19 @@ def is_cli():
     return True
 
 
-def send_email(contents, subject='', address='tharvey303@gmail.com'):
-    '''
-	except Exception as e:
-		# Email me if you crash
-		ctime  = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-		send_email(contents=f'{e}', subject = f'{sys.argv[0]} crash at {ctime}')
-		raise e
+def send_email(contents, subject="", address="tharvey303@gmail.com"):
+    """
+    except Exception as e:
+            # Email me if you crash
+            ctime  = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            send_email(contents=f'{e}', subject = f'{sys.argv[0]} crash at {ctime}')
+            raise e
 
-    '''
+    """
     import yagmail
-    yagmail.SMTP('tcharvey303', oauth2_file='/nvme/scratch/work/tharvey/scripts/testing/client_secret.json').send(address, subject, contents)
-    print('Sent email.')
 
+    yagmail.SMTP(
+        "tcharvey303",
+        oauth2_file="/nvme/scratch/work/tharvey/scripts/testing/client_secret.json",
+    ).send(address, subject, contents)
+    print("Sent email.")

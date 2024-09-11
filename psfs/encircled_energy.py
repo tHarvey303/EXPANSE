@@ -36,7 +36,9 @@ center = centroid_2dg(psf_f444w)
 flux_f444w = np.array(
     [
         aperture.do_photometry(psf_f444w)[0]
-        for aperture in [CircularAperture(center, r=radius) for radius in radii]
+        for aperture in [
+            CircularAperture(center, r=radius) for radius in radii
+        ]
     ]
 )
 
@@ -59,7 +61,9 @@ for i, filter in enumerate(filters):
         encircled_energy_before.append(aperture.do_photometry(psf)[0])
         encircled_energy_after.append(aperture.do_photometry(psf_convolved)[0])
     encircled_energy_before = np.array(encircled_energy_before) / np.sum(psf)
-    encircled_energy_after = np.array(encircled_energy_after) / np.sum(psf_convolved)
+    encircled_energy_after = np.array(encircled_energy_after) / np.sum(
+        psf_convolved
+    )
 
     ax[0].plot(
         radii_arcsec,
@@ -68,12 +72,19 @@ for i, filter in enumerate(filters):
         color=cmap(i / len(filters)),
     )
     ax[1].plot(
-        radii_arcsec, encircled_energy_after, label=filter, color=cmap(i / len(filters))
+        radii_arcsec,
+        encircled_energy_after,
+        label=filter,
+        color=cmap(i / len(filters)),
     )
 
 # F444W
-ax[0].plot(radii_arcsec, flux_f444w / np.sum(psf_f444w), label="F444W", color="black")
-ax[1].plot(radii_arcsec, flux_f444w / np.sum(psf_f444w), label="F444W", color="black")
+ax[0].plot(
+    radii_arcsec, flux_f444w / np.sum(psf_f444w), label="F444W", color="black"
+)
+ax[1].plot(
+    radii_arcsec, flux_f444w / np.sum(psf_f444w), label="F444W", color="black"
+)
 
 ax[0].set_xlabel("Radius (arcsec)")
 ax[0].set_ylabel("Encircled Energy")

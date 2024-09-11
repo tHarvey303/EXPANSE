@@ -38,7 +38,10 @@ meta_delayed = {
     "sampler": "multinest",
 }
 
-overall_dict = {"meta": meta_delayed, "fit_instructions": fit_instructions_delayed}
+overall_dict = {
+    "meta": meta_delayed,
+    "fit_instructions": fit_instructions_delayed,
+}
 
 delayed_dict = copy.deepcopy(overall_dict)
 
@@ -46,7 +49,10 @@ delayed_dict = copy.deepcopy(overall_dict)
 # Second fit
 sfh = "continuity"
 continuity = {}
-continuity["massformed"] = (5.0, 12.0)  # Log_10 total stellar mass formed: M_Solar
+continuity["massformed"] = (
+    5.0,
+    12.0,
+)  # Log_10 total stellar mass formed: M_Solar
 continuity["metallicity"] = (1e-3, 2.5)
 cont_nbins = 6
 first_bin = 10 * u.Myr
@@ -115,19 +121,30 @@ sfh["tau"] = (0.001, 3.0)  # Vary the time of peak star-formation between
 # exceeding the age of the universe at the
 # observed redshift.
 
-sfh["tau_prior"] = "uniform"  # Impose a prior which is uniform in log_10 of the
+sfh["tau_prior"] = (
+    "uniform"  # Impose a prior which is uniform in log_10 of the
+)
 if sfh["tau"][0] == 0 and sfh["tau_prior"] == "log_10":
     sfh["tau"][0] = 0.01
 
 sfh["alpha"] = (0, 10.0)  # Vary the falling power law slope from 0.01 to 1000.
 sfh["beta"] = (0, 10.0)  # Vary the rising power law slope from 0.01 to 1000.
-sfh["alpha_prior"] = "uniform"  # Impose a prior which is uniform in log_10 of the
-sfh["beta_prior"] = "uniform"  # parameter between the limits which have been set
+sfh["alpha_prior"] = (
+    "uniform"  # Impose a prior which is uniform in log_10 of the
+)
+sfh["beta_prior"] = (
+    "uniform"  # parameter between the limits which have been set
+)
 # above as in Carnall et al. (2017).
 sfh["massformed"] = (5.0, 12.0)
 sfh["metallicity"] = (1e-3, 2.5)
 
-fit_instructions_dpl = {"t_bc": 0.01, sfh_type: sfh, "nebular": nebular, "dust": dust}
+fit_instructions_dpl = {
+    "t_bc": 0.01,
+    sfh_type: sfh,
+    "nebular": nebular,
+    "dust": dust,
+}
 
 meta_dpl = {
     "run_name": "photoz_dpl",
@@ -170,7 +187,10 @@ meta_lognorm = {
     "sampler": "multinest",
 }
 
-overall_dict = {"meta": meta_lognorm, "fit_instructions": fit_instructions_lognorm}
+overall_dict = {
+    "meta": meta_lognorm,
+    "fit_instructions": fit_instructions_lognorm,
+}
 
 lognorm_dict = copy.deepcopy(overall_dict)
 
@@ -202,7 +222,10 @@ meta_resolved = {
     "fit_photometry": "bin",
 }
 
-overall_dict = {"meta": meta_resolved, "fit_instructions": fit_instructions_resolved}
+overall_dict = {
+    "meta": meta_resolved,
+    "fit_instructions": fit_instructions_resolved,
+}
 resolved_dict = copy.deepcopy(overall_dict)
 
 

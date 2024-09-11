@@ -1,4 +1,3 @@
-
 import astropy.units as u
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
@@ -80,7 +79,9 @@ if __name__ == "__main__":
 
     # Update continuity_dicts_bins
     for pos, dict in enumerate(continuity_dicts):
-        continuity_dicts[pos]["fit_instructions"]["continuity"]["bin_edges"] = list(
+        continuity_dicts[pos]["fit_instructions"]["continuity"][
+            "bin_edges"
+        ] = list(
             calculate_bins(
                 redshift=redshifts[pos],
                 num_bins=6,

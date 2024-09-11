@@ -19,15 +19,21 @@ def convert_coordinates(coordinates, redshift, pixel_scale=0.03 * u.arcsecond):
     return coords_pixels
 
 
-def apply_pixel_coordinate_mask(gal, pixel_mask, pixel_scale=0.03 * u.arcsecond):
+def apply_pixel_coordinate_mask(
+    gal, pixel_mask, pixel_scale=0.03 * u.arcsecond
+):
     coords = gal.stars.centered_coordinates.to_astropy().to(u.kpc)
 
     coords = convert_coordinates(coords, gal.redshift)
 
     coords_2d_pixels = coords[:, [1, 0]]  # x, y
 
-    coords_2d_pixels[:, 0] = coords_2d_pixels[:, 0] + np.shape(pixel_mask)[1] / 2
-    coords_2d_pixels[:, 1] = coords_2d_pixels[:, 1] + np.shape(pixel_mask)[0] / 2
+    coords_2d_pixels[:, 0] = (
+        coords_2d_pixels[:, 0] + np.shape(pixel_mask)[1] / 2
+    )
+    coords_2d_pixels[:, 1] = (
+        coords_2d_pixels[:, 1] + np.shape(pixel_mask)[0] / 2
+    )
 
     # print(coords_2d_pixels)
 
@@ -50,7 +56,12 @@ def apply_pixel_coordinate_mask(gal, pixel_mask, pixel_scale=0.03 * u.arcsecond)
 
     masks = []
     for i, j in zip(x_bins, y_bins):
-        if i < 0 or i >= pixel_mask.shape[0] or j < 0 or j >= pixel_mask.shape[1]:
+        if (
+            i < 0
+            or i >= pixel_mask.shape[0]
+            or j < 0
+            or j >= pixel_mask.shape[1]
+        ):
             masks.append(False)
         else:
             masks.append(pixel_mask[j, i])
@@ -67,7 +78,9 @@ def get_spectra_in_mask(
     pixel_scale=0.03 * u.arcsecond,
 ):
     if aperture_mask_radii is not None and pixel_mask is not None:
-        raise ValueError("Must provide only one of aperture_mask or pixel_mask")
+        raise ValueError(
+            "Must provide only one of aperture_mask or pixel_mask"
+        )
     elif aperture_mask_radii is None and pixel_mask is None:
         raise ValueError("Must provide either aperture_mask or pixel_mask")
 
@@ -83,7 +96,9 @@ def get_spectra_in_mask(
             if aperture_mask_radii.unit == u.arcsec:
                 aperture_mask_radii /= pixel_scale
             # Convert to pixels if not providing a unyt quantity
-            coords = convert_coordinates(coords, gal.redshift, pixel_scale=pixel_scale)
+            coords = convert_coordinates(
+                coords, gal.redshift, pixel_scale=pixel_scale
+            )
 
         mask = coords[:, 0] ** 2 + coords[:, 1] ** 2 < aperture_mask_radii**2
 
