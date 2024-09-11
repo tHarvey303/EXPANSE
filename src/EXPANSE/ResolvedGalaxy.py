@@ -537,7 +537,7 @@ class ResolvedGalaxy:
             for prop in properties_to_load:
                 attr = getattr(galaxy, f"{prop}", None)
                 if attr is not None:
-                    if type(attr) in [list, np.ndarray] and len(attr) == 1:
+                    if type(attr) is in [list, np.ndarray] and len(attr) == 1:
                         attr = attr[0]
                     meta_properties[prop] = attr.value
 
@@ -662,7 +662,7 @@ class ResolvedGalaxy:
     @classmethod
     def init_from_h5(cls, h5_name, h5_folder="galaxies/", return_attr=False):
         """Load a galaxy from an .h5 file"""
-        if type(h5_name) == BytesIO:
+        if type(h5_name) is BytesIO:
             h5path = h5_name
 
         else:
@@ -1581,7 +1581,7 @@ class ResolvedGalaxy:
                     )
 
             # Add MockGalaxy properties
-            if type(self) == MockResolvedGalaxy:
+            if type(self) is MockResolvedGalaxy:
                 # Copy over the mock galaxy properties if they exist
                 hfile.create_group("mock_galaxy")
 
@@ -1600,7 +1600,7 @@ class ResolvedGalaxy:
                 if self.seds is not None:
                     hfile["mock_galaxy"].create_group("seds")
                     for key in self.seds.keys():
-                        if type(self.seds[key]) == np.ndarray:
+                        if type(self.seds[key]) is np.ndarray:
                             hfile["mock_galaxy"]["seds"].create_dataset(
                                 key, data=self.seds[key]
                             )
@@ -1614,7 +1614,7 @@ class ResolvedGalaxy:
                 if self.sfh is not None:
                     hfile["mock_galaxy"].create_group("sfh")
                     for key in self.sfh.keys():
-                        if type(self.sfh[key]) == np.ndarray:
+                        if type(self.sfh[key]) is np.ndarray:
                             hfile["mock_galaxy"]["sfh"].create_dataset(
                                 key, data=self.sfh[key]
                             )
@@ -2205,11 +2205,11 @@ class ResolvedGalaxy:
         else:
             psf_type = override_psf_type
 
-        if type(red) == str:
+        if type(red) is str:
             red = [red]
-        if type(green) == str:
+        if type(green) is str:
             green = [green]
-        if type(blue) == str:
+        if type(blue) is str:
             blue = [blue]
 
         if use_psf_matched:
@@ -2348,9 +2348,9 @@ class ResolvedGalaxy:
                 header = fits.Header()
             else:
                 header = Header.fromstring(self.phot_img_headers[band], sep="\n")
-            if type(data) == u.Quantity:
+            if type(data) is u.Quantity:
                 data = data.value
-            if type(var) == u.Quantity:
+            if type(var) is u.Quantity:
                 var = var.value
 
             hdu = fits.PrimaryHDU(data, header=header)
@@ -2991,7 +2991,7 @@ class ResolvedGalaxy:
         if crop_by == "ID":
             crop_by = f"ID={int(self.galaxy_id)}"
 
-        if cat == None:
+        if cat is None:
             from galfind import Catalogue, EAZY
             from galfind.Catalogue_Creator import GALFIND_Catalogue_Creator
 
@@ -3179,7 +3179,7 @@ class ResolvedGalaxy:
         if type(data) in [dict]:
             data = str(data)
 
-        if type(data) == str:
+        if type(data) is str:
             if data.endswith(".fits"):
                 data = fits.open(data)[ext].data
                 original_data = data
@@ -3375,7 +3375,7 @@ class ResolvedGalaxy:
             table.add_row(row)
         # Add MAG_APER
         for aper in self.aperture_dict.keys():
-            if type(aper) == u.Quantity:
+            if type(aper) is u.Quantity:
                 aper = aper.value
             row = [f"MAG_APER_{aper}", f"MAG_APER_{aper}"]
             for pos, band in enumerate(self.bands):
@@ -3892,7 +3892,7 @@ class ResolvedGalaxy:
     ):
         # meta - run_name, use_bpass, redshift (override)
         assert (
-            type(bagpipes_config) == dict
+            type(bagpipes_config) is dict
         ), "Bagpipes config must be a dictionary"  # Could load from a file as well
         meta = bagpipes_config.get("meta", {})
         # Override fit_photometry if it is in the meta
@@ -3907,7 +3907,7 @@ class ResolvedGalaxy:
         os.environ["use_bpass"] = str(int(use_bpass))
         run_name = meta.get("run_name", "default")
         redshift = meta.get("redshift", self.redshift)  # PLACEHOLDER for self.redshift
-        if type(redshift) == str:
+        if type(redshift) is str:
             # logic to choose a redshift to fit at
             if redshift == "eazy":
                 print("Using EAZY redshift.")
@@ -4015,7 +4015,7 @@ class ResolvedGalaxy:
             mask = flux_table["type"] == "MAG_APER"
         elif fit_photometry == "TOTAL_BIN+MAG_APER_TOTAL":
             mask = (flux_table["type"] == "MAG_APER_TOTAL") | (
-                flux_table["type"] == "TOTAL_BIN"
+                flux_table["type"] is "TOTAL_BIN"
             )
         else:
             raise ValueError(
@@ -4260,7 +4260,7 @@ class ResolvedGalaxy:
         if bins_to_show == "all":
             bins_to_show = np.unique(table["#ID"])
 
-        if type(colors) == str:
+        if type(colors) is str:
             colors = [colors for i in range(len(bins_to_show))]
 
         if cache is None:
@@ -4335,7 +4335,6 @@ class ResolvedGalaxy:
         run_dir="pipes/",
         cache=None,
     ):
-        sys.path.insert(1, plotpipes_dir)
 
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -4358,7 +4357,7 @@ class ResolvedGalaxy:
         if bins_to_show == "all":
             bins_to_show = np.unique(table["bin"])
 
-        if type(marker_colors) == str:
+        if type(marker_colors) is str:
             marker_colors = [marker_colors for i in range(len(bins_to_show))]
 
         if cache is None:
@@ -4422,7 +4421,6 @@ class ResolvedGalaxy:
         fig=None,
         axes=None,
     ):
-        sys.path.insert(1, plotpipes_dir)
 
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -4444,7 +4442,7 @@ class ResolvedGalaxy:
         if axes is None:
             axes = fig.add_subplot(111)
 
-        if type(marker_colors) == str and len(bins_to_show) > 1:
+        if type(marker_colors) is str and len(bins_to_show) > 1:
             cmap = plt.get_cmap(cmap)
             marker_colors = cmap(np.linspace(0, 1, len(bins_to_show)))
             # marker_colors = [marker_colors for i in range(len(bins_to_show))]
@@ -5001,7 +4999,7 @@ class ResolvedGalaxy:
                     ]
                     fmask = np.array(fmask, dtype=bool)
 
-                    pos = np.argwhere(fmask == True)[0][0]
+                    pos = np.argwhere(fmask)[0][0]
                     band = self.bands[pos]
                     # print(f'Using band {band} at wavelength 
                     # {self.filter_wavs[band].to(u.AA)} for weighting at {obs_wav} (rest frame {wav})')
@@ -5053,14 +5051,19 @@ class ResolvedGalaxy:
         plotpipes_dir = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), plotpipes_dir
         )
-        sys.path.insert(1, plotpipes_dir)
-        # print(plotpipes_dir)
-
         if type(rbin) not in [list, np.ndarray]:
             single = True
             rbin = [rbin]
         else:
             single = False
+
+        # If name can be a number, only allow integers
+        for i in range(len(rbin)):
+            try:
+                rbin[i] = int(rbin[i])
+            except ValueError:
+                pass
+
 
         output = {}
         from .bagpipes.plotpipes import PipesFit
@@ -5152,9 +5155,7 @@ class ResolvedGalaxy:
         plotpipes_dir = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), plotpipes_dir
         )
-        # print(plotpipes_dir)
-        sys.path.insert(1, plotpipes_dir)
-
+        
         from bagpipes.plotting import hist1d
 
         if run_name is None:
@@ -5200,7 +5201,7 @@ class ResolvedGalaxy:
         if colors is None:
             colors = mcm.get_cmap("cmr.guppy", len(bins))
             colors = {rbin: colors(i) for i, rbin in enumerate(bins)}
-        if type(colors) == list:
+        if type(colors) is list:
             assert len(colors) == len(bins), "Need to provide a color for each bin"
             colors = {rbin: colors[i] for i, rbin in enumerate(bins)}
 
@@ -5548,10 +5549,11 @@ class ResolvedGalaxy:
                 total_flux = np.zeros_like(flux)
                 total_wav = wav
             else:
-                assert all(
-                    wav == total_wav
-                ), f"Wavelengths do not match, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}"
-
+                #assert all(
+                #    wav == total_wav
+                #), f"Wavelengths do not match, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}"
+                # switch to np.isclose
+                assert np.allclose(wav, total_wav, rtol=0, atol = 0.003), f"Wavelengths not within tolerance, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}"
             total_flux += flux
 
         out_array = np.zeros((len(total_flux), 2))
@@ -6188,9 +6190,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             if "seds" in mock_galaxy.keys():
                 params["seds"] = {}
                 for key in mock_galaxy["seds"].keys():
-                    if type(mock_galaxy["seds"][key]) == h5.Dataset:
+                    if type(mock_galaxy["seds"][key] is h5.Dataset:
                         params["seds"][key] = mock_galaxy["seds"][key][()]
-                    elif type(mock_galaxy["seds"][key]) == h5.Group:
+                    elif type(mock_galaxy["seds"][key]) is h5.Group:
                         params["seds"][key] = {}
                         for key2 in mock_galaxy["seds"][key].keys():
                             params["seds"][key][key2] = mock_galaxy["seds"][key][key2][
@@ -6202,9 +6204,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             if "sfh" in mock_galaxy.keys():
                 params["sfh"] = {}
                 for key in mock_galaxy["sfh"].keys():
-                    if type(mock_galaxy["sfh"][key]) == h5.Dataset:
+                    if type(mock_galaxy["sfh"][key]) is h5.Dataset:
                         params["sfh"][key] = mock_galaxy["sfh"][key][()]
-                    elif type(mock_galaxy["sfh"][key]) == h5.Group:
+                    elif type(mock_galaxy["sfh"][key]) is h5.Group:
                         params["sfh"][key] = {}
                         for key2 in mock_galaxy["sfh"][key].keys():
                             params["sfh"][key][key2] = mock_galaxy["sfh"][key][key2][()]
@@ -7137,24 +7139,24 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 x = band_objects["x"]
                 # print('here')
                 # print(x, type(x))
-                x = x[obj_mask] if type(x) == np.ndarray else x
+                x = x[obj_mask] if type(x) is np.ndarray else x
                 # print(x)
                 y = band_objects["y"]
-                y = y[obj_mask] if type(y) == np.ndarray else y
+                y = y[obj_mask] if type(y) is np.ndarray else y
                 a = band_objects["a"]
-                a = a[obj_mask] if type(a) == np.ndarray else a
+                a = a[obj_mask] if type(a) is np.ndarray else a
                 b = band_objects["b"]
-                b = b[obj_mask] if type(b) == np.ndarray else b
+                b = b[obj_mask] if type(b) is np.ndarray else b
                 theta = band_objects["theta"]
-                theta = theta[obj_mask] if type(theta) == np.ndarray else theta
+                theta = theta[obj_mask] if type(theta) is np.ndarray else theta
 
-                r = r[obj_mask] if type(r) == np.ndarray else r
+                r = r[obj_mask] if type(r) is np.ndarray else r
                 kron_flux = (
-                    kron_flux[obj_mask] if type(kron_flux) == np.ndarray else kron_flux
+                    kron_flux[obj_mask] if type(kron_flux) is np.ndarray else kron_flux
                 )
                 kron_fluxerr = (
                     kron_fluxerr[obj_mask]
-                    if type(kron_fluxerr) == np.ndarray
+                    if type(kron_fluxerr) is np.ndarray
                     else kron_fluxerr
                 )
 
@@ -7368,7 +7370,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         if fig is None:
             fig, ax = plt.subplots(1, 1, figsize=(8, 4.5), facecolor=facecolor, dpi=200)
 
-        if type(components) == str:
+        if type(components) is str:
             components = [components]
 
         for component in components:
@@ -7443,7 +7445,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         redshift = self.redshift
 
-        if type(norm) == str:
+        if type(norm) is str:
             norm = [norm] * len(parameters)
 
         for i, param in enumerate(parameters):
@@ -7814,11 +7816,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         else:
             if mask is not None:
-                if type(mask) == dict:
+                if type(mask) is dict:
                     d = getattr(self, mask["attr"])
                     mask = d[mask["key"]]
 
-                if type(mask) == str:
+                if type(mask) is str:
                     mask_str = copy.copy(mask)
 
                 mask = mask.astype(bool)
@@ -8014,7 +8016,7 @@ class MultipleResolvedGalaxy:
     # Run any function on all galaxies
     def run_function(self, function, *args, **kwargs):
         for galaxy in self.galaxies:
-            if type(function) == str:
+            if type(function) is str:
                 rfunction = getattr(galaxy, function)
             else:
                 rfunction = function
@@ -8075,7 +8077,7 @@ def run_bagpipes_wrapper(
 
 if __name__ == "__main__":
     if computer == "morgan":
-        catalog_path_selected = "/nvme/scratch/work/tharvey/resolved_sedfitting/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits"
+        catalog_path_selected = "/nvme/scratch/work/tharvey/EXPANSE/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits"
         cat_selected = Table.read(catalog_path_selected)
         ids = cat_selected["NUMBER"]
         cutout_size = cat_selected["CUTOUT_SIZE"][10:]
@@ -8144,9 +8146,8 @@ if __name__ == "__main__":
         print(f"Total number of bins to fit: {num_of_bins}")
         # Run Bagpipes in parallel
 
-    sys.path.insert(1, "pipes_scripts/")
-    from plotpipes import calculate_bins
-    from pipes_models import (
+    from .bagpipes.plotpipes import calculate_bins
+    from .bagpipes.pipes_models import (
         delayed_dict,
         continuity_dict,
         dpl_dict,

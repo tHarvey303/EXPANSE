@@ -1,40 +1,36 @@
 # Gratefully modified from aperpy (https://github.com/astrowhit/aperpy/tree/main), all credit to Weaver et al for the original code.
 
-from astropy.io import fits
-import numpy as np
-import os
-from astropy.nddata import block_reduce
-from photutils.psf import create_matching_kernel, SplitCosineBellWindow
-from scipy.ndimage import zoom
-from astropy.visualization import simple_norm
-from astropy.convolution import convolve_fft
-import time
-from astropy.table import Table
-import scipy
-from copy import copy
-from astropy.stats import mad_std
-from photutils.centroids import centroid_com
-import matplotlib.pyplot as plt
-from photutils.detection import find_peaks
-from astropy.wcs import WCS
-from astropy.nddata import Cutout2D
-from astropy.modeling.fitting import LinearLSQFitter, FittingWithOutlierRemoval
-from astropy.modeling.models import Linear1D
 import glob
-from astropy.visualization import ImageNormalize
-import matplotlib.scale as mscale
-import matplotlib.transforms as mtransforms
-import matplotlib.ticker as ticker
+import os
+import time
+from copy import copy
+
 import cv2
+import matplotlib.pyplot as plt
+import matplotlib.scale as mscale
+import matplotlib.ticker as ticker
+import matplotlib.transforms as mtransforms
+import numpy as np
+import scipy
+from astropy.convolution import convolve_fft
+from astropy.io import fits
+from astropy.modeling.fitting import FittingWithOutlierRemoval, LinearLSQFitter
+from astropy.modeling.models import Linear1D
+from astropy.nddata import Cutout2D, block_reduce
+from astropy.stats import mad_std, sigma_clip
+from astropy.table import Table, hstack
+from astropy.visualization import ImageNormalize, simple_norm
+from astropy.wcs import WCS
 from photutils import CircularAperture, aperture_photometry
-from astropy.table import hstack
-from astropy.stats import sigma_clip
-from scipy.ndimage import binary_dilation
+from photutils.centroids import centroid_com
+from photutils.detection import find_peaks
+from photutils.psf import SplitCosineBellWindow, create_matching_kernel
+from scipy.ndimage import binary_dilation, zoom
 from skimage.morphology import disk
 
 np.errstate(invalid="ignore")
 from astropy.visualization import LinearStretch, LogStretch
-from regions import Regions, PointPixelRegion, PointSkyRegion
+from regions import PointPixelRegion, PointSkyRegion, Regions
 
 
 def make_psf(
@@ -107,14 +103,14 @@ def make_psf(
         use_filters = filters
     """
     if use_psf_masks is not None:
-        assert type(use_psf_masks) == dict, 'use_psf_masks should be a dictionary of the form {band: mask_path}'
+        assert type(use_psf_masks) is dict, 'use_psf_masks should be a dictionary of the form {band: mask_path}'
         if match_band in use_psf_masks:
             psf_mask = fits.getdata(use_psf_masks[match_band])
             print(f'Using PSF mask for {match_band}...')
-        
+
         psf_masks = {fits.getdata(use_psf_masks[f]) for f in use_filters}
     """
-    if type(phot_zp) == float:
+    if type(phot_zp) is float:
         phot_zp = {f: phot_zp for f in filters}
 
     for pfilt in use_filters:
@@ -676,7 +672,7 @@ def find_stars(
         for ir in np.arange(len(radii)):
             peaks["p" + str(ir)] = 0.0
 
-        t0 = time.time()
+        time.time()
 
         for ip, p in enumerate(peaks):
             co = Cutout2D(img, (p["x"], p["y"]), size, mode="partial")
@@ -884,7 +880,7 @@ class PSF:
             y = all_y[i]
             ids = all_ids[i]
 
-            if type(image) == np.ndarray:
+            if type(image) is np.ndarray:
                 img = image
                 xx = x[i]
                 yy = y[i]
@@ -896,7 +892,7 @@ class PSF:
                 xx, yy = wcs.all_world2pix(x, y, 0)
                 self.filename = images
 
-            if type(ids) == type(None):
+            if type(ids) is type(None):
                 ids = np.arange(1, len(x) + 1)
 
             self.nx = pixsize
@@ -932,10 +928,10 @@ class PSF:
         self.ok = np.ones(len(self.cat))
 
     def phot(self, radius=8):
-        pos = np.array([self.cat["x"], self.cat["y"]])
+        np.array([self.cat["x"], self.cat["y"]])
 
         caper = CircularAperture((self.c0, self.c0), r=radius)
-        cmask = Cutout2D(
+        Cutout2D(
             caper.to_mask(), (radius, radius), self.nx, mode="partial"
         ).data  # check ding galfit for better way
         phot = [aperture_photometry(st, caper)["aperture_sum"][0] for st in self.data]
@@ -943,12 +939,12 @@ class PSF:
 
     def measure(self, norm_radius=8):
         peaks = []
-        c0 = self.nx // 2
+        self.nx // 2
         self.norm_radius = norm_radius
 
         peaks = np.array([st.max() for st in self.data])
         peaks[~np.isfinite(peaks) | (peaks == 0)] = 0
-        pos = np.array([self.cat["x"], self.cat["y"]])
+        np.array([self.cat["x"], self.cat["y"]])
 
         # data = np.array(self.data)
         # data[self.data.mask] = 0
@@ -1065,7 +1061,7 @@ class PSF:
     def growth_curves(self):
         for i in np.arange(len(self.data)):
             radii, cog, profile = measure_curve_of_growth(a)
-            r = radii * self.pixelscale
+            radii * self.pixelscale
 
     def center(self, window=21, interpolation=cv2.INTER_CUBIC):
         if "x0" in self.cat.colnames:
@@ -1092,7 +1088,7 @@ class PSF:
             x1, y1 = centroid_com(st)
 
             # now in central half of stamp
-            st2 = Cutout2D(p, (self.c0, self.c0), int(self.nx * 0.5), fill_value=0).data
+            Cutout2D(p, (self.c0, self.c0), int(self.nx * 0.5), fill_value=0).data
             # measure moment shift in positive definite in case there are strong ying yang residuals
             x2, y2 = centroid_com(np.maximum(p, 0))
 
@@ -1345,7 +1341,7 @@ def stamp_rms_snr(img, block_size=3, rotate=True):
     s = dp.shape[1]
     buf = 6
     dp[s // buf : (buf - 1) * s // buf, s // buf : (buf - 1) * s // buf] = np.nan
-    dp3 = block_reduce(dp, block_size=3)
+    block_reduce(dp, block_size=3)
 
     rms = mad_std(dp, ignore_nan=True) / block_size * np.sqrt(img.size)
     if rotate:
@@ -1403,7 +1399,6 @@ def powspace(start, stop, num=30, power=0.5, **kwargs):
 
 
 def plot_profile(psf, target):
-    shape = psf.shape
     # center = (shape[1]//2, shape[0]//2) old - changed 12/08/24
     center_psf = centroid_com(psf)
 
@@ -1451,20 +1446,20 @@ def convolve_images(
         im_filename = im_paths[band]
         wht_filename = wht_paths[band]
         err_filename = err_paths[band]
-        if type(im_filename) == list:
+        if type(im_filename) is list:
             print("WARNING!, Only doing the first image")
             im_filename = im_filename[0]
-        if type(wht_filename) == list:
+        if type(wht_filename) is list:
             print("WARNING!, Only doing the first weight image")
             wht_filename = wht_filename[0]
-        if type(err_filename) == list:
+        if type(err_filename) is list:
             print("WARNING!, Only doing the first error image")
             err_filename = err_filename[0]
 
         same_file = im_filename == wht_filename == err_filename
         outnames = []
         outdir = outdirs[band]
-        if type(outdir) == list:
+        if type(outdir) is list:
             print("WARNING!, Only doing the first outdir")
             outdir = outdir[0]
 
@@ -1658,11 +1653,10 @@ def psf_comparison(
         pass
     nrows = int(np.ceil(len(bands) / max_cols))
     colors = plt.get_cmap(cmap)
-    band_colors = {band: colors(i / len(bands)) for i, band in enumerate(bands)}
+    {band: colors(i / len(bands)) for i, band in enumerate(bands)}
     tool_colors = {
         key: colors(i / len(psf_dir_dict)) for i, key in enumerate(psf_dir_dict.keys())
     }
-    linestyles = ["-", "--", "-.", ":"]
     fig, axs = plt.subplots(
         nrows=nrows,
         ncols=max_cols,
@@ -1710,7 +1704,7 @@ def psf_comparison(
 
             radii = (
                 radii * pixelscale
-                if type(pixelscale) == float
+                if type(pixelscale) is float
                 else radii * pixelscale[name]
             )
             # Interpolate COG to get radii at COG = 0.8
@@ -1795,13 +1789,11 @@ def rel_cog_comparison(
         print("Using custom style")
     except FileNotFoundError:
         pass
-    nrows = 2
     colors = plt.get_cmap(cmap)
     band_colors = {band: colors(i / len(bands)) for i, band in enumerate(bands)}
-    tool_colors = {
+    {
         key: colors(i / len(psf_dir_dict)) for i, key in enumerate(psf_dir_dict.keys())
     }
-    linestyles = ["-", "--", "-.", ":"]
     fig, axs = plt.subplots(
         nrows=2,
         ncols=1,
@@ -2047,12 +2039,12 @@ def get_webbpsf(
     jitter_sigma=None,
 ):
     # makes the PSF at og_fov and clips down to fov. Tested with 0.04 "/px
-    import webbpsf
-    from astropy.io import fits
-    import numpy as np
-    from scipy import ndimage
     import os
-    from astropy.io import ascii
+
+    import numpy as np
+    import webbpsf
+    from astropy.io import ascii, fits
+    from scipy import ndimage
 
     # from config import SW_FILTERS, LW_FILTERS, PATH_SW_ENERGY, PATH_LW_ENERGY
     SW_FILTERS = [
@@ -2104,7 +2096,6 @@ def get_webbpsf(
 
     # Check if filter is valid and get correction term
     if filt in SW_FILTERS:
-        detector = "NCRA5"
         # 17 corresponds with 2" radius (i.e. 4" FOV)
         energy_table = ascii.read(PATH_SW_ENERGY)
         row = np.argmin(abs(fov / 2.0 - energy_table["aper_radius"]))
@@ -2112,7 +2103,6 @@ def get_webbpsf(
         norm_fov = energy_table["aper_radius"][row] * 2
         print(f'Will normalize PSF within {norm_fov}" FOV to {encircled}')
     elif filt in LW_FILTERS:
-        detector = "NCRA1"
         energy_table = ascii.read(PATH_LW_ENERGY)
         row = np.argmin(abs(fov / 2.0 - energy_table["aper_radius"]))
         encircled = energy_table[row][filt]
@@ -2393,7 +2383,7 @@ if __name__ == "__main__":
         "+".join(surveys): outdir,
         "UNCOVER DR3": "/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/",
         "WebbPSF Default": f"{outdir_webbpsf}/default_jitter",
-        "WebbPSF\n$\sigma=\left\{^{22(SW)}_{34(LW)}\\right.$ mas": f"{outdir_webbpsf}/morishita_jitter",
+        "WebbPSF\n$\\sigma=\\left\\{^{22(SW)}_{34(LW)}\\right.$ mas": f"{outdir_webbpsf}/morishita_jitter",
     }
     # Rederived 'NEW Webbpsf models have no difference to ours!
     #'New webbpsf':'/nvme/scratch/work/tharvey/PSFs/webbpsf/'}
@@ -2401,7 +2391,7 @@ if __name__ == "__main__":
         "+".join(surveys): 0.03,
         "WebbPSF Default": 0.03,
         "UNCOVER DR3": 0.04,
-        "WebbPSF\n$\sigma=\left\{^{22(SW)}_{34(LW)}\\right.$ mas": 0.03,
+        "WebbPSF\n$\\sigma=\\left\\{^{22(SW)}_{34(LW)}\\right.$ mas": 0.03,
     }  # 'New webbpsf':0.03}
 
     # Make PSF model and kernels from stacking stars

@@ -1,31 +1,31 @@
-import panel as pn
-import numpy as np
-from panel.layout.gridstack import GridStack
-import matplotlib as mpl
-import xarray as xr
-import holoviews as hv
-import matplotlib.cm as cm
-import matplotlib.pyplot as plt
-import h5py
-import click
-from io import BytesIO
-import sys
-from matplotlib.colors import Normalize
-from astropy import units as u
-import h5py as h5
 import os
 import subprocess
-from astropy.wcs import WCS
+import sys
+from io import BytesIO
+
+import click
+import h5py
+import h5py as h5
+import holoviews as hv
+import matplotlib as mpl
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import numpy as np
+import panel as pn
+import xarray as xr
+from astropy import units as u
 from astropy.io import fits
+from astropy.wcs import WCS
+from matplotlib.colors import Normalize
+from panel.layout.gridstack import GridStack
 
 # package imports
-from .ResolvedGalaxy import ResolvedGalaxy, MockResolvedGalaxy
+from .ResolvedGalaxy import MockResolvedGalaxy, ResolvedGalaxy
 
 sys.setrecursionlimit(100000)
-import resource
-
 # change bokeh logging level
 import logging
+import resource
 
 logging.getLogger("bokeh").setLevel(logging.ERROR)
 # Change logging level for panel
@@ -140,7 +140,7 @@ def update_image(value):
 
 
 def possible_runs_select(sed_fitting_tool):
-    if sed_fitting_tool == None:
+    if sed_fitting_tool is None:
         return None
 
     options = resolved_galaxy.sed_fitting_table.get(sed_fitting_tool, None)
@@ -239,7 +239,7 @@ def handle_map_click(
 ):
     # print('handel map click')
     use = True
-    if x == None or y == None:
+    if x is None or y is None:
         use = False
     if use:
         if not (
@@ -393,7 +393,6 @@ def plot_sed(
         table = resolved_galaxy.photometry_table[psf_type][which_map_param]
     else:
         table = None
-    bands = resolved_galaxy.bands
 
     resolved_galaxy.get_filter_wavs()
     wavs = resolved_galaxy.filter_wavs
@@ -406,11 +405,11 @@ def plot_sed(
             aper_dict = resolved_galaxy.aperture_dict[str(0.32*u.arcsec)]
         elif option in table['ID']:
             aper_dict = table[table['ID'] == option]
-            
+
     flux = aper_dict['flux'] * u.Jy
     wave = aper_dict['wave'] * u.AA
     flux_err = aper_dict['flux_err'] * u.Jy
-    
+
     if y_unit == u.ABmag:
         # Assymmetric error bars
         #[2.5*np.log10(flux/(flux-flux_err)), 2.5 * np.log10(1+flux_err/flux)]
@@ -459,7 +458,7 @@ def plot_sed(
         for bin_pos, rbin in enumerate(
             multi_choice_bins_param + total_fit_options_param
         ):
-            if type(rbin) == str:
+            if type(rbin) is str:
                 color = TOTAL_FIT_COLORS[rbin]
                 colors_total.append(color)
             else:
@@ -526,7 +525,7 @@ def plot_sed(
                     yerr = flux_err.to(
                         y_unit, equivalencies=u.spectral_density(wav)
                     ).value
-                lab = int(rbin) if type(rbin) == float else rbin
+                lab = int(rbin) if type(rbin) is float else rbin
                 lab = lab if pos == 0 else ""
                 # print(band)
                 # print(flux.to(y_unit, equivalencies = u.spectral_density(wav)).value, yerr)
@@ -551,7 +550,7 @@ def plot_sed(
     ax.set_ylim(ax.get_ylim())
 
     if which_sed_fitter_param == "bagpipes" and (
-        which_run_aperture_param != None or which_run_resolved_param != None
+        which_run_aperture_param is not None or which_run_resolved_param is not None
     ):
         # Check if bagpipes run exists
         # Plot resolved fits
@@ -656,7 +655,7 @@ def plot_bagpipes_pdf(
     colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
 
     if which_sed_fitter_param == "bagpipes" and (
-        which_run_aperture_param != None or which_run_resolved_param != None
+        which_run_aperture_param is not None or which_run_resolved_param is not None
     ):
         # Check if bagpipes run exists
         fig = None
@@ -907,7 +906,7 @@ def plot_sfh(
                 cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = cache
 
             if len(fig.get_axes()) != 0:
-                ax = fig.get_axes()[0]
+                fig.get_axes()[0]
                 # ax.set_xlim(0, 1)
 
             # Maybe fix
@@ -918,7 +917,7 @@ def plot_sfh(
                 import plotly.tools as tls
                 fig = tls.mpl_to_plotly(fig)
                 # set xlabel
-                
+
                 fig.update_layout(xaxis_title = 'Lookback Time (Gyr)', yaxis_title = 'SFR (M<sub>☉</sub>/yr)')
                 # Set background color
                 fig['layout']['plot_bgcolor'] = 'white'
@@ -946,11 +945,11 @@ def plot_sfh(
                           updatemenus=[
                 dict(
                     buttons=list([
-                        dict(label="Linear SFR",  
-                            method="relayout", 
+                        dict(label="Linear SFR",
+                            method="relayout",
                             args=[{"yaxis.type": "linear"}]),
-                        dict(label="Log SFR", 
-                            method="relayout", 
+                        dict(label="Log SFR",
+                            method="relayout",
                             args=[{"yaxis.type": "log"}]),
                                     ]),
                     x=0,
@@ -961,11 +960,11 @@ def plot_sfh(
 
                 dict(
                     buttons=list([
-                        dict(label="Linear Time",  
-                            method="relayout", 
+                        dict(label="Linear Time",
+                            method="relayout",
                             args=[{"xaxis.type": "linear"}]),
-                        dict(label="Log Time", 
-                            method="relayout", 
+                        dict(label="Log Time",
+                            method="relayout",
                             args=[{"xaxis.type": "log"}]),
                                     ]),
                     x=0.2,
@@ -974,7 +973,7 @@ def plot_sfh(
                     yanchor="top"
                     ),
                 ])
-                
+
                 # label buttons
                 #fig.update_layout(
                 #    annotations=[
@@ -984,7 +983,7 @@ def plot_sfh(
                 #             showarrow=False)
                 #    ]
                 #)
-                
+
                 return pn.pane.Plotly(fig, sizing_mode="scale_both", config={"scrollZoom": True}, max_width=400)
             except ImportError:
                 pass
@@ -1023,7 +1022,7 @@ def plot_corner(
     if "RESOLVED" in multi_choice_bins_param:
         multi_choice_bins_param.remove("RESOLVED")
 
-    colors_bins = [
+    [
         cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin))
         for pos, rbin in enumerate(multi_choice_bins_param)
     ]
@@ -1080,7 +1079,7 @@ def plot_corner(
                 cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = cache
             """
 
-            if fig == None:
+            if fig is None:
                 fig = plt.figure()
 
             fig.set_facecolor(facecolor)
@@ -1164,7 +1163,7 @@ def plot_phot_property(
     frame="obs",
     conv_author_year="M99",
 ):
-    rest_UV_wav_text = (
+    (
         f"{int(rest_UV_wav_lims[0].value)}_{int(rest_UV_wav_lims[1].value)}AA"
     )
 
@@ -1443,12 +1442,10 @@ def other_bagpipes_results_func(
 
     if outtype == "gif":
         logmap = False
-        scale = "linear"
         if param_property in ["stellar_mass", "sfr"]:
             if norm_param == "log":
                 logmap = True
         else:
-            scale = norm_param
             weight_mass_sfr = False
 
         fig = resolved_galaxy.plot_bagpipes_map_gif(
@@ -1470,7 +1467,7 @@ def other_bagpipes_results_func(
         )
 
     if fig is not None:
-        if type(fig) == plt.Figure:
+        if type(fig) is plt.Figure:
             plt.close(fig)
             # print('returning fig')
             return pn.pane.Matplotlib(
@@ -1917,7 +1914,7 @@ def handle_file_upload(value, components):
         # fitsmap_page = pn.bind(fits, watch=False)
         galaxy_tabs.append(("Fitsmap", fitsmap_page))
 
-    if type(resolved_galaxy) == MockResolvedGalaxy:
+    if isinstance(resolved_galaxy, MockResolvedGalaxy):
         print("Adding synthesizer")
         mock_page = pn.param.ParamFunction(synthesizer_page, watch=False, lazy=True)
         galaxy_tabs.append(("Synthesizer", mock_page))

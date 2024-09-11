@@ -1,9 +1,9 @@
-from astropy.io import fits
-from astropy.convolution import convolve_fft
 import matplotlib.pyplot as plt
+import numpy as np
+from astropy.convolution import convolve_fft
+from astropy.io import fits
 from photutils.aperture import CircularAperture
 from photutils.centroids import centroid_2dg
-import numpy as np
 
 filters = [
     "F090W",

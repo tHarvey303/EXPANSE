@@ -1,37 +1,38 @@
-import numpy as np
-from astropy.table import Table
-from astropy.io import fits
-import matplotlib.pyplot as plt
-import astropy.units as u
-import astropy.constants as c
-import matplotlib.patheffects as pe
-import shutil
 import ast
-from tqdm import tqdm
-from matplotlib.ticker import AutoMinorLocator
-import matplotlib as mpl
-from astropy.cosmology import FlatLambdaCDM
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
-import warnings
-import time
-import matplotlib.patches as patches
 import glob
 import os
+import shutil
 import sys
+import time
+import warnings
 from pathlib import Path
+
+import astropy.constants as c
+import astropy.units as u
 import h5py
-from astropy.nddata import Cutout2D
+import matplotlib as mpl
+import matplotlib.patches as patches
+import matplotlib.patheffects as pe
+import matplotlib.pyplot as plt
+import numpy as np
 from astropy.coordinates import SkyCoord
-from astropy.wcs import WCS
+from astropy.cosmology import FlatLambdaCDM
+from astropy.io import fits
+from astropy.nddata import Cutout2D
 from astropy.nddata.utils import NoOverlapError
+from astropy.table import Table
 from astropy.visualization import (
-    make_lupton_rgb,
-    LogStretch,
-    ManualInterval,
     ImageNormalize,
     LinearStretch,
+    LogStretch,
+    ManualInterval,
+    make_lupton_rgb,
 )
+from astropy.wcs import WCS
+from matplotlib.ticker import AutoMinorLocator
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from tqdm import tqdm
 
 # Bye warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -180,7 +181,7 @@ def combine_bands(bands, image_paths):
             print(f"No data in {band}.")
             continue
 
-    if opened_first == False:
+    if not opened_first:
         return None, None
 
 
@@ -216,9 +217,9 @@ class PipesFit:
         bands=None,
         data_func=None,
     ):
-        start1 = time.time()
+        time.time()
         # Manually loading the .h5 file with deepdish
-        if overall_field == None:
+        if overall_field is None:
             self.overall_field = field
         else:
             self.overall_field = overall_field
@@ -276,11 +277,11 @@ class PipesFit:
             import importlib
 
             importlib.reload(sys.modules["bagpipes"])
-            from bagpipes import config, galaxy, fit
+            from bagpipes import config, fit, galaxy
 
         else:
-            from bagpipes import config, galaxy, fit
             import run_bagpipes
+            from bagpipes import config, fit, galaxy
 
         if self.config_used is not None:
             assert (
@@ -329,10 +330,10 @@ class PipesFit:
             self.fitted_type = "phot"
 
         if self.fitted_type == "phot":
-            if self.data_func == None:
+            if self.data_func is None:
                 self.data_func = run_bagpipes.load_fits
             os.environ["input_unit"] = self.catalogue_flux_unit.to_string()
-            if self.bands == None:
+            if self.bands is None:
                 self.bands = run_bagpipes.load_fits(
                     galaxy_id, return_bands=True, verbose=False
                 )
@@ -342,9 +343,9 @@ class PipesFit:
             photometry_exists = True
 
         if self.fitted_type == "spec":
-            if self.data_func == None:
+            if self.data_func is None:
                 self.data_func = run_bagpipes.load_spectra
-            if self.bands == None:
+            if self.bands is None:
                 self.bands = None
             spectrum_exists = True
             photometry_exists = False
@@ -383,15 +384,12 @@ class PipesFit:
         )
 
         if "redshift" in self.fit.fitted_model.params:
-            redshift_vary = "free"
             if fit_instructions.get("redshift_prior_sigma", False):
-                redshift_vary = "gauss"
                 self.zphot = np.median(self.fit.posterior.samples["redshift"])
                 self.zphot_16 = f'-{self.zphot - np.percentile(self.fit.posterior.samples["redshift"], 16):.1f}'
                 self.zphot_84 = f'+{np.percentile(self.fit.posterior.samples["redshift"], 84)-self.zphot:.1f}'
 
         else:
-            redshift_vary = "fix"
             # print(self.fit.fitted_model.model_components.keys())
             self.zphot = self.fit.fitted_model.model_components["redshift"]
             self.zphot_16 = ""
@@ -493,7 +491,7 @@ class PipesFit:
 
             self.name = ", ".join(self.name)
         # _{{\\rm{{phot}}}}
-        end = f"$z:{self.zphot:.1f}^{{{self.zphot_84}}}_{{{self.zphot_16}}} \\ \log{{M_{{*}}}}:{self.stellar_mass_50:.1f}^{{+{self.stellar_mass_84-self.stellar_mass_50:.1f}}}_{{-{self.stellar_mass_50-self.stellar_mass_16:.1f}}} \\ \chi^2:{self.chi2:<4.1f}$"
+        end = f"$z:{self.zphot:.1f}^{{{self.zphot_84}}}_{{{self.zphot_16}}} \\ \\log{{M_{{*}}}}:{self.stellar_mass_50:.1f}^{{+{self.stellar_mass_84-self.stellar_mass_50:.1f}}}_{{-{self.stellar_mass_50-self.stellar_mass_16:.1f}}} \\ \\chi^2:{self.chi2:<4.1f}$"
         self.name = f"{end:<30} ({self.name})"
         # self.name = f'SFH: {sfh[:3]} Age: {age_prior:<7} Dust: {dust[:3]}, {dust_prior:<10} Z: {metallicity_prior:<10} z$_{{phot}}$: {self.zphot:.2f}$^{{{self.zphot_84}}}_{{{self.zphot_16}}}$ $\chi^2$: {self.chi2:.2f}'
 
@@ -688,7 +686,7 @@ class PipesFit:
             eff_wavs = fit.galaxy.filter_set.eff_wavs * u.AA
             # Convert to desired units.
             wavs_plot = wavs.to(wav_units).value
-            eff_wavs_plot = eff_wavs.to(wav_units).value
+            eff_wavs.to(wav_units).value
 
             if background_spectrum:
                 spec_post = (
@@ -965,7 +963,7 @@ class PipesFit:
             fnu_jy_err = fnu[:, 1].to(u.Jy)
             wav = wav.to(wav_units).value
             fnu_plot = fnu_jy.to(flux_units).value
-            fnu_plot_err = fnu_jy_err.to(flux_units).value
+            fnu_jy_err.to(flux_units).value
 
             ax.plot(
                 wav, fnu_plot, color=color, zorder=zorder, lw=lw, label=label, alpha=0.7
@@ -974,15 +972,15 @@ class PipesFit:
             """
             Make this work - need assymetric uncertanties
             if spectrum.shape[1] == 2:
-                
+
                 ax.plot(wav, fnu_plot,
                         color=color, zorder=zorder, lw=lw, label=label, alpha=0.7)
 
             elif spectrum.shape[1] == 3:
-                
+
                 ax.plot(wav, fnu_plot, label = label,
                         color=color, zorder=zorder, lw=lw, alpha=0.7)
-                
+
                 lower = (fnu_out - fn)
                 upper = (spectrum[:, 1] + spectrum[:, 2])
 
@@ -1040,7 +1038,7 @@ class PipesFit:
             # if parameter not in names:
             #     raise Exception(f'{parameter} was not fit.')
         # print(names, parameter)
-        pos = np.argwhere(np.array(names) == parameter)[0][0]
+        np.argwhere(np.array(names) == parameter)[0][0]
 
         # Get axis labels
         name = parameter
@@ -1062,7 +1060,7 @@ class PipesFit:
             n_x = fit.fitted_model.model_components[comp]["bins"]
             t_percentile = int(np.round(100 * (j + 1) / n_x))
             j += 1
-            label = "$t_{" + str(t_percentile) + "}\ /\ \mathrm{Gyr}$"
+            label = "$t_{" + str(t_percentile) + r"}\ /\ \mathrm{Gyr}$"
 
         if return_samples:
             return samples
@@ -1149,7 +1147,7 @@ class PlotPipes:
         self.catalogue_flux_unit = catalogue_flux_unit
         self.simulated_cat = simulated_cat
         self.compact_plot = compact_plot
-        if overall_field == None:
+        if overall_field is None:
             self.overall_field = field
         else:
             self.overall_field = overall_field
@@ -1217,7 +1215,7 @@ class PlotPipes:
             num_id = int(self.galaxy_id.split("_")[0])
 
             self.row = Table(
-                self.catalog[(self.catalog[self.id_col] == num_id) & mask == True]
+                self.catalog[(self.catalog[self.id_col] == num_id) & mask]
             )
 
             if len(self.row) == 0:
@@ -1257,7 +1255,7 @@ class PlotPipes:
 
         if add_prospector:
             try:
-                if type(prospector_run_name) == list:
+                if type(prospector_run_name) is list:
                     for run_name in prospector_run_name:
                         self.add_prospector(run_name=run_name)
                 else:
@@ -1403,14 +1401,14 @@ class PlotPipes:
         flux_units=u.ABmag,
         max_bands=8,
     ):
-        if type(cmap) == str:
+        if type(cmap) is str:
             cmap = plt.get_cmap(cmap)
             colours = cmap(np.linspace(0, 1, len(self.fits)))
             if len(self.fits) == 1:
                 colours = ["purple"]
-        elif type(cmap) == list and len(cmap) == len(self.fits):
+        elif type(cmap) is list and len(cmap) == len(self.fits):
             colours = cmap
-        elif type(cmap) == list and len(cmap) != len(self.fits):
+        elif type(cmap) is list and len(cmap) != len(self.fits):
             step = len(cmap) / len(self.fits)
             colours = []
             for i in range(len(self.fits)):
@@ -1430,14 +1428,13 @@ class PlotPipes:
             except:
                 pass
 
-        if found == False:
+        if not found:
             bands = None
             print(self.galaxy_id, self.field)
             print(self.h5_paths)
             raise Exception("No bands found. Cannot plot cutouts.")
 
         width = len(bands)
-        height = 3
         height_bands = 1
         height_ratios = [2.5, 1.0]
 
@@ -1470,7 +1467,7 @@ class PlotPipes:
 
         """t = ax_photo.text(0.5, 0.5, 'Text')
 
-        fonts = ['xx-small', 'x-small', 'small', 'medium', 'large', 
+        fonts = ['xx-small', 'x-small', 'small', 'medium', 'large',
                 'x-large', 'xx-large', 'larger', 'smaller']
 
         for font in fonts:
@@ -1512,7 +1509,7 @@ class PlotPipes:
                                 pe.withStroke(linewidth=4, foreground="black")
                             ]
                             cutout_ax.annotate(
-                                f"{self.row[f'sigma_{band}'][0][0]:.1f}$\sigma$",
+                                rf"{self.row[f'sigma_{band}'][0][0]:.1f}$\sigma$",
                                 xy=(0.94, 0.82),
                                 ha="right",
                                 xycoords="axes fraction",
@@ -1684,14 +1681,14 @@ class PlotPipes:
     ):
         # cmap='cmr.ember'
         # Get cmap to get colors for each fit
-        if type(cmap) == str:
+        if type(cmap) is str:
             cmap = plt.get_cmap(cmap)
             colours = cmap(np.linspace(0, 1, len(self.fits)))
             if len(self.fits) == 1:
                 colours = ["purple"]
-        elif type(cmap) == list and len(cmap) == len(self.fits):
+        elif type(cmap) is list and len(cmap) == len(self.fits):
             colours = cmap
-        elif type(cmap) == list and len(cmap) != len(self.fits):
+        elif type(cmap) is list and len(cmap) != len(self.fits):
             step = len(cmap) / len(self.fits)
             colours = []
             for i in range(len(self.fits)):
@@ -1711,7 +1708,7 @@ class PlotPipes:
             except:
                 pass
 
-        if found == False:
+        if not found:
             bands = None
 
         width = 14
@@ -1772,7 +1769,7 @@ class PlotPipes:
                                 pe.withStroke(linewidth=4, foreground="black")
                             ]
                             cutout_ax.annotate(
-                                f"{self.row[f'sigma_{band}'][0][0]:.1f}$\sigma$",
+                                rf"{self.row[f'sigma_{band}'][0][0]:.1f}$\sigma$",
                                 xy=(0.94, 0.85),
                                 ha="right",
                                 xycoords="axes fraction",
@@ -1973,7 +1970,7 @@ class PlotPipes:
                 )
                 # with np.printoptions(threshold=np.inf):
                 #    print(rgb)
-                im = ax.imshow(rgb, origin="lower", interpolation="none")
+                ax.imshow(rgb, origin="lower", interpolation="none")
                 scalebar = AnchoredSizeBar(
                     ax.transData,
                     1 / pixel_scale,
@@ -2276,7 +2273,7 @@ if __name__ == "__main__":
     ids = [8462, 1475, 5929, 1919,  267, 9687, 1787, 1843, 8182, 6572, 5514,  182,
     	6081, 7100, 8195, 2825, 2507, 4026, 5418, 8934, 2107, 8538, 9463,  466,
     	2131, 6384, 6900, 9708,  774, 8021, 8205, 9644, 4089, 6417, 5917, 5424,
-    	8922, 6241] 
+    	8922, 6241]
 
     fields = ['CEERSP2', 'CEERSP2', 'CEERSP2', 'CEERSP2', 'CEERSP3', 'CEERSP3', 'CEERSP3',
             'CEERSP3', 'CEERSP3', 'CEERSP3', 'CEERSP5', 'CEERSP5', 'CEERSP5', 'CEERSP5',
@@ -2284,13 +2281,13 @@ if __name__ == "__main__":
             'CEERSP7', 'CEERSP7', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8',
             'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP9', 'CEERSP9',
             'CEERSP9', 'CEERSP9', 'CEERSP10']
-    
+
 
     #id = 3184
 
     #field = 'NEP-3'
     Parallel(n_jobs=1)(delayed(main)(id, field) for id, field in zip(ids, fields))
-    
+
 
 
     """
@@ -2298,17 +2295,17 @@ if __name__ == "__main__":
     # JOF
 
     """
-    
+
 
     overwrite = True
     for field in ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4', 'NGDEEP', 'MACS-0416',  'SMACS-0723', 'El-Gordo', 'CLIO', 'GLASS', 'CEERS']: #CEERS
         overall_field = field
         if field == 'CEERS':
             catalog_path = f"/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v9/ACS_WFC+NIRCam/Combined/{field}_MASTER_Sel-f277W+f356W+f444W_v9_loc_depth_masked_10pc_EAZY_matched_selection.fits"
-            
+
             catalog = Table.read(catalog_path)
             catalog = catalog[catalog['final_sample_highz_fsps_larson'] == True]
-            
+
             for id, field in zip(catalog['NUMBER'], catalog['FIELDNAME']):
                 if not Path(f'/nvme/scratch/work/tharvey/bagpipes/pipes/plots/{field}/{id}_{field}.png').is_file() or overwrite:
                     try:
@@ -2332,7 +2329,7 @@ if __name__ == "__main__":
             if not Path(f'/nvme/scratch/work/tharvey/bagpipes/pipes/plots/{field}/{id}_{field}.png').is_file() or overwrite:
                 try:
                     PlotPipes(f'{id}_{field}', field, catalog_path=catalog_path, mixed_cat=True, field_col='FIELDNAME',
-                    overall_field=overall_field, robust_col='final_sample_highz', eazy_template='fsps_larson', 
+                    overall_field=overall_field, robust_col='final_sample_highz', eazy_template='fsps_larson',
                     redshift_col='zbest', add_prospector=False)
                 except FileExistsError as e:
                     print(e)

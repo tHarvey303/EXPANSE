@@ -1,7 +1,8 @@
 import copy
-import astropy.units as u
-from .plotpipes import calculate_bins
 
+import astropy.units as u
+
+from .plotpipes import calculate_bins
 
 # First fit
 sfh = {}

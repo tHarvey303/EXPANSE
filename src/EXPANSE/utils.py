@@ -1,6 +1,14 @@
+import curses
+import os
+import sys
+import threading
+import time
+
+import matplotlib as mpl
 import numpy as np
 from astropy import units as u
-import matplotlib as mpl
+from photutils import EllipticalAperture, aperture_photometry
+
 
 def update_mpl(tex_on=True):
     mpl.rcParams["lines.linewidth"] = 2.0
@@ -62,7 +70,7 @@ def scale_fluxes(
 
     print(f"Corrected aperture magnitude by {factor} mag.")
     # Scale for PSF
-    assert type(psf) == np.ndarray, "PSF must be a numpy array"
+    assert type(psf) is np.ndarray, "PSF must be a numpy array"
     assert (
         np.sum(psf) < 1
     ), "PSF should not be normalised, some flux is outside the footprint."
@@ -77,7 +85,7 @@ def scale_fluxes(
 
     if a > psf.shape[0] or b > psf.shape[0]:
         # approximate as a circle
-        r = np.sqrt(a * b) * kron_radius
+        np.sqrt(a * b) * kron_radius
         # encircled_energy = # enclosed_energy in F444W from band
     else:
         elliptical_aperture = EllipticalAperture(center, a=6 * a, b=6 * b, theta=theta)
@@ -298,4 +306,18 @@ def is_cli():
 
     # If none of the above, it's likely a CLI environment
     return True
+
+
+def send_email(contents, subject='', address='tharvey303@gmail.com'):
+    '''
+	except Exception as e:
+		# Email me if you crash
+		ctime  = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+		send_email(contents=f'{e}', subject = f'{sys.argv[0]} crash at {ctime}')
+		raise e
+
+    '''
+    import yagmail
+    yagmail.SMTP('tcharvey303', oauth2_file='/nvme/scratch/work/tharvey/scripts/testing/client_secret.json').send(address, subject, contents)
+    print('Sent email.')
 

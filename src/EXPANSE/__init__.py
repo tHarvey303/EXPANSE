@@ -1,4 +1,7 @@
-from .ResolvedGalaxy import ResolvedGalaxy, MockResolvedGalaxy, MultipleResolvedGalaxy
+from .ResolvedGalaxy import (ResolvedGalaxy, 
+                            MockResolvedGalaxy,
+                            MultipleResolvedGalaxy,
+                            run_bagpipes_wrapper)
 
 from .synthesizer_functions import (convert_coordinates,
                                    apply_pixel_coordinate_mask,

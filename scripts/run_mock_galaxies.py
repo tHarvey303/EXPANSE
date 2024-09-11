@@ -1,21 +1,19 @@
-from ResolvedGalaxy import MockResolvedGalaxy, run_bagpipes_wrapper
+
+import astropy.units as u
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
 from joblib import Parallel, delayed
-import astropy.units as u
-import sys
 
-sys.path.insert(1, "pipes_scripts/")
-from plotpipes import calculate_bins
-from pipes_models import (
-    delayed_dict,
+from EXPANSE import MockResolvedGalaxy, run_bagpipes_wrapper
+from EXPANSE.bagpipes import (
+    calculate_bins,
     continuity_dict,
+    create_dicts,
+    delayed_dict,
     dpl_dict,
     lognorm_dict,
     resolved_dict,
-    create_dicts,
 )
-
 
 if __name__ == "__main__":
     n_jobs = 8

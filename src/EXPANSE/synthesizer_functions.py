@@ -1,9 +1,8 @@
+import matplotlib.pyplot as plt
+import numpy as np
 from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
-import numpy as np
-from unyt import unyt_array, Msun, yr, Myr
-import matplotlib.pyplot as plt
-
+from unyt import Msun, Myr, unyt_array, yr
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
@@ -73,14 +72,14 @@ def get_spectra_in_mask(
         raise ValueError("Must provide either aperture_mask or pixel_mask")
 
     assert (
-        type(aperture_mask_radii) == type(unyt_array)
-        or type(aperture_mask_radii) == u.Quantity
-    ) or type(pixel_mask) == np.ndarray
+        type(aperture_mask_radii) is type(unyt_array)
+        or type(aperture_mask_radii) is u.Quantity
+    ) or type(pixel_mask) is np.ndarray
 
     if aperture_mask_radii is not None:
         coords = gal.stars.centered_coordinates.to_astropy().to(u.kpc)
 
-        if type(aperture_mask_radii) == u.Quantity:
+        if type(aperture_mask_radii) is u.Quantity:
             if aperture_mask_radii.unit == u.arcsec:
                 aperture_mask_radii /= pixel_scale
             # Convert to pixels if not providing a unyt quantity
@@ -130,7 +129,7 @@ def calculate_sfh(galaxy, binw=5 * Myr, pixel_mask=None, plot=False):
         fig, ax = plt.subplots()
         ax.plot(binc, sfr.to(Msun / yr))
         ax.set_xlabel("Time (Myr)")
-        ax.set_ylabel("SFR ($M_{\odot}/yr)$")
+        ax.set_ylabel(r"SFR ($M_{\odot}/yr)$")
 
         plt.show()
 
