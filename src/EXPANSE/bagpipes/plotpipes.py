@@ -45,22 +45,25 @@ if "nvme" in file_path:
     computer = "morgan"
 elif "Users" in file_path:
     computer = "mac"
+else:
+    computer == 'unknown'
 
 if computer == "mac":
     bagpipes_dir = "/Users/user/Documents/PhD/bagpipes_dir/"
     prospector_dir = ""
     db_dir = ""
     #print("Running on Mac.")
-    sys.path.insert(1, bagpipes_dir)
-
-
 elif computer == "morgan":
     bagpipes_dir = "/nvme/scratch/work/tharvey/bagpipes/"
     db_dir = "/nvme/scratch/work/tharvey/dense_basis/pregrids/"
     prospector_dir = "/nvme/scratch/work/tharvey/prospector/output"
     #print("Running on Morgan.")
-    sys.path.insert(1, bagpipes_dir)
-    sys.path.insert(4, "/nvme/scratch/work/tharvey/prospector")
+    
+elif computer == "unknown":
+    bagpipes_dir = ''
+    db_dir = ''
+    prospector_dir = ''
+
 
 bagpipes_filter_dir = f"{bagpipes_dir}/inputs/filters/"
 
