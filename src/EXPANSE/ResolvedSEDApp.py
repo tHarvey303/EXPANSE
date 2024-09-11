@@ -2,7 +2,8 @@ import os
 import subprocess
 import sys
 from io import BytesIO
-
+from panel.layout.gridstack import GridStack
+import panel as pn
 import click
 import h5py as h5
 import matplotlib as mpl
@@ -55,6 +56,16 @@ elif "Users" in file_path:
     computer = "mac"
     mpl.use("macOsX")
     mpl.rcParams["text.usetex"] = True
+
+pn.extension(sizing_mode="stretch_width", design="material")
+pn.extension("gridstack")
+pn.extension(notifications=True)
+try:
+    import plotly
+
+    pn.extension("plotly")
+except ImportError:
+    pass
 
 # sns.set_context("paper")
 # plt.style.use('paper.mplstyle')
@@ -2122,24 +2133,12 @@ def expanse_viewer(port):
     global stream
 
     try:
-        from panel.layout.gridstack import GridStack
-        import panel as pn
         import holoviews as hv
         import xarray as xr
     except ImportError:
         print("Please install the following packages:")
         print("panel, holoviews, xarray")
         return False
-
-    pn.extension(sizing_mode="stretch_width", design="material")
-    pn.extension("gridstack")
-    pn.extension(notifications=True)
-    try:
-        import plotly
-
-        pn.extension("plotly")
-    except ImportError:
-        pass
 
     stream = hv.streams.Tap(transient=True)
 
