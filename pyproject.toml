@@ -102,10 +102,10 @@ test = [
 ]
 
 extend = [
-    #galfind", # git clone https://github.com/u92876da/galfind.git
+    galfind", # git clone https://github.com/u92876da/galfind.git
     "astroquery", # pip install astroquery
-    "cv2", # pip install opencv-python
-    "piXedfit", # git clone https://github.com/aabdurrouf/piXedfit.git
+    "opencv-python", # pip install opencv-python
+    "piXedfit @ git+https://github.com/aabdurrouf/piXedfit@main"
     "webbpsf",
     "vorbin",
 ]

@@ -1981,7 +1981,8 @@ def cli():
     pass
 '''
 @click.command()
-def expanse_viewer():
+@click.option("--port", default=8000, help="Port to run the server on.")
+def expanse_viewer(port):
     ## resolved_sed_interface().servable()
     pn.serve(
         resolved_sed_interface,
