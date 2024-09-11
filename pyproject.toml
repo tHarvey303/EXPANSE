@@ -1,0 +1,231 @@
+[project]
+name = "EXPANSE"
+
+# Dynamic version numbers from git
+dynamic = ["version"]
+
+# Tagline for EXPANSE
+description = "Resolved Galaxy Analysis and Exploration"
+
+# A longer description of EXPANSE
+readme = "README.md"
+
+# Minimum Python version
+requires-python = ">=3.8"
+
+# The licence
+license = {file = "LICENSE.md"}
+
+# Project keywords
+keywords =[
+  "galaxy",
+  "modelling",
+  "smoothed particle hydrodynamics",
+  "particles",
+  "nbody",
+  "galaxy formation",
+  "parametric",
+  "theory",
+  "sph",
+  "cosmology",
+  "galaxy evolution",
+  "survey",
+  "space telescope",
+  "SED",
+  "sed",
+  "spectral energy distribution",
+  "stellar population",
+  "synthesis",
+]
+
+#  authors
+authors = [
+  {name = "T. Harvey", email = "tharvey303@gmail.com"},
+  
+]
+maintainers = [
+  {name = "T. Harvey", email = "tharvey303@gmail.com"},
+]
+
+
+# Classifiers
+classifiers = [  # Optional
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  "Development Status :: 3 - Beta",  # 3 Alpha/4 Beta/5 Production/Stable
+  "Intended Audience :: Astronomers",
+  "Topic :: Spatially Resolved Analysis",
+  "License :: GNU GENERAL PUBLIC LICENSE v3.0",
+
+  # Supported Python versions
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+# Dependencies
+dependencies = [
+  "setuptools",
+  "astropy",
+  "h5py",
+  "numpy >= 1.23",
+  "packaging",
+  "scipy",
+  "unyt",
+  "cmasher",
+  "click>=8.1",
+  "dust_extinction",
+  "matplotlib",
+  "spectres",
+  "photutils",
+  "tqdm",
+  "requests",
+]
+
+# Optional dependencies for specific use cases
+[project.optional-dependencies]
+# Development
+dev = [
+    "ruff>=0.3.0",
+]
+# Testing
+test = [
+    "nbmake",
+    "pytest",
+    "ruff>=0.3.0",
+    "mypy>=0.910",
+]
+
+extend = [
+    #galfind", # git clone https://github.com/u92876da/galfind.git
+    "astroquery", # pip install astroquery
+    "cv2", # pip install opencv-python
+    "piXedfit", # git clone https://github.com/aabdurrouf/piXedfit.git
+    "webbpsf",
+    "vorbin",
+]
+
+sed_fitting = [
+    "dense_basis",
+    "fsps",
+    "emcee",
+    "bagpipes",
+    "statsmodels",
+]
+
+# Mock galxiees
+
+mock = [
+    "synthesizer"
+]
+
+viewer = [
+    "panel",
+    "holoviews",
+    "xarray",
+    "hvplot",
+    "plotly",
+]
+
+
+# Project urls
+[project.urls]
+"Source" = "https://github.com/tHarvey303/EXPANSE"
+
+
+
+[project.scripts]
+expanse-viewer = "EXPANSE:expanse_viewer"
+
+
+# Set up the build system
+[build-system]
+
+# Use latest setuotools, setuptools_scm for git versioning and
+# numpy (numpy includes are needed for compilation of C extensions)
+requires = ["setuptools>=64", "setuptools_scm>=8", "numpy>=1.23", "flit_core<4"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+
+# Make a version file at build time
+version_file = "src/EXPANSE/_version.py"
+
+# Configure the linter and formatter
+[tool.ruff]
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    ".DS_Store",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "*__init__.py"  # ignore all init files
+]
+
+# PEP-8 line length
+line-length = 79
+indent-width = 4
+
+
+# Assume Python 3.8 by default regardless
+target-version = "py38"
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and pycodestyle (`E`)  codes by default.
+select = ["F", "E", "W"]
+ignore = [
+       "E402",  # "module level import not at top of file" (isolate C imports in case python alternatives exist)
+       "F811",  # "redefinition of unused name from line N" (breaks quantity objects)
+       ]
+
+# Sort imports alphabetically
+extend-select = ["I"]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"

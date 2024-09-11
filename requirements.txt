@@ -29,3 +29,7 @@ hvplot
 #ipywidgets_bokeh
 #ipympl didn't work
 plotly==5.23.0 # optional
+
+# optional
+
+ruff

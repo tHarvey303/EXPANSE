@@ -1,0 +1,2 @@
+[console_scripts]
+expanse-viewer = EXPANSE:expanse_viewer
