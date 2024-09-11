@@ -38,7 +38,7 @@ jobs:
     
     - name: Test with pytest
       run: |
-        # pytest
+        pytest
     # - uses: chartboost/ruff-action@v1  # Lint with Ruff
     #   with:
     #     version: 0.6.4
