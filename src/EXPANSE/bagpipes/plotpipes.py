@@ -46,7 +46,7 @@ if "nvme" in file_path:
 elif "Users" in file_path:
     computer = "mac"
 else:
-    computer == 'unknown'
+    computer = 'unknown'
 
 if computer == "mac":
     bagpipes_dir = "/Users/user/Documents/PhD/bagpipes_dir/"
@@ -58,7 +58,7 @@ elif computer == "morgan":
     db_dir = "/nvme/scratch/work/tharvey/dense_basis/pregrids/"
     prospector_dir = "/nvme/scratch/work/tharvey/prospector/output"
     #print("Running on Morgan.")
-    
+
 elif computer == "unknown":
     bagpipes_dir = ''
     db_dir = ''
