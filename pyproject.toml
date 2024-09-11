@@ -76,6 +76,7 @@ dependencies = [
   "numpy >= 1.23",
   "packaging",
   "scipy",
+  "joblib",
   "unyt",
   "cmasher",
   "click>=8.1",

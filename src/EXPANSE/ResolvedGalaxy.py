@@ -5105,7 +5105,6 @@ class ResolvedGalaxy:
                 )
                 params_b.append(param)
 
-            from joblib import Parallel, delayed
 
             pipes_objs = Parallel(n_jobs=n_cores)(
                 delayed(PipesFit)(**param) for param in params_b
