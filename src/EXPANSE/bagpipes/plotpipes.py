@@ -46,23 +46,23 @@ if "nvme" in file_path:
 elif "Users" in file_path:
     computer = "mac"
 else:
-    computer = 'unknown'
+    computer = "unknown"
 
 if computer == "mac":
     bagpipes_dir = "/Users/user/Documents/PhD/bagpipes_dir/"
     prospector_dir = ""
     db_dir = ""
-    #print("Running on Mac.")
+    # print("Running on Mac.")
 elif computer == "morgan":
     bagpipes_dir = "/nvme/scratch/work/tharvey/bagpipes/"
     db_dir = "/nvme/scratch/work/tharvey/dense_basis/pregrids/"
     prospector_dir = "/nvme/scratch/work/tharvey/prospector/output"
-    #print("Running on Morgan.")
+    # print("Running on Morgan.")
 
 elif computer == "unknown":
-    bagpipes_dir = ''
-    db_dir = ''
-    prospector_dir = ''
+    bagpipes_dir = ""
+    db_dir = ""
+    prospector_dir = ""
 
 
 bagpipes_filter_dir = f"{bagpipes_dir}/inputs/filters/"
@@ -86,7 +86,9 @@ def calculate_bins(
     time_sfr_start = cosmo.lookback_time(redshift_sfr_start)
     time_dif = abs(time_observed - time_sfr_start)
     if second_bin is not None:
-        assert second_bin > first_bin, "Second bin must be greater than first bin"
+        assert (
+            second_bin > first_bin
+        ), "Second bin must be greater than first bin"
 
     if second_bin is None:
         diff = np.linspace(
@@ -113,7 +115,9 @@ def calculate_bins(
                     [[0, np.log10(first_bin.to(output_unit).value)], diff]
                 )
             else:
-                return np.concatenate([[0, first_bin.to(output_unit).value], diff])
+                return np.concatenate(
+                    [[0, first_bin.to(output_unit).value], diff]
+                )
     bins = []
     bins.append(
         [
@@ -194,7 +198,9 @@ def five_sig_depth_to_n_sig_depth(five_sig_depth, n):
     return n_sig_mag
 
 
-def colormap(z, z_range=(6, 21), cmap=mpl.colormaps.get_cmap("gist_rainbow_r")):
+def colormap(
+    z, z_range=(6, 21), cmap=mpl.colormaps.get_cmap("gist_rainbow_r")
+):
     z = z - z_range[0]
     z_top = z_range[1] - z_range[0]
     z_new = z / z_top
@@ -243,7 +249,10 @@ class PipesFit:
                     f"{len(self.catalog)} matches for {galaxy_id} in column {ID_col}"
                 )
             try:
-                if f"{catalog[ID_col][0]}_{catalog[field_col][0]}" != galaxy_id:
+                if (
+                    f"{catalog[ID_col][0]}_{catalog[field_col][0]}"
+                    != galaxy_id
+                ):
                     print(f"{catalog[ID_col][0]}_{catalog[field_col][0]}")
                     print(galaxy_id)
                     raise Exception("Catalogue doesn't match galaxy ID")
@@ -327,7 +336,10 @@ class PipesFit:
         os.environ["excluded_bands"] = self.excluded_bands
         # Recreating the galaxy object
 
-        if "noise" in fit_instructions.keys() or "veldisp" in fit_instructions.keys():
+        if (
+            "noise" in fit_instructions.keys()
+            or "veldisp" in fit_instructions.keys()
+        ):
             self.fitted_type = "spec"
         else:
             self.fitted_type = "phot"
@@ -341,7 +353,9 @@ class PipesFit:
                     galaxy_id, return_bands=True, verbose=False
                 )
             # Get filter paths
-            self.filts = [f"{filter_path}/{filt}_LePhare.txt" for filt in self.bands]
+            self.filts = [
+                f"{filter_path}/{filt}_LePhare.txt" for filt in self.bands
+            ]
             spectrum_exists = False
             photometry_exists = True
 
@@ -378,12 +392,16 @@ class PipesFit:
 
         dust = fit_instructions["dust"]["type"]
         try:
-            dust_prior = fit_instructions["dust"]["Av_prior"]  # Some may not have this
+            dust_prior = fit_instructions["dust"][
+                "Av_prior"
+            ]  # Some may not have this
         except KeyError:
             dust_prior = "uniform"
         # redshift = fit_instructions.get('redshift', False) # This is range of redshift allowed to fit
         self.stellar_mass_16, self.stellar_mass_50, self.stellar_mass_84 = (
-            np.percentile(self.fit.posterior.samples["stellar_mass"], (16, 50, 84))
+            np.percentile(
+                self.fit.posterior.samples["stellar_mass"], (16, 50, 84)
+            )
         )
 
         if "redshift" in self.fit.fitted_model.params:
@@ -416,7 +434,9 @@ class PipesFit:
                 except KeyError:
                     age_prior = ""
 
-        metallicity_prior = fit_instructions[sfh].get("metallicity_prior", "uniform")
+        metallicity_prior = fit_instructions[sfh].get(
+            "metallicity_prior", "uniform"
+        )
 
         if dust_prior == "log_10":
             dust_prior = r"$\mathrm{log_{10}}$"
@@ -436,7 +456,11 @@ class PipesFit:
         fesc = 0.0
         if "fesc" in self.h5_path:
             try:
-                fesc = [float(i[3:]) for i in self.h5_path.split("_") if "fesc" in i][0]
+                fesc = [
+                    float(i[3:])
+                    for i in self.h5_path.split("_")
+                    if "fesc" in i
+                ][0]
             except:
                 fesc = "free"
 
@@ -540,17 +564,23 @@ class PipesFit:
                 ax.set_xlabel(
                     f"$\\mathbf{{\\mathrm{{Lookback\\ Time \\ ({timescale})}}}}$",
                     fontsize="small",
-                    path_effects=[pe.withStroke(linewidth=2, foreground="white")],
+                    path_effects=[
+                        pe.withStroke(linewidth=2, foreground="white")
+                    ],
                 )
 
             elif plottype == "absolute":
                 ax.set_xlabel(
                     f"$\\mathbf{{\\mathrm{{Age\\ of\\ Universe \\ ({timescale})}}}}$",
                     fontsize="small",
-                    patheffects=[pe.withStroke(linewidth=2, foreground="white")],
+                    patheffects=[
+                        pe.withStroke(linewidth=2, foreground="white")
+                    ],
                 )
 
-            ax.set_ylabel("$\\mathbf{\\mathrm{SFR\\ (M_\\odot)}$", fontsize="medium")
+            ax.set_ylabel(
+                "$\\mathbf{\\mathrm{SFR\\ (M_\\odot)}$", fontsize="medium"
+            )
 
             # ax.set_ylabel('SFR (M$_\odot$ yr$^{-1}$)', fontsize='medium')
             ax.tick_params(axis="both", which="major", labelsize="medium")
@@ -618,18 +648,23 @@ class PipesFit:
                 ax.set_xlabel(
                     f"$\\mathbf{{\\mathrm{{Lookback\\ Time \\ ({timescale})}}}}$",
                     fontsize="small",
-                    path_effects=[pe.withStroke(linewidth=2, foreground="white")],
+                    path_effects=[
+                        pe.withStroke(linewidth=2, foreground="white")
+                    ],
                 )
 
             elif plottype == "absolute":
                 ax.set_xlabel(
                     f"$\\mathbf{{\\mathrm{{Age\\ of\\ Universe \\ ({timescale})}}}}$",
                     fontsize="small",
-                    patheffects=[pe.withStroke(linewidth=2, foreground="white")],
+                    patheffects=[
+                        pe.withStroke(linewidth=2, foreground="white")
+                    ],
                 )
 
             ax.set_ylabel(
-                "$\\mathrm{SFR\\ (M_\\odot\\ \\mathrm{yr}^{-1}})$", fontsize="medium"
+                "$\\mathrm{SFR\\ (M_\\odot\\ \\mathrm{yr}^{-1}})$",
+                fontsize="medium",
             )
             # Move label to the other side
             # ax.yaxis.set_label_position("right")
@@ -671,7 +706,9 @@ class PipesFit:
         if self.fitted_type in ["phot", "both"]:
             fit = self.fit
             mask = fit.galaxy.photometry[:, 1] > 0.0
-            upper_lims = fit.galaxy.photometry[:, 1] + fit.galaxy.photometry[:, 2]
+            upper_lims = (
+                fit.galaxy.photometry[:, 1] + fit.galaxy.photometry[:, 2]
+            )
             ymax = 1.05 * np.max(upper_lims[mask])
 
             if not y_scale:
@@ -685,7 +722,11 @@ class PipesFit:
                 redshift = fit.fitted_model.model_components["redshift"]
 
             # Plot the posterior photometry and full spectrum.
-            wavs = fit.posterior.model_galaxy.wavelengths * (1.0 + redshift) * u.AA
+            wavs = (
+                fit.posterior.model_galaxy.wavelengths
+                * (1.0 + redshift)
+                * u.AA
+            )
             eff_wavs = fit.galaxy.filter_set.eff_wavs * u.AA
             # Convert to desired units.
             wavs_plot = wavs.to(wav_units).value
@@ -694,21 +735,29 @@ class PipesFit:
             if background_spectrum:
                 spec_post = (
                     np.percentile(
-                        fit.posterior.samples["spectrum_full"], (16, 84), axis=0
+                        fit.posterior.samples["spectrum_full"],
+                        (16, 84),
+                        axis=0,
                     ).T
                     * u.erg
                     / (u.cm**2 * u.s * u.AA)
                 )
 
-                spec_post = spec_post.astype(float)  # fixes weird isfinite error
+                spec_post = spec_post.astype(
+                    float
+                )  # fixes weird isfinite error
 
                 wavs_micron_3 = np.vstack([wavs, wavs]).T
                 flux_nu = spec_post * wavs_micron_3**2 / c.c
                 flux_nu = flux_nu.to(flux_units).value
 
-                ax.plot(wavs_plot, flux_nu[:, 0], color="black", zorder=zorder - 1)
+                ax.plot(
+                    wavs_plot, flux_nu[:, 0], color="black", zorder=zorder - 1
+                )
 
-                ax.plot(wavs_plot, flux_nu[:, 1], color="black", zorder=zorder - 1)
+                ax.plot(
+                    wavs_plot, flux_nu[:, 1], color="black", zorder=zorder - 1
+                )
 
                 ax.fill_between(
                     wavs_plot,
@@ -720,7 +769,9 @@ class PipesFit:
                 )
 
             phot_post = (
-                np.percentile(fit.posterior.samples["photometry"], (16, 84), axis=0).T
+                np.percentile(
+                    fit.posterior.samples["photometry"], (16, 84), axis=0
+                ).T
                 * u.erg
                 / (u.cm**2 * u.s * u.AA)
             )
@@ -734,7 +785,9 @@ class PipesFit:
                     * u.erg
                     / (u.cm**2 * u.s * u.AA)
                 )
-                mask = (phot_band > phot_post[j, 0]) & (phot_band < phot_post[j, 1])
+                mask = (phot_band > phot_post[j, 0]) & (
+                    phot_band < phot_post[j, 1]
+                )
                 phot_1sig = phot_band[mask]
                 wav_array = np.zeros(phot_1sig.shape[0]) + eff_wavs[j]
                 phot_1sig = phot_1sig * wav_array**2 / c.c
@@ -776,7 +829,11 @@ class PipesFit:
             redshift = np.median(self.fit.posterior.samples["redshift"])
         else:
             redshift = self.fit.fitted_model.model_components["redshift"]
-        wavs_aa = self.fit.posterior.model_galaxy.wavelengths * (1.0 + redshift) * u.AA
+        wavs_aa = (
+            self.fit.posterior.model_galaxy.wavelengths
+            * (1.0 + redshift)
+            * u.AA
+        )
 
         spec_post = np.percentile(
             self.fit.posterior.samples["spectrum_full"], (16, 50, 84), axis=0
@@ -883,7 +940,9 @@ class PipesFit:
                         non_detect_mask[pos] = False
                         loc_depth = self.catalog[f"loc_depth_{band}"][0][0]
                         three_sig_depth = (
-                            useful_funcs.five_sig_depth_to_n_sig_depth(loc_depth, 3)
+                            useful_funcs.five_sig_depth_to_n_sig_depth(
+                                loc_depth, 3
+                            )
                             * u.ABmag
                         )
                         three_sig_depth = three_sig_depth.to(flux_units).value
@@ -969,7 +1028,13 @@ class PipesFit:
             fnu_jy_err.to(flux_units).value
 
             ax.plot(
-                wav, fnu_plot, color=color, zorder=zorder, lw=lw, label=label, alpha=0.7
+                wav,
+                fnu_plot,
+                color=color,
+                zorder=zorder,
+                lw=lw,
+                label=label,
+                alpha=0.7,
             )
 
             """
@@ -1170,10 +1235,14 @@ class PlotPipes:
             raise NotADirectoryError(f"Path is not a directory\n{pipes_path}")
 
         # Recursively search for h5 files in the posterior folder
-        files = glob.glob(f"{str(path)}/posterior/**/{galaxy_id}.h5", recursive=True)
+        files = glob.glob(
+            f"{str(path)}/posterior/**/{galaxy_id}.h5", recursive=True
+        )
 
         # Filter out files that do not match the field or catalog version if requested
-        exclude_folders = [f"{self.overall_field}/{i}" for i in exclude_folders]
+        exclude_folders = [
+            f"{self.overall_field}/{i}" for i in exclude_folders
+        ]
         exclude_folders.extend(
             [f"{self.overall_field}/plot_temp", f"{self.overall_field}/temp"]
         )
@@ -1199,8 +1268,12 @@ class PlotPipes:
                 self.h5_paths.append(file)
         # Check we found some h5 files
         if len(self.h5_paths) == 0:
-            raise ValueError(f"No h5 files found for {galaxy_id} in {pipes_path}")
-        print(f"Found {len(self.h5_paths)} h5 files for {galaxy_id} in {pipes_path}")
+            raise ValueError(
+                f"No h5 files found for {galaxy_id} in {pipes_path}"
+            )
+        print(
+            f"Found {len(self.h5_paths)} h5 files for {galaxy_id} in {pipes_path}"
+        )
         print(self.h5_paths)
 
         # Load the catalog
@@ -1265,7 +1338,9 @@ class PlotPipes:
                     self.add_prospector(run_name=prospector_run_name)
             except FileNotFoundError as e:
                 print(e)
-                print(f"Prospector file not found for {self.galaxy_id}. Skipping.")
+                print(
+                    f"Prospector file not found for {self.galaxy_id}. Skipping."
+                )
         if self.compact_plot:
             self.pretty_plot_condensed()
         else:
@@ -1287,7 +1362,9 @@ class PlotPipes:
             dec=self.catalog[self.dec_col] * u.degree,
         )
         for i in range(2, 10):
-            idx, d2d, d3d = center.match_to_catalog_sky(catalog_sky, nthneighbor=i)
+            idx, d2d, d3d = center.match_to_catalog_sky(
+                catalog_sky, nthneighbor=i
+            )
 
             # print(idx, d2d, d3d)
             if d3d != 0.0:
@@ -1328,7 +1405,14 @@ class PlotPipes:
                     ax.add_patch(region)
 
     def jaguar_cat(
-        self, ax_photo, ax_z_pdf, ax_sfr, ax_metallicity, ax_mass_pdf, ax_ssfr, ax_dust
+        self,
+        ax_photo,
+        ax_z_pdf,
+        ax_sfr,
+        ax_metallicity,
+        ax_mass_pdf,
+        ax_ssfr,
+        ax_dust,
     ):
         true_redshift = self.row["redshift"][0]
         true_mass = self.row["mStar"][0]
@@ -1370,7 +1454,9 @@ class PlotPipes:
             zorder=10,
         )
 
-        ax_mass_pdf.set_ylim(ax_mass_pdf.get_ylim()[0], ax_mass_pdf.get_ylim()[1])
+        ax_mass_pdf.set_ylim(
+            ax_mass_pdf.get_ylim()[0], ax_mass_pdf.get_ylim()[1]
+        )
         ax_mass_pdf.vlines(
             true_mass,
             ax_mass_pdf.get_ylim()[0],
@@ -1490,7 +1576,9 @@ class PlotPipes:
                         cutout_ax = cutout_fig.add_subplot(cutout_gs[0, pos])
 
                     if self.plot_cutout(
-                        cutout_ax, band, show_scale=0.5 if band == "F444W" else False
+                        cutout_ax,
+                        band,
+                        show_scale=0.5 if band == "F444W" else False,
                     ):
                         countdown += 1
                         if countdown == 0 or countdown % 5 == 0:
@@ -1503,7 +1591,10 @@ class PlotPipes:
                         # cutout_ax.set_xlabel(band, fontsize='medium', color=color, fontweight='bold')
                         # cutout_ax.set_aspect('equal', adjustable='box', anchor='N')
                         cutout_ax.set_ylabel(
-                            band, fontsize="medium", color=color, fontweight="bold"
+                            band,
+                            fontsize="medium",
+                            color=color,
+                            fontweight="bold",
                         )
                         cutout_ax.set_xticks([])
                         cutout_ax.set_yticks([])
@@ -1586,13 +1677,19 @@ class PlotPipes:
                     fill_between=fill_uncertainty,
                 )
 
-        ax_mass_pdf.set_title("Stellar Mass", fontsize="medium", fontweight="bold")
+        ax_mass_pdf.set_title(
+            "Stellar Mass", fontsize="medium", fontweight="bold"
+        )
         # if nothing on ax_z_pdf
         if len(ax_z_pdf.lines) == 0:
             ax_z_pdf.remove()
         else:
-            ax_z_pdf.set_title("Redshift", fontsize="medium", fontweight="bold")
-            ax_z_pdf.set_xlabel(r"Redshift", fontsize="medium", fontweight="bold")
+            ax_z_pdf.set_title(
+                "Redshift", fontsize="medium", fontweight="bold"
+            )
+            ax_z_pdf.set_xlabel(
+                r"Redshift", fontsize="medium", fontweight="bold"
+            )
             ax_z_pdf.set_title("")
 
         ax_mass_pdf.set_xlabel(
@@ -1625,7 +1722,9 @@ class PlotPipes:
         # ax_sfh.yaxis.set_ticks([1e-1, 1e0, 1e1, 1e2])
         # ax_sfh.set_ylim(1e-2, 3e2)
 
-        self.fits[0].plot_sed(ax_photo, colour="black", fcolour="black", zorder=10)
+        self.fits[0].plot_sed(
+            ax_photo, colour="black", fcolour="black", zorder=10
+        )
 
         # Add legend
         leg = ax_photo.legend(fontsize=7.8, frameon=False, loc="lower right")
@@ -1633,7 +1732,9 @@ class PlotPipes:
 
         fig.get_layout_engine().set(hspace=-3)
 
-        if not Path(f"{bagpipes_dir}/pipes/plots/{self.overall_field}/").is_dir:
+        if not Path(
+            f"{bagpipes_dir}/pipes/plots/{self.overall_field}/"
+        ).is_dir:
             os.mkdir(f"{bagpipes_dir}/pipes/plots/{self.overall_field}/")
         if not Path(f"{bagpipes_dir}/pipes/plots/merged/").is_dir:
             os.mkdir(f"{bagpipes_dir}/pipes/plots/merged/")
@@ -1741,7 +1842,10 @@ class PlotPipes:
             if bands is not None:
                 for pos, band in tqdm(enumerate(bands), desc="Adding cutouts"):
                     cutout_ax = fig.add_subplot(
-                        gs[int(np.floor(3 + 0.2 * countdown)), count : count + 2]
+                        gs[
+                            int(np.floor(3 + 0.2 * countdown)),
+                            count : count + 2,
+                        ]
                     )
 
                     if self.plot_cutout(cutout_ax, band):
@@ -1762,7 +1866,10 @@ class PlotPipes:
                         )
 
                         cutout_ax.set_xlabel(
-                            band, fontsize="medium", color=color, fontweight="bold"
+                            band,
+                            fontsize="medium",
+                            color=color,
+                            fontweight="bold",
                         )
                         cutout_ax.set_aspect("equal", adjustable="box")
                         cutout_ax.set_xticks([])
@@ -1816,7 +1923,8 @@ class PlotPipes:
         )
         ax_photo.set_ylabel(flux_units)
         ax_photo.set_title(
-            f'{self.overall_field}:{self.galaxy_id.split("_")[0]}', fontsize="large"
+            f'{self.overall_field}:{self.galaxy_id.split("_")[0]}',
+            fontsize="large",
         )
 
         fill_uncertainty = True if len(colours) else False
@@ -1879,10 +1987,16 @@ class PlotPipes:
                     fill_between=fill_uncertainty,
                 )
                 fit.plot_pdf(
-                    ax_sfr, "sfr", colour=colours[pos], fill_between=fill_uncertainty
+                    ax_sfr,
+                    "sfr",
+                    colour=colours[pos],
+                    fill_between=fill_uncertainty,
                 )
                 fit.plot_pdf(
-                    ax_ssfr, "ssfr", colour=colours[pos], fill_between=fill_uncertainty
+                    ax_ssfr,
+                    "ssfr",
+                    colour=colours[pos],
+                    fill_between=fill_uncertainty,
                 )
                 # This is broken for some reason - think
                 fit.plot_pdf(
@@ -1898,7 +2012,9 @@ class PlotPipes:
 
         ax_sfh.set_yscale("log")
 
-        self.fits[0].plot_sed(ax_photo, colour="black", fcolour="black", zorder=10)
+        self.fits[0].plot_sed(
+            ax_photo, colour="black", fcolour="black", zorder=10
+        )
 
         if self.simulated_cat:
             self.jaguar_cat(
@@ -1913,7 +2029,9 @@ class PlotPipes:
         # Add legend
         ax_photo.legend(fontsize="small", frameon=False)
 
-        if not Path(f"{bagpipes_dir}/pipes/plots/{self.overall_field}/").is_dir:
+        if not Path(
+            f"{bagpipes_dir}/pipes/plots/{self.overall_field}/"
+        ).is_dir:
             os.mkdir(f"{bagpipes_dir}/pipes/plots/{self.overall_field}/")
         try:
             fig.savefig(
@@ -1943,12 +2061,17 @@ class PlotPipes:
         red=["F356W", "F444W"],
     ):
         path = {
-            band: self.get_image_path(band, self.field) for band in blue + green + red
+            band: self.get_image_path(band, self.field)
+            for band in blue + green + red
         }
         red_data, _ = combine_bands(red, path)
         green_data, _ = combine_bands(green, path)
         blue_data, wcs = combine_bands(blue, path)
-        if red_data is not None and green_data is not None and blue_data is not None:
+        if (
+            red_data is not None
+            and green_data is not None
+            and blue_data is not None
+        ):
             ra_coord = self.row[ra_col] * u.deg
             dec_coord = self.row[dec_col] * u.deg
 
@@ -1969,7 +2092,11 @@ class PlotPipes:
             if not skip:
                 # norm = ImageNormalize(data_cutout, interval=ManualInterval(1e-10, 1), stretch=LogStretch(a=0.1))
                 rgb = make_lupton_rgb(
-                    cutout_r.data, cutout_g.data, cutout_b.data, Q=1, stretch=0.05
+                    cutout_r.data,
+                    cutout_g.data,
+                    cutout_b.data,
+                    Q=1,
+                    stretch=0.05,
                 )
                 # with np.printoptions(threshold=np.inf):
                 #    print(rgb)
