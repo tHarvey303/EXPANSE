@@ -1,3 +1,8 @@
+[![workflow](https://github.com/tharvey303/EXPANSE/actions/workflows/python-app.yml/badge.svg)](https://github.com/duncanaustin98/galfind/actions)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 # EXPANSE - EXtended Pixel-resolved ANalysis of SEDs
 
 Python package to perform resolved SED fitting using publically availabe SED fitting tools (Bagpipes and Dense Basis currently, Prospector, Beagle, etc planned), and display results. 
