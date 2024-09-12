@@ -1,57 +1,53 @@
-from astropy.io import fits
-from astropy.io.fits import Header
-import numpy as np
-import matplotlib.pyplot as plt
-import h5py as h5
-from io import BytesIO
-import astropy.units as u
-from astropy.coordinates import SkyCoord
-from joblib import Parallel, delayed
-from astropy.nddata import Cutout2D
 import ast
 import contextlib
-import sys
-from astropy.convolution import convolve_fft
-import glob
-from astropy.nddata import block_reduce
-from matplotlib.colors import Normalize, LogNorm
-import shutil
-from astropy.cosmology import FlatLambdaCDM
-from pathlib import Path
-from matplotlib.animation import FuncAnimation
-import os
-from astropy.table import Table, QTable, Column, vstack
-import matplotlib as mpl
-from scipy.ndimage import zoom
-from astropy.utils.exceptions import AstropyWarning
-from astropy.visualization import make_lupton_rgb, simple_norm
-import warnings
-from astropy.wcs import WCS
-from astropy.io.misc.hdf5 import write_table_hdf5, read_table_hdf5
 
 # can write astropy to h5
 import copy
+import glob
+import os
+import shutil
+import sys
 import traceback
-from tqdm import tqdm
-from scipy.interpolate import interp1d
-import curses
-import threading
-import time
 import types
+import warnings
+from io import BytesIO
+from pathlib import Path
+
+import astropy.units as u
+import h5py as h5
+import matplotlib.pyplot as plt
+import numpy as np
+from astropy.convolution import convolve_fft
+from astropy.coordinates import SkyCoord
+from astropy.cosmology import FlatLambdaCDM
+from astropy.io import fits
+from astropy.io.fits import Header
+from astropy.io.misc.hdf5 import read_table_hdf5, write_table_hdf5
+from astropy.nddata import Cutout2D, block_reduce
+from astropy.table import Column, QTable, Table, vstack
+from astropy.utils.exceptions import AstropyWarning
+from astropy.visualization import make_lupton_rgb, simple_norm
+from astropy.wcs import WCS
+from joblib import Parallel, delayed
+from matplotlib.animation import FuncAnimation
+from matplotlib.colors import LogNorm, Normalize
 
 # import Ellipse
 from matplotlib.patches import Ellipse
-from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
-
-# import make_axis_locatable
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # import ScalarFormatter
 from matplotlib.ticker import ScalarFormatter
 
+# import make_axis_locatable
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+from scipy.interpolate import interp1d
+from scipy.ndimage import zoom
+from tqdm import tqdm
+
 warnings.simplefilter("ignore", category=AstropyWarning)
-import matplotlib.patheffects as PathEffects
 import matplotlib.cm as mcm
+import matplotlib.patheffects as PathEffects
 
 # import FontProperties
 from matplotlib.font_manager import FontProperties
@@ -63,13 +59,11 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # Package imports
 
 from .utils import (
-    make_EAZY_SED_fit_params_arr,
-    update_mpl,
-    scale_fluxes,
     CLIInterface,
     is_cli,
+    make_EAZY_SED_fit_params_arr,
+    update_mpl,
 )
-
 
 try:
     from mpi4py import MPI
@@ -120,6 +114,19 @@ elif computer == "singularity":
 elif computer == "unknown":
     print("Unknown computer.")
     bagpipes_filter_dir = "filters/"
+
+# CHECK FOR RESOlVED_GALAXY_DIR ENVIRONMENT VARIABLE
+if "RESOLVED_GALAXY_DIR" in os.environ:
+    resolved_galaxy_dir = os.environ["RESOLVED_GALAXY_DIR"]
+else:
+    # Get code directory
+    resolved_galaxy_dir = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+    resolved_galaxy_dir += "/galaxies/"
+    if not os.path.exists(resolved_galaxy_dir):
+        print("Can't find resolved galaxy directory, using default")
+        print(resolved_galaxy_dir)
 
 
 class ResolvedGalaxy:
@@ -176,7 +183,7 @@ class ResolvedGalaxy:
         resolved_mass=None,
         resolved_sfh=None,
         resolved_sed=None,
-        h5_folder="galaxies/",
+        h5_folder=resolved_galaxy_dir,
         psf_kernel_folder="psfs/kernels/",
         psf_folder="psfs/psf_models/",
         psf_type="star_stack",
@@ -326,7 +333,7 @@ class ResolvedGalaxy:
         forced_phot_band=["F277W", "F356W", "F444W"],
         aper_diams=[0.32] * u.arcsec,
         output_flux_unit=u.uJy,
-        h5_folder="galaxies/",
+        h5_folder=resolved_galaxy_dir,
         dont_psf_match_bands=[],
         already_psf_matched=False,
     ):
@@ -377,7 +384,7 @@ class ResolvedGalaxy:
         forced_phot_band=["F277W", "F356W", "F444W"],
         aper_diams=[0.32] * u.arcsec,
         output_flux_unit=u.uJy,
-        h5_folder="galaxies/",
+        h5_folder=resolved_galaxy_dir,
         templates_arr=["fsps_larson"],
         lowz_zmax_arr=[[4.0, 6.0, None]],
         dont_psf_match_bands=[],
@@ -386,7 +393,7 @@ class ResolvedGalaxy:
     ):
         # Imports here so only used if needed
         # from galfind import Data
-        from galfind import Catalogue, EAZY
+        from galfind import EAZY, Catalogue
         from galfind.Catalogue_Creator import GALFIND_Catalogue_Creator
 
         if type(galaxy_id) in [list, np.ndarray, Column]:
@@ -669,14 +676,14 @@ class ResolvedGalaxy:
             return objects[0]
 
     @classmethod
-    def init_multiple_from_h5(cls, h5_names, h5_folder="galaxies/"):
+    def init_multiple_from_h5(cls, h5_names, h5_folder=resolved_galaxy_dir):
         return [
             cls.init_from_h5(h5_name, h5_folder=h5_folder)
             for h5_name in h5_names
         ]
 
     @classmethod
-    def init_all_field_from_h5(cls, field, h5_folder="galaxies/"):
+    def init_all_field_from_h5(cls, field, h5_folder=resolved_galaxy_dir):
         h5_names = glob.glob(f"{h5_folder}{field}*.h5")
 
         h5_names = [h5_name.split("/")[-1] for h5_name in h5_names]
@@ -692,7 +699,9 @@ class ResolvedGalaxy:
         return cls.init_multiple_from_h5(h5_names, h5_folder=h5_folder)
 
     @classmethod
-    def init_from_h5(cls, h5_name, h5_folder="galaxies/", return_attr=False):
+    def init_from_h5(
+        cls, h5_name, h5_folder=resolved_galaxy_dir, return_attr=False
+    ):
         """Load a galaxy from an .h5 file"""
         if type(h5_name) is BytesIO:
             h5path = h5_name
@@ -718,7 +727,11 @@ class ResolvedGalaxy:
                 )
             else:
                 sky_coord = None
-            redshift = hfile["meta"]["redshift"][()]
+            if hfile["meta"].get("redshift") is not None:
+                redshift = hfile["meta"]["redshift"][()]
+            else:
+                redshift = None
+
             bands = ast.literal_eval(
                 hfile["meta"]["bands"][()].decode("utf-8")
             )
@@ -752,9 +765,12 @@ class ResolvedGalaxy:
             phot_pix_unit = {
                 band: u.Unit(unit) for band, unit in phot_pix_unit.items()
             }
-            dont_psf_match_bands = ast.literal_eval(
-                hfile["meta"]["dont_psf_match_bands"][()].decode("utf-8")
-            )
+            if hfile["meta"].get("dont_psf_match_bands") is not None:
+                dont_psf_match_bands = ast.literal_eval(
+                    hfile["meta"]["dont_psf_match_bands"][()].decode("utf-8")
+                )
+            else:
+                dont_psf_match_bands = []
             if hfile["meta"].get("already_psf_matched") is not None:
                 already_psf_matched = ast.literal_eval(
                     hfile["meta"]["already_psf_matched"][()].decode("utf-8")
@@ -1369,7 +1385,7 @@ class ResolvedGalaxy:
             print("No galaxy region found")
             return None
 
-    def dump_to_h5(self, h5_folder="galaxies/", mode="append"):
+    def dump_to_h5(self, h5_folder=resolved_galaxy_dir, mode="append"):
         """Dump the galaxy data to an .h5 file"""
         # for strings
 
@@ -1528,38 +1544,56 @@ class ResolvedGalaxy:
             # Save raw data
             for band in self.bands:
                 hfile["raw_data"].create_dataset(
-                    f"phot_{band}", data=self.phot_imgs[band]
+                    f"phot_{band}",
+                    data=self.phot_imgs[band],
+                    compression="gzip",
                 )
                 hfile["raw_data"].create_dataset(
-                    f"rms_err_{band}", data=self.rms_err_imgs[band]
+                    f"rms_err_{band}",
+                    data=self.rms_err_imgs[band],
+                    compression="gzip",
                 )
                 hfile["raw_data"].create_dataset(
-                    f"seg_{band}", data=self.seg_imgs[band]
+                    f"seg_{band}",
+                    data=self.seg_imgs[band],
+                    compression="gzip",
                 )
 
             if self.unmatched_data is not None:
                 hfile.create_group("unmatched_data")
                 for band in self.bands:
                     hfile["unmatched_data"].create_dataset(
-                        f"phot_{band}", data=self.unmatched_data[band]
+                        f"phot_{band}",
+                        data=self.unmatched_data[band],
+                        compression="gzip",
                     )
                     hfile["unmatched_data"].create_dataset(
-                        f"rms_err_{band}", data=self.unmatched_rms_err[band]
+                        f"rms_err_{band}",
+                        data=self.unmatched_rms_err[band],
+                        compression="gzip",
                     )
                     hfile["unmatched_data"].create_dataset(
-                        f"seg_{band}", data=self.unmatched_seg[band]
+                        f"seg_{band}",
+                        data=self.unmatched_seg[band],
+                        compression="gzip",
                     )
 
             if self.det_data is not None:
                 hfile.create_group("det_data")
                 hfile["det_data"].create_dataset(
-                    "phot", data=self.det_data["phot"]
+                    "phot",
+                    data=self.det_data["phot"],
+                    compression="gzip",
                 )
                 hfile["det_data"].create_dataset(
-                    "rms_err", data=self.det_data["rms_err"]
+                    "rms_err",
+                    data=self.det_data["rms_err"],
+                    compression="gzip",
                 )
                 hfile["det_data"].create_dataset(
-                    "seg", data=self.det_data["seg"]
+                    "seg",
+                    data=self.det_data["seg"],
+                    compression="gzip",
                 )
 
             # Save headers
@@ -1579,7 +1613,9 @@ class ResolvedGalaxy:
                         # print(band)
                         # print(self.psf_matched_data[psf_type])
                         hfile["psf_matched_data"][psf_type].create_dataset(
-                            band, data=self.psf_matched_data[psf_type][band]
+                            band,
+                            data=self.psf_matched_data[psf_type][band],
+                            compression="gzip",
                         )
 
             if self.psf_matched_rms_err is not None:
@@ -1588,7 +1624,9 @@ class ResolvedGalaxy:
                     hfile["psf_matched_rms_err"].create_group(psf_type)
                     for band in self.bands:
                         hfile["psf_matched_rms_err"][psf_type].create_dataset(
-                            band, data=self.psf_matched_rms_err[psf_type][band]
+                            band,
+                            data=self.psf_matched_rms_err[psf_type][band],
+                            compression="gzip",
                         )
 
             # or here
@@ -1597,23 +1635,31 @@ class ResolvedGalaxy:
             # Save binned maps
             if self.voronoi_map is not None:
                 hfile["bin_maps"].create_dataset(
-                    "voronoi", data=self.voronoi_map
+                    "voronoi",
+                    data=self.voronoi_map,
+                    compression="gzip",
                 )
             if self.pixedfit_map is not None:
                 hfile["bin_maps"].create_dataset(
-                    "pixedfit", data=self.pixedfit_map
+                    "pixedfit",
+                    data=self.pixedfit_map,
+                    compression="gzip",
                 )
             if self.binned_flux_map is not None:
                 hfile["bin_fluxes"].create_dataset(
-                    "pixedfit", data=self.binned_flux_map
+                    "pixedfit", data=self.binned_flux_map, compression="gzip"
                 )
             if self.binned_flux_err_map is not None:
                 hfile["bin_flux_err"].create_dataset(
-                    "pixedfit", data=self.binned_flux_err_map
+                    "pixedfit",
+                    data=self.binned_flux_err_map,
+                    compression="gzip",
                 )
             if self.rms_background is not None:
                 hfile.create_dataset(
-                    "meta/rms_background", data=str(self.rms_background)
+                    "meta/rms_background",
+                    data=str(self.rms_background),
+                    compression="gzip",
                 )
 
             # Small memory leak here - 0.2 MB per save
@@ -1626,7 +1672,9 @@ class ResolvedGalaxy:
                     for band in self.bands:
                         if self.psfs[psf_type].get(band) is not None:
                             hfile["psfs"][psf_type].create_dataset(
-                                band, data=self.psfs[psf_type][band]
+                                band,
+                                data=self.psfs[psf_type][band],
+                                compression="gzip",
                             )
 
             if self.psfs_meta is not None and self.psfs_meta != {}:
@@ -1637,7 +1685,9 @@ class ResolvedGalaxy:
                         if self.psfs_meta[psf_type].get(band) is not None:
                             data = str(self.psfs_meta[psf_type][band])
                             hfile["psfs_meta"][psf_type].create_dataset(
-                                band, data=data, dtype=str_dt
+                                band,
+                                data=data,
+                                dtype=str_dt,
                             )
 
             # Add psf_Kernels
@@ -1648,7 +1698,9 @@ class ResolvedGalaxy:
                     for band in self.bands:
                         if self.psf_kernels[psf_type].get(band) is not None:
                             hfile["psf_kernels"][psf_type].create_dataset(
-                                band, data=self.psf_kernels[psf_type][band]
+                                band,
+                                data=self.psf_kernels[psf_type][band],
+                                compression="gzip",
                             )
 
             # Add galaxy region
@@ -1656,14 +1708,18 @@ class ResolvedGalaxy:
                 hfile.create_group("galaxy_region")
                 for binmap_type in self.gal_region.keys():
                     hfile["galaxy_region"].create_dataset(
-                        binmap_type, data=self.gal_region[binmap_type]
+                        binmap_type,
+                        data=self.gal_region[binmap_type],
+                        compression="gzip",
                     )
             # Add flux_map
             if self.flux_map is not None:
                 hfile.create_group("flux_map")
                 for binmap_type in self.flux_map.keys():
                     hfile["flux_map"].create_dataset(
-                        binmap_type, data=self.flux_map[binmap_type]
+                        binmap_type,
+                        data=self.flux_map[binmap_type],
+                        compression="gzip",
                     )
 
             for pos, property in enumerate(self.photometry_property_names):
@@ -1691,7 +1747,7 @@ class ResolvedGalaxy:
                 hfile.create_group("resolved_sfh")
                 for key in self.resolved_sfh.keys():
                     hfile["resolved_sfh"].create_dataset(
-                        key, data=self.resolved_sfh[key]
+                        key, data=self.resolved_sfh[key], compression="gzip"
                     )
 
             # Add resolved SED
@@ -1699,7 +1755,7 @@ class ResolvedGalaxy:
                 hfile.create_group("resolved_sed")
                 for key in self.resolved_sed.keys():
                     hfile["resolved_sed"].create_dataset(
-                        key, data=self.resolved_sed[key]
+                        key, data=self.resolved_sed[key], compression="gzip"
                     )
 
             # Add MockGalaxy properties
@@ -1711,20 +1767,24 @@ class ResolvedGalaxy:
                     hfile["mock_galaxy"].create_group("noise_images")
                     for key in self.noise_images.keys():
                         hfile["mock_galaxy"]["noise_images"].create_dataset(
-                            key, data=self.noise_images[key]
+                            key,
+                            data=self.noise_images[key],
+                            compression="gzip",
                         )
                 if self.property_images is not None:
                     hfile["mock_galaxy"].create_group("property_images")
                     for key in self.property_images.keys():
                         hfile["mock_galaxy"]["property_images"].create_dataset(
-                            key, data=self.property_images[key]
+                            key,
+                            data=self.property_images[key],
+                            compression="gzip",
                         )
                 if self.seds is not None:
                     hfile["mock_galaxy"].create_group("seds")
                     for key in self.seds.keys():
                         if type(self.seds[key]) is np.ndarray:
                             hfile["mock_galaxy"]["seds"].create_dataset(
-                                key, data=self.seds[key]
+                                key, data=self.seds[key], compression="gzip"
                             )
                         else:
                             hfile["mock_galaxy"]["seds"].create_group(key)
@@ -1732,7 +1792,9 @@ class ResolvedGalaxy:
                                 hfile["mock_galaxy"]["seds"][
                                     key
                                 ].create_dataset(
-                                    key2, data=self.seds[key][key2]
+                                    key2,
+                                    data=self.seds[key][key2],
+                                    compression="gzip",
                                 )
 
                 if self.sfh is not None:
@@ -1740,7 +1802,7 @@ class ResolvedGalaxy:
                     for key in self.sfh.keys():
                         if type(self.sfh[key]) is np.ndarray:
                             hfile["mock_galaxy"]["sfh"].create_dataset(
-                                key, data=self.sfh[key]
+                                key, data=self.sfh[key], compression="gzip"
                             )
                         else:
                             hfile["mock_galaxy"]["sfh"].create_group(key)
@@ -1748,7 +1810,9 @@ class ResolvedGalaxy:
                                 hfile["mock_galaxy"]["sfh"][
                                     key
                                 ].create_dataset(
-                                    key2, data=self.sfh[key][key2]
+                                    key2,
+                                    data=self.sfh[key][key2],
+                                    compression="gzip",
                                 )
 
         # Write photometry table(s)
@@ -2491,7 +2555,7 @@ class ResolvedGalaxy:
         use_galfind_seg=True,
         seg_combine=["F277W", "F356W", "F444W"],
         gal_region_use="pixedfit",
-        dir_images="galaxies/",
+        dir_images=resolved_galaxy_dir,
         override_psf_type=None,
         use_all_pixels=False,
         overwrite=False,
@@ -3226,7 +3290,7 @@ class ResolvedGalaxy:
             crop_by = f"ID={int(self.galaxy_id)}"
 
         if cat is None:
-            from galfind import Catalogue, EAZY
+            from galfind import EAZY, Catalogue
             from galfind.Catalogue_Creator import GALFIND_Catalogue_Creator
 
             SED_code_arr = [EAZY()]
@@ -3441,7 +3505,11 @@ class ResolvedGalaxy:
                 )
                 return
 
-        hfile[group].create_dataset(name, data=data)
+        if type(data) == np.ndarray:
+            compression = "gzip" if data.nbytes > 1e6 else None
+        else:
+            compression = None
+        hfile[group].create_dataset(name, data=data, compression=compression)
         if meta is not None:
             for key in meta.keys():
                 sys.stdout.write(f"Setting meta, {key}, {str(meta[key])}")
@@ -3908,15 +3976,25 @@ class ResolvedGalaxy:
 
     def run_dense_basis(
         self,
-        db_atlas_name,
-        db_dir=db_dir,
+        db_atlas_path,
+        fit_photometry="all",
         overwrite=False,
         use_emcee=False,
         emcee_samples=10000,
         plot=False,
+        n_jobs=4,
+        min_flux_err=0.1,
     ):
-        import dense_basis as db
-        import glob
+        # import dense_basis as db
+
+        atlas_path = os.path.dirname(db_atlas_path)
+        # get filename
+        db_atlas_name = "_".join(
+            os.path.basename(db_atlas_path).split("_")[:-3]
+        )
+
+        print(f"Running dense_basis for {db_atlas_name}")
+        print(f"Using atlas {db_atlas_path}")
 
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
@@ -3940,30 +4018,101 @@ class ResolvedGalaxy:
                         print(f"Run {db_atlas_name} already exists")
                         return
 
-        flux_table = self.photometry_table[psf_type][binmap_type]
+        flux_table = copy.deepcopy(
+            self.photometry_table[psf_type][binmap_type]
+        )
 
-        # Need to generate obs_sed, obs_err, and fit_mask based on the input filter files
-
-        if use_emcee:
-            sampler = db.run_emceesampler(
-                obs_sed,
-                obs_err,
-                atlas,
-                epochs=emcee_samples,
-                plot_posteriors=plot,
+        if fit_photometry == "all":
+            mask = np.ones(len(flux_table), dtype=bool)
+        elif fit_photometry == "bin":
+            mask = flux_table["type"] == "bin"
+        elif fit_photometry == "all_total":
+            mask = flux_table["type"] != "bin"
+        elif fit_photometry == "MAG_AUTO":
+            mask = flux_table["type"] == "MAG_AUTO"
+        elif fit_photometry == "MAG_ISO":
+            mask = flux_table["type"] == "MAG_ISO"
+        elif fit_photometry == "MAG_BEST":
+            mask = flux_table["type"] == "MAG_BEST"
+        elif fit_photometry == "TOTAL_BIN":
+            mask = flux_table["type"] == "TOTAL_BIN"
+        elif fit_photometry == "MAG_APER_TOTAL":
+            mask = flux_table["type"] == "MAG_APER_TOTAL"
+        elif fit_photometry == "MAG":
+            mask = (
+                (flux_table["type"] == "MAG_AUTO")
+                & (flux_table["type"] == "MAG_ISO")
+                & (flux_table["type"] == "MAG_BEST")
+            )
+        elif fit_photometry.startswith("MAG_APER"):
+            mask = flux_table["type"] == "MAG_APER"
+        elif fit_photometry == "TOTAL_BIN+MAG_APER_TOTAL":
+            mask = (flux_table["type"] == "MAG_APER_TOTAL") | (
+                flux_table["type"] == "TOTAL_BIN"
+            )
+        else:
+            raise ValueError(
+                "fit_photometry must be one of: all, bin, MAG_AUTO, MAG_ISO, MAG_BEST, TOTAL_BIN, MAG or MAG_APER"
             )
 
-        else:
-            # pass the atlas and the observed SED + uncertainties into the fitter,
-            sedfit = db.SedFit(obs_sed, obs_err, atlas, fit_mask=[])
+        flux_table = flux_table[mask]
 
-            # evaluate_likelihood returns the likelihood for each SED in the atlas and the norm value to
-            # best match the observed SED with the atlas.
-            sedfit.evaluate_likelihood()
+        print(
+            f"Fitting only {fit_photometry} fluxes, which is {len(flux_table)} sources"
+        )
 
-            # evaluate_posterior_percentiles calculates the 16,50,84th percentiles for
-            # the physical parameters - stellar mass, SFR, tx, dust, metallicity and redshift
-            sedfit.evaluate_posterior_percentiles()
+        ids = list(flux_table["ID"])
+
+        if flux_table[flux_table.colnames[1]].unit != u.uJy:
+            for col in flux_table.colnames[3:]:
+                flux_table[col] = flux_table[col].to(u.uJy)
+
+        from .dense_basis import run_db_fit_parallel, get_priors
+
+        fluxes = []
+        errors = []
+        for row in flux_table:
+            flux = []
+            error = []
+            for i, band in enumerate(self.bands):
+                flux.append(row[band].value)
+                error.append(row[f"{band}_err"].value)
+            fluxes.append(flux)
+            errors.append(error)
+
+        fluxes = np.array(fluxes)
+        errors = np.array(errors)
+
+        priors = get_priors(db_atlas_path)
+
+        fit_results = Parallel(n_jobs=n_jobs)(
+            delayed(run_db_fit_parallel)(
+                flux,
+                error,
+                db_atlas_name,
+                atlas_path,
+                self.bands,
+                use_emcee,
+                emcee_samples,
+                min_flux_err,
+            )
+            for flux, error in zip(fluxes, errors)
+        )
+
+        self.get_filter_wavs()
+        filter_wavs = [
+            self.filter_wavs[band].to(u.Angstrom) for band in self.bands
+        ]
+
+        return fit_results
+        if not use_emcee:
+            for i, fit_result in tqdm(enumerate(fit_results)):
+                if plot:
+                    #
+                    # fit_result.evaluate_posterior_SFH()
+                    fit_result.plot_posterior_SFH(fit_result.z[0])
+                    # fit_result.plot_posteriors()
+                    fit_result.plot_posterior_spec(filter_wavs, priors)
 
     def plot_filter_transmission(
         self, bands="all", fig=None, ax=None, label=True, wav_unit=u.um
@@ -3991,7 +4140,7 @@ class ResolvedGalaxy:
                 pass
 
         ax.set_xlabel(f"Wavelength ({wav_unit:latex})")
-        ax.set_ylabel("T$_{\lambda}$")
+        ax.set_ylabel(r"T$_{\lambda}$")
 
     def plot_overview(
         self,
@@ -4174,7 +4323,7 @@ class ResolvedGalaxy:
 
         if save:
             fig.savefig(
-                f"galaxies/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png",
+                f"{resolved_galaxy_dir}/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png",
                 dpi=200,
             )
 
@@ -4392,12 +4541,11 @@ class ResolvedGalaxy:
                     if overwrite:
                         os.remove(new_file)
                         os.rename(file, new_file)
-                    else:
-                        os.remove(file)
 
         exist_already = False
         if overwrite:
             for file in existing_files:
+                print(f"Removing {file}")
                 os.remove(file)
         else:  # Check if already run
             mask = np.zeros(len(ids))
@@ -5213,7 +5361,7 @@ class ResolvedGalaxy:
                     map, redshift=redshift, weight_by_band=weight, logmap=True
                 )
                 # map = self.map_to_density_map(map, redshift = redshift, logmap = True)
-                log = "$\log_{10}$ "
+                log = r"$\log_{10}$ "
                 param = f"{param}_density"
 
             if norm == "log":
@@ -5313,7 +5461,9 @@ class ResolvedGalaxy:
 
         if save:
             fig.savefig(
-                f"galaxies/{run_name}_maps.png", dpi=300, bbox_inches="tight"
+                f"{resolved_galaxy_dir}/{run_name}_maps.png",
+                dpi=300,
+                bbox_inches="tight",
             )
         return fig
 
@@ -5419,13 +5569,23 @@ class ResolvedGalaxy:
         run_dir="pipes/",
         bagpipes_filter_dir=bagpipes_filter_dir,
         cache=None,
-        plotpipes_dir="pipes_scripts/",
+        plotpipes_dir="bagpipes/",
         get_advanced_quantities=True,
         n_cores=1,
     ):
         plotpipes_dir = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), plotpipes_dir
         )
+
+        run_dir = os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            ),
+            run_dir,
+        )
+
+        print(run_dir)
+
         if type(rbin) not in [list, np.ndarray]:
             single = True
             rbin = [rbin]
@@ -5650,7 +5810,7 @@ class ResolvedGalaxy:
                 alpha=1,
                 fill_between=False,
                 norm_height=True,
-                label="$\Sigma$ Resolved",
+                label=r"$\Sigma$ Resolved",
             )
 
         # Fix xticks
@@ -5851,7 +6011,9 @@ class ResolvedGalaxy:
         # Stop colorbar getting cut off
 
         if save:
-            ani.save("galaxies/animation.gif", writer="pillow", fps=60)
+            ani.save(
+                f"{resolved_galaxy_dir}/animation.gif", writer="pillow", fps=60
+            )
 
         plt.close(fig)
 
@@ -6087,7 +6249,7 @@ class ResolvedGalaxy:
         ax_sed.set_ylim(31, 25)
 
         # Set x-axis label
-        ax_sed.set_xlabel("Wavelength ($\mu$m)")
+        ax_sed.set_xlabel(r"Wavelength ($\mu$m)")
         # Set y-axis label
         ax_sed.set_ylabel("AB Mag")
         ax_sed.legend(fontsize=6, loc="upper left")
@@ -6098,7 +6260,7 @@ class ResolvedGalaxy:
         psf_type="star_stack",
         binmap_type="pixedfit",
     ):
-        from galfind import Photometry_rest, Combined_Instrument
+        from galfind import Combined_Instrument, Photometry_rest
 
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
@@ -6492,7 +6654,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         forced_phot_band=["F277W", "F356W", "F444W"],
         aper_diams=[0.32] * u.arcsec,
         output_flux_unit=u.uJy,
-        h5_folder="galaxies/",
+        h5_folder=resolved_galaxy_dir,
         dont_psf_match_bands=[],
         already_psf_matched=False,
         sky_coord=None,
@@ -6564,7 +6726,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         )
 
     @classmethod
-    def init_from_h5(cls, h5_name, h5_folder="galaxies/", return_attr=False):
+    def init_from_h5(
+        cls, h5_name, h5_folder=resolved_galaxy_dir, return_attr=False
+    ):
         # Just get the mock data then call the super init_from h5
         if type(h5_name) != BytesIO:
             if not h5_name.endswith(".h5"):
@@ -6577,6 +6741,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             h5path = h5_name
 
         with h5.File(h5path, "r") as hfile:
+            print(hfile.keys())
             mock_galaxy = hfile["mock_galaxy"]
 
             params = {}
@@ -6708,7 +6873,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         if False:
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
-                from galfind import Catalogue, EAZY
+                from galfind import EAZY, Catalogue
                 from galfind.Catalogue_Creator import GALFIND_Catalogue_Creator
 
             SED_code_arr = [EAZY()]
@@ -6776,42 +6941,45 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         try:
             from scipy import signal
-            from synthesizer.emission_models import IncidentEmission
-            from synthesizer.filters import FilterCollection as Filters
-            from synthesizer.grid import Grid
-            from synthesizer.kernel_functions import Kernel
-            from synthesizer.particle.galaxy import Galaxy
-            from unyt import (
-                Hz,
-                erg,
-                Mpc,
-                kpc,
-                Msun,
-                yr,
-                s,
-                arcsecond,
-                nJy,
-                K,
-                uJy,
-                unyt_array,
-                um,
-                Angstrom,
-                Myr,
-                Gyr,
+            from synthesizer.emission_models import (
+                IncidentEmission,
+                PacmanEmission,
             )
+            from synthesizer.emission_models.attenuation import PowerLaw
             from synthesizer.emission_models.attenuation.igm import (
                 Inoue14,
                 Madau96,
             )
-            from synthesizer.emission_models import PacmanEmission
-            from synthesizer.emission_models.attenuation import PowerLaw
             from synthesizer.emission_models.dust.emission import Greybody
+            from synthesizer.filters import FilterCollection as Filters
+            from synthesizer.grid import Grid
+            from synthesizer.imaging.image import Image
+            from synthesizer.kernel_functions import Kernel
+            from synthesizer.particle.galaxy import Galaxy
+            from unyt import (
+                Angstrom,
+                Gyr,
+                Hz,
+                K,
+                Mpc,
+                Msun,
+                Myr,
+                arcsecond,
+                erg,
+                kpc,
+                nJy,
+                s,
+                uJy,
+                um,
+                unyt_array,
+                yr,
+            )
+
             from .synthesizer_functions import (
-                convert_coordinates,
                 apply_pixel_coordinate_mask,
+                convert_coordinates,
                 get_spectra_in_mask,
             )
-            from synthesizer.imaging.image import Image
 
         except ImportError:
             raise Exception(
@@ -7185,7 +7353,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
                     cutout_size = img[key].arr.shape[0]
 
-        possible_galaxies = glob.glob(f"galaxies/{mock_survey}_*.h5")
+        possible_galaxies = glob.glob(
+            f"{resolved_galaxy_dir}/{mock_survey}_*.h5"
+        )
         # Remove those with 'mock' in the name
         possible_galaxies = [g for g in possible_galaxies if "mock" not in g]
 
@@ -7770,7 +7940,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             forced_phot_band=mock_forced_phot_band,
             aper_diams=mock_aper_diams,
             output_flux_unit=u.uJy,
-            h5_folder="galaxies/",
+            h5_folder=resolved_galaxy_dir,
             dont_psf_match_bands=[],
             already_psf_matched=False,
             synthesizer_galaxy=gal,
@@ -7800,7 +7970,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         galaxy_index=None,
         galaxy_id=None,
         overwrite=False,
-        h5_folder="galaxies/",
+        h5_folder=resolved_galaxy_dir,
         **kwargs,
     ):
         # load from h5 if it exists
@@ -7947,7 +8117,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
             map = np.nan_to_num(map, nan=np.nan, posinf=np.nan, neginf=np.nan)
 
-            """
+            r"""
             if param in ['stellar_mass', 'sfr']:
                 ref_band = {'stellar_mass':'F444W', 'sfr':'1500A'}
                 print(param, np.nanmin(map), np.nanmax(map))
@@ -7969,7 +8139,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             else:
                 anorm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
 
-            """
+            r"""
             gunit = self.param_unit(param.split(':')[-1])
             unit = f' ({log}{gunit:latex})' if gunit != u.dimensionless_unscaled else ''
             param_str = param.replace("_", r"\ ")
@@ -8040,7 +8210,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         if save:
             fig.savefig(
-                f"galaxies/{run_name}_mock_maps.png",
+                f"{resolved_galaxy_dir}/{run_name}_mock_maps.png",
                 dpi=300,
                 bbox_inches="tight",
             )
@@ -8059,42 +8229,45 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         try:
             from scipy import signal
-            from synthesizer.emission_models import IncidentEmission
-            from synthesizer.filters import FilterCollection as Filters
-            from synthesizer.grid import Grid
-            from synthesizer.kernel_functions import Kernel
-            from synthesizer.particle.galaxy import Galaxy
-            from unyt import (
-                Hz,
-                erg,
-                Mpc,
-                kpc,
-                Msun,
-                yr,
-                s,
-                arcsecond,
-                nJy,
-                K,
-                uJy,
-                unyt_array,
-                um,
-                Angstrom,
-                Myr,
-                Gyr,
+            from synthesizer.emission_models import (
+                IncidentEmission,
+                PacmanEmission,
             )
+            from synthesizer.emission_models.attenuation import PowerLaw
             from synthesizer.emission_models.attenuation.igm import (
                 Inoue14,
                 Madau96,
             )
-            from synthesizer.emission_models import PacmanEmission
-            from synthesizer.emission_models.attenuation import PowerLaw
             from synthesizer.emission_models.dust.emission import Greybody
+            from synthesizer.filters import FilterCollection as Filters
+            from synthesizer.grid import Grid
+            from synthesizer.imaging.image import Image
+            from synthesizer.kernel_functions import Kernel
+            from synthesizer.particle.galaxy import Galaxy
+            from unyt import (
+                Angstrom,
+                Gyr,
+                Hz,
+                K,
+                Mpc,
+                Msun,
+                Myr,
+                arcsecond,
+                erg,
+                kpc,
+                nJy,
+                s,
+                uJy,
+                um,
+                unyt_array,
+                yr,
+            )
+
             from .synthesizer_functions import (
-                convert_coordinates,
                 apply_pixel_coordinate_mask,
+                convert_coordinates,
                 get_spectra_in_mask,
             )
-            from synthesizer.imaging.image import Image
 
         except ImportError:
             raise Exception(
@@ -8481,9 +8654,9 @@ class MultipleResolvedGalaxy:
                 **kwargs,
             )
 
-        ax.set_xlabel("Aperture Stellar Mass (M$_\odot$)")
+        ax.set_xlabel(r"Aperture Stellar Mass (M$_\odot$)")
 
-        ax.set_ylabel("Resolved Stellar Mass (M$_\odot$)")
+        ax.set_ylabel(r"Resolved Stellar Mass (M$_\odot$)")
 
         if label:
             ax.legend()
@@ -8607,233 +8780,3 @@ def run_bagpipes_wrapper(
         print(f"Error in {galaxy_id}: {e}")
         print(traceback.format_exc())
         return None
-
-
-if __name__ == "__main__":
-    if computer == "morgan":
-        catalog_path_selected = "/nvme/scratch/work/tharvey/EXPANSE/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits"
-        cat_selected = Table.read(catalog_path_selected)
-        ids = cat_selected["NUMBER"]
-        cutout_size = cat_selected["CUTOUT_SIZE"][10:]
-        ids = ids[10:]  # For testing
-        overwrite = False
-        h5_folder = "galaxies/"
-    elif computer == "singularity":
-        ids = [16, 36, 370, 478, 531, 575, 778, 801, 806, 830]
-        overwrite = False
-        h5_folder = "/mnt/galaxies/"
-        cutout_size = None  # Not used when loading from h5
-
-    galaxies = ResolvedGalaxy.init(
-        list(ids),
-        "JOF_psfmatched",
-        "v11",
-        already_psf_matched=True,
-        cutout_size=cutout_size,
-        h5_folder=h5_folder,
-    )
-    # Should speed it up?
-
-    cat = None
-    num_of_bins = 0
-    initial_load = (
-        True  # Set to True if you want to load the data from the catalogue
-    )
-    if rank == 0 and initial_load:
-        for posi, galaxy in enumerate(galaxies):
-            # Add original imaging back
-            # print('Adding original imaging.')
-
-            cat = galaxy.add_original_data(
-                cat=cat, return_cat=True, overwrite=overwrite, crop_by=None
-            )
-            # Add total fluxes
-            galaxy.add_flux_aper_total(
-                catalogue_path="/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v11/ACS_WFC+NIRCam/JOF_psfmatched/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total.fits",
-                overwrite=overwrite,
-            )
-
-            # Add Detection data
-            galaxy.add_detection_data(overwrite=overwrite)
-
-            # Plot segmentation stamps
-            # fig = galaxy.plot_seg_stamps()
-            # fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
-            # plt.close()
-            # Currently set to use segmentation map from detection image. May change this in future.
-            if galaxy.gal_region is None or overwrite:
-                galaxy.pixedfit_processing(
-                    gal_region_use="detection", overwrite=overwrite
-                )  # Maybe seg map should be from detection image?
-
-                # fig = galaxy.plot_gal_region()
-                # fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
-                # plt.close()
-            if galaxy.pixedfit_map is None or overwrite:
-                galaxy.pixedfit_binning(overwrite=overwrite)
-
-            if galaxy.photometry_table is None or overwrite:
-                galaxy.measure_flux_in_bins(overwrite=overwrite)
-
-            galaxy.overview_plot(save=True)
-
-            num_of_bins += galaxy.get_number_of_bins()
-
-        print(f"Total number of bins to fit: {num_of_bins}")
-        # Run Bagpipes in parallel
-
-    from .bagpipes.plotpipes import calculate_bins
-    from .bagpipes.pipes_models import (
-        delayed_dict,
-        continuity_dict,
-        dpl_dict,
-        lognorm_dict,
-        resolved_dict,
-        create_dicts,
-    )
-
-    override_meta = {"redshift": "eazy", "redshift_sigma": "eazy"}
-    delayed_dicts = create_dicts(delayed_dict, override_meta=override_meta)
-    continuity_dicts = create_dicts(
-        continuity_dict, override_meta=override_meta
-    )
-    dpl_dicts = create_dicts(dpl_dict, override_meta=override_meta)
-    lognorm_dicts = create_dicts(lognorm_dict, override_meta=override_meta)
-    resolved_dicts = create_dicts(resolved_dict)
-
-    # Not fitting resolved yet
-    for run_dicts in [
-        delayed_dicts,
-        continuity_dicts,
-        dpl_dicts,
-        lognorm_dicts,
-    ]:
-        size = 1
-        if size >= 2:
-            # This option for running by with mpirun/mpiexec
-            n_jobs = 6
-        else:
-            if computer == "morgan":
-                n_jobs = 6
-                backend = "loky"
-            elif computer == "singularity":
-                n_jobs = np.min([len(galaxies) + 1, 6])
-                backend = "multiprocessing"
-                backend = "threading"
-
-        if n_jobs == 1:
-            print("Running in serial.")
-            for i in range(len(galaxies)):
-                print(i)
-                print(run_dicts[i])
-                galaxies[i].run_bagpipes(run_dicts[i])
-        else:
-            print(f"Using {n_jobs} cores.")
-            for i in range(len(galaxies)):
-                print(run_dicts[i])
-            # This options runs multiple galaxies in parallel with joblib
-            # if computer == 'singularity':
-            #    from joblib import parallel_config
-            #    with parallel_config(backend=backend, n_jobs=n_jobs): # inner_max_num_threads=1 if backend is 'multiprocessing' else None)
-            #        Parallel()(run_bagpipes)(run_dicts[i]) for i in range(len(galaxies))
-
-            Parallel(n_jobs=n_jobs)(
-                delayed(run_bagpipes_wrapper)(
-                    galaxy_id,
-                    resolved_dict,
-                    cutout_size=cutout_size,
-                    h5_folder=h5_folder,
-                )
-                for galaxy_id, resolved_dict in zip(ids, run_dicts)
-            )
-
-    # Test the Galaxy class
-    # galaxy = ResolvedGalaxy.init_from_galfind(645, 'NGDEEP2', 'v11', excl_bands = ['F435W', 'F775W', 'F850LP'])
-    # galaxy2 = ResolvedGalaxy.init_from_h5('NGDEEP2_645')
-
-    # Simple test Bagpipes fit_instructions
-    """
-    sfh = {
-        'age_max': (0.03, 0.5), # Gyr 
-        'age_min': (0, 0.5), # Gyr
-        'metallicity': (1e-3, 2.5), # solar
-        'massformed': (4, 12), # log mstar/msun
-        }
-
-    nebular = {}
-    nebular["logU"] = -2.0 
-
-    dust = {}
-    dust["type"] = "Calzetti"
-    dust["Av"] = (0, 5.0)
-
-    fit_instructions = {"t_bc":0.01,
-                    "constant":sfh,
-                    "nebular":nebular,
-                    "dust":dust,  
-                    }
-    meta = {'run_name':'initial_test_cnst_sfh', 'redshift':0.48466974}
-
-    overall_dict = {'meta': meta, 'fit_instructions': fit_instructions}
-
-    galaxy2.run_bagpipes(overall_dict)
-
-    galaxy2.plot_bagpipes_results('initial_test_cnst_sfh')
-    #galaxy2.pixedfit_processing()
-    
-    """
-
-
-"""
-TODO:
-    1. Don't run Bagpipes if already run
-    2. Convert SFR, stellar mass to surface density (/kpc^2)
-    3. Plotting SEDs, PDFs, Corner plots?
-
-"""
-
-
-"""
-TODO: This commented out code is for adding a galaxy to a blank region of the image.
-
-    # Get the image
-    im_data, im_header, seg_data, seg_header, mask = self.load_data(band, incl_mask = True)
-    combined_mask = self.combine_seg_data_and_mask(seg_data = seg_data, mask = mask)
-
-    if pos == 0:
-        final_mask = combined_mask
-    else:
-        assert np.shape(final_mask) == np.shape(combined_mask), "Segmentation maps must have same shape"
-        final_mask += combined_mask
-
-# Renormalize the image
-final_mask[final_mask > 0] = 1
-# Dilate by 30 pixel ELLIPSE
-from cv2 import dilate, getStructuringElement, MORPH_ELLIPSE
-morph_size = cutout_size // 2 + 30
-kernel = getStructuringElement(MORPH_ELLIPSE, (morph_size, morph_size))
-final_mask = dilate(final_mask, kernel)
-
-# Pick a random position in the image where mask is 0  
-
-possible_pos = final_mask.nonzero()
-pos = np.random.choice(len(possible_pos[0]))
-y, x = possible_pos[0][pos], possible_pos[1][pos]
-
-print('Selected position', x, y)
-# Cutout the image in each band
-bckg_cutouts = {}
-bckg_err_cutouts = {}
-data_with_bckg = {}
-
-for pos, band in enumerate(bands):
-    im_data, im_header, seg_data, seg_header, mask = self.load_data(band, incl_mask = True)
-    err_data = self.load_rms_err(band)
-    cutout = Cutout2D(im_data, (x, y), cutout_size)
-    bckg_cutouts[band] = cutout.data
-    cutout = Cutout2D(err_data, (x, y), cutout_size)
-    bckg_err_cutouts[band] = cutout.data
-
-    # Add the galaxy to the cutout
-    data_with_bckg[band] = bckg_cutouts[band] + psf_imgs[band].arr
-"""

@@ -16,13 +16,11 @@ __pycache__/*
 __pycache__
 plots
 galaxies/diagnostic_plots/*
-galaxies/*
-galaxies/JOF_psfmatched_008_z007p000_0_mock.h5
-galaxies/JOF_psfmatched_010_z005p000_1_mock.h5
-galaxies/JOF_psfmatched_007_z008p000_1_mock.h5
+galaxies/*.fits
 test.pdf
 galaxies/bckp/*
 python
+pregrids
 .ruff_cache
 # find . -size +100M | cat >> .gitignore - to add files with > 100MB size
 # If already tracked by git, use git rm --cached <file> to untrack

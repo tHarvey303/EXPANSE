@@ -2,17 +2,20 @@ import os
 import subprocess
 import sys
 from io import BytesIO
-
+from panel.layout.gridstack import GridStack
+import panel as pn
 import click
 import h5py as h5
 import matplotlib as mpl
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
+import panel as pn
 from astropy import units as u
 from astropy.io import fits
 from astropy.wcs import WCS
 from matplotlib.colors import Normalize
+from panel.layout.gridstack import GridStack
 
 # package imports
 from .ResolvedGalaxy import MockResolvedGalaxy, ResolvedGalaxy
@@ -28,43 +31,6 @@ logging.getLogger("panel").setLevel(logging.ERROR)
 # Supress boken warnings
 import warnings
 
-warnings.filterwarnings("ignore", category=UserWarning)
-
-resource.setrlimit(resource.RLIMIT_STACK, [0x10000000, resource.RLIM_INFINITY])
-
-sys.path.append("/usr/local/texlive/")
-
-file_path = os.path.abspath(__file__)
-if "nvme" in file_path:
-    computer = "morgan"
-elif "Users" in file_path:
-    computer = "mac"
-    mpl.use("macOsX")
-    mpl.rcParams["text.usetex"] = True
-
-# sns.set_context("paper")
-# plt.style.use('paper.mplstyle')
-
-# panel serve ResolvedSEDApp.py --autoreload --port 5003
-
-ACCENT = "goldenrod"
-LOGO = "https://assets.holoviz.org/panel/tutorials/matplotlib-logo.png"
-
-plotpipes_dir = "pipes_scripts/"
-run_dir = "pipes/"
-galaxies_dir = "galaxies/"
-cache_pipes = {}
-
-pn.extension(sizing_mode="stretch_width", design="material")
-pn.extension("gridstack")
-pn.extension(notifications=True)
-try:
-    import plotly
-
-    pn.extension("plotly")
-except ImportError:
-    pass
-
 facecolor = "#f7f7f7"
 
 MAX_SIZE_MB = 150
@@ -79,7 +45,48 @@ TOTAL_FIT_COLORS = {
     "RESOLVED": "black",
 }
 
-stream = hv.streams.Tap(transient=True)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+resource.setrlimit(resource.RLIMIT_STACK, [0x10000000, resource.RLIM_INFINITY])
+
+sys.path.append("/usr/local/texlive/")
+
+file_path = os.path.abspath(__file__)
+if "nvme" in file_path:
+    computer = "morgan"
+elif "Users" in file_path:
+    computer = "mac"
+    mpl.use("macOsX")
+    mpl.rcParams["text.usetex"] = True
+
+pn.extension(sizing_mode="stretch_width", design="material")
+pn.extension("gridstack")
+pn.extension(notifications=True)
+try:
+    import plotly
+
+    pn.extension("plotly")
+except ImportError:
+    pass
+
+# sns.set_context("paper")
+# plt.style.use('paper.mplstyle')
+
+# panel serve ResolvedSEDApp.py --autoreload --port 5003
+
+ACCENT = "goldenrod"
+
+plotpipes_dir = "pipes_scripts/"
+run_dir = "pipes/"
+galaxies_dir = "galaxies/"
+
+# Get code directory
+code_dir = os.path.dirname(os.path.abspath(__file__))
+# Get grandparent directory
+grandparent_dir = os.path.dirname(os.path.dirname(code_dir))
+galaxies_dir = os.path.join(grandparent_dir, galaxies_dir)
+
+cache_pipes = {}
 
 
 def make_hashable(args):
@@ -2098,9 +2105,12 @@ def resolved_sed_interface():
         name="Select Remote File", options=[None], value=None, width=200
     )
 
-    choose_file_input.options = [None] + sorted(
-        [f for f in os.listdir(galaxies_dir) if f.endswith(".h5")]
-    )
+    if os.path.exists(galaxies_dir):
+        choose_file_input.options = [None] + sorted(
+            [f for f in os.listdir(galaxies_dir) if f.endswith(".h5")]
+        )
+    else:
+        choose_file_input.options = ["No .h5 files found"]
 
     sidebar = pn.Column(
         "### Upload .h5", file_input, "### or", choose_file_input
@@ -2132,15 +2142,17 @@ def cli():
 @click.command()
 @click.option("--port", default=8000, help="Port to run the server on.")
 def expanse_viewer(port):
+    global stream
+
     try:
-        from panel.layout.gridstack import GridStack
-        import panel as pn
         import holoviews as hv
         import xarray as xr
     except ImportError:
         print("Please install the following packages:")
         print("panel, holoviews, xarray")
         return False
+
+    stream = hv.streams.Tap(transient=True)
 
     ## resolved_sed_interface().servable()
     pn.serve(

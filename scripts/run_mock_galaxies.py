@@ -107,9 +107,9 @@ if __name__ == "__main__":
                 dic,
                 cutout_size=None,  # PLACEHOLDER, not used
                 overwrite=False,
-                overwrite_internal=True
-                if dic["meta"]["run_name"] == "CNST_SFH_RESOLVED"
-                else False,
+                overwrite_internal=True,
+                # if dic["meta"]["run_name"] == "CNST_SFH_RESOLVED"
+                # else False,
                 h5_folder=h5_folder,
             )
             for galaxy_id, dic in zip(run_ids, dict)

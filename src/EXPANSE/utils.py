@@ -7,7 +7,7 @@ import time
 import matplotlib as mpl
 import numpy as np
 from astropy import units as u
-from photutils import EllipticalAperture, aperture_photometry
+from photutils.aperture import EllipticalAperture, aperture_photometry
 
 
 def update_mpl(tex_on=True):

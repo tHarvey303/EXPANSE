@@ -78,6 +78,7 @@ dependencies = [
   "scipy",
   "joblib",
   "unyt",
+  "panel",
   "cmasher",
   "click>=8.1",
   "dust_extinction",

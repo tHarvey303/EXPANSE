@@ -1,15 +1,15 @@
-import numpy as np
 import glob
+import os
 import astropy.units as u
-from astropy.table import Table
-from joblib import Parallel, delayed
 import h5py
+from astropy.table import Table
+import ast
 
 
 def get_filter_files(
     root_file="/nvme/scratch/work/tharvey/jwst_filters/",
     filter_set_name="nircam_acs_wfc",
-    dense_basis_path="/nvme/scratch/work/tharvey/dense_basis/scripts/filters/filter_curves",
+    db_dir="/nvme/scratch/work/tharvey/dense_basis/scripts/filters/filter_curves",
     instruments={
         "ACS_WFC": ["f435W", "f606W", "f814W", "f775W", "f850LP"],
         "nircam": [
@@ -50,31 +50,29 @@ def get_filter_files(
                 )
                 output_filename = f"{instrument.upper()}_{filter.upper()}.dat"
                 output_tab.write(
-                    f"{dense_basis_path}/{output_filename}",
+                    f"{db_dir}/{output_filename}",
                     format="ascii.commented_header",
                     overwrite=True,
                 )
                 filter_files.append(output_filename)
     # Save list of paths to txt
-    path = f"{dense_basis_path}/{filter_set_name}.txt"
+    path = f"{db_dir}/{filter_set_name}.txt"
 
     with open(path, "w") as f:
         for file in filter_files:
             f.write(file + "\n")
 
-    return path
+    return f"{filter_set_name}.txt"
 
 
 def run_db_fit_parallel(
     obs_sed,
     obs_err,
-    db_dir,
     db_atlas_name,
     atlas_path,
-    fit_mask=[],
+    bands=None,
     use_emcee=False,
     emcee_samples=10_000,
-    plot=False,
     min_flux_err=0.1,
 ):
     """
@@ -87,19 +85,47 @@ def run_db_fit_parallel(
     """
 
     # Set the minimum flux error
-    obs_err[obs_err / obs_sed < min_flux_err & obs_sed > 0] = (
-        min_flux_err * obs_sed[obs_err / obs_sed < min_flux_err & obs_sed > 0]
+    obs_err[(obs_err / obs_sed < min_flux_err) & (obs_sed > 0)] = (
+        min_flux_err
+        * obs_sed[(obs_err / obs_sed < min_flux_err) & (obs_sed > 0)]
     )
 
     import dense_basis as db
 
-    atlas_path = glob.glob(f"{db_dir}/{db_atlas_name}*.dbatlas")[0]
-    N_param = int(atlas_path.split("N_param_")[1].split(".dbatlas")[0])
-    N_pregrid = int(atlas_path.split("N_pregrid_")[1].split("_N_param")[0])
+    atlas_path = glob.glob(f"{atlas_path}/{db_atlas_name}*.dbatlas")[0]
+    N_param = int(atlas_path.split("Nparam_")[1].split(".dbatlas")[0])
+    N_pregrid = int(atlas_path.split("_Nparam")[0].split("_")[-1])
+    grid_name = os.path.basename(atlas_path).split(f"_{N_pregrid}")[0]
 
+    # print(f"Loading atlas {db_atlas_name} with N_pregrid={N_pregrid} and N_param={N_param} at {os.path.dirname(atlas_path)}")
     atlas = db.load_atlas(
-        atlas_path, N_pregrid=N_pregrid, N_param=N_param, path=db_dir
+        grid_name,
+        N_pregrid=N_pregrid,
+        N_param=N_param,
+        path=f"{os.path.dirname(atlas_path)}/",
     )
+
+    with h5py.File(atlas_path, "r") as f:
+        atlas_bands = f.attrs["bands"]
+        atlas_bands = ast.literal_eval(atlas_bands)
+
+    if bands is None:
+        assert len(atlas_bands) == len(obs_sed)
+    else:
+        # Check all bands are in the atlas
+        assert all([band in atlas_bands for band in bands])
+        # Order the bands in the same order as the atlas
+        obs_sed_new = obs_sed[[atlas_bands.index(band) for band in bands]]
+        obs_err_new = obs_err[[atlas_bands.index(band) for band in bands]]
+        if any(obs_sed_new != obs_sed):
+            # print("Reordering obs_sed")
+            obs_sed = obs_sed_new
+        if any(obs_err_new != obs_err):
+            # print("Reordering obs_err")
+            obs_err = obs_err_new
+        # Do something with fit_mask?
+
+    fit_mask = []  # Temporary
 
     # Need to generate obs_sed, obs_err, and fit_mask based on the input filter files
 
@@ -109,7 +135,7 @@ def run_db_fit_parallel(
             obs_err,
             atlas,
             epochs=emcee_samples,
-            plot_posteriors=plot,
+            plot_posteriors=False,
             fit_mask=fit_mask,
         )
     else:
@@ -118,10 +144,12 @@ def run_db_fit_parallel(
         sedfit.evaluate_likelihood()
         sedfit.evaluate_posterior_percentiles()
 
+        return sedfit
+
 
 def make_db_grid(
     bands,
-    db_dir,
+    db_dir="/nvme/scratch/work/tharvey/dense_basis/scripts/filters/filter_curves",
     filter_set_name="JOF",
     fname="db_atlas_JOF_",
     N_pregrid=10000,
@@ -147,8 +175,8 @@ def make_db_grid(
         else:
             nircam_bands.append(band.replace("F", "f"))
 
-    path = get_filter_files(
-        dense_basis_path=db_dir,
+    filter_list = get_filter_files(
+        db_dir=db_dir,
         instruments={"ACS_WFC": hst_bands_used, "nircam": nircam_bands},
         filter_set_name=fname,
     )
@@ -168,7 +196,7 @@ def make_db_grid(
         store=True,
         path=pregrid_path,
         filter_list=filter_list,
-        filt_dir=filt_dir,
+        filt_dir=db_dir,
     )
 
     h5_path = (
@@ -178,3 +206,17 @@ def make_db_grid(
     with h5py.File(h5_path, "a") as f:
         # add bands as metadata
         f.attrs["bands"] = str(bands)
+
+
+def get_priors(atlas_path=None):
+    import dense_basis as db
+
+    priors = db.Priors()
+
+    if atlas_path is not None:
+        Nparam = int(atlas_path.split("Nparam_")[1].split(".dbatlas")[0])
+        priors.Nparam = Nparam
+        # Do this better!
+        # with h5py.File(atlas_path, "r") as f:
+
+    return priors
