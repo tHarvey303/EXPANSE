@@ -258,14 +258,14 @@ class PipesFit:
                     raise Exception("Catalogue doesn't match galaxy ID")
             except KeyError:
                 pass
-        else:
-            print("No catalog provided. Output will be limited.")
+        # else:
+        # print("No catalog provided. Output will be limited.")
 
         path = Path(h5_path)
         pipes_path = Path(pipes_path)
 
         os.chdir(pipes_path.parent)
-        print(f"Changed directory to {pipes_path.parent}")
+        # print(f"Changed directory to {pipes_path.parent}")
         # data = dd.io.load(h5_path)
         data = h5py.File(h5_path, "r")
         # fit_instructions is attribute of data
@@ -292,7 +292,7 @@ class PipesFit:
             from bagpipes import config, fit, galaxy
 
         else:
-            import run_bagpipes
+            # import run_bagpipes
             from bagpipes import config, fit, galaxy
 
         if self.config_used is not None:

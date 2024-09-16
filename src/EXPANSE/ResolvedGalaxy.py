@@ -9,6 +9,7 @@ import shutil
 import sys
 import traceback
 import types
+import typing
 import warnings
 from io import BytesIO
 from pathlib import Path
@@ -134,7 +135,7 @@ class ResolvedGalaxy:
 
     def __init__(
         self,
-        galaxy_id: int,
+        galaxy_id,
         sky_coord: SkyCoord,
         survey: str,
         bands,
@@ -188,6 +189,8 @@ class ResolvedGalaxy:
         psf_folder="psfs/psf_models/",
         psf_type="star_stack",
         overwrite=False,
+        save_out=True,
+        h5_path=None,
     ):
         self.galaxy_id = galaxy_id
         self.sky_coord = sky_coord
@@ -242,9 +245,15 @@ class ResolvedGalaxy:
         else:
             self.photometry_property_names = []
 
-        self.h5_path = h5_folder + f"{self.survey}_{self.galaxy_id}.h5"
+        if h5_path is None:
+            self.h5_path = h5_folder + f"{self.survey}_{self.galaxy_id}.h5"
+        else:
+            self.h5_path = h5_path
+
+        self.save_out = save_out
 
         if os.path.exists(self.h5_path) and overwrite:
+            print("deleting existing .h5 file.")
             os.remove(self.h5_path)
 
         # Check if dvipng is installed
@@ -317,8 +326,8 @@ class ResolvedGalaxy:
 
         # if self.rms_background is None:
         #    self.estimate_rms_from_background()
-
-        self.dump_to_h5()
+        if self.save_out:
+            self.dump_to_h5()
         # Save to .h5
 
     @classmethod
@@ -498,7 +507,7 @@ class ResolvedGalaxy:
                 galaxy = galaxy[0]
 
             # Print all properties of galaxy
-            print(galaxy.__dict__.keys())
+            # print(galaxy.__dict__.keys())
 
             cutout_paths = galaxy.cutout_paths
             # Settings things needed for init
@@ -666,7 +675,7 @@ class ResolvedGalaxy:
                 psf_matched_rms_err=psf_matched_rms_err,
                 meta_properties=meta_properties,
                 already_psf_matched=already_psf_matched,
-                overwrite=True,
+                overwrite=False,
             )
             objects.append(object)
 
@@ -700,7 +709,11 @@ class ResolvedGalaxy:
 
     @classmethod
     def init_from_h5(
-        cls, h5_name, h5_folder=resolved_galaxy_dir, return_attr=False
+        cls,
+        h5_name,
+        h5_folder=resolved_galaxy_dir,
+        return_attr=False,
+        save_out=True,
     ):
         """Load a galaxy from an .h5 file"""
         if type(h5_name) is BytesIO:
@@ -1132,6 +1145,8 @@ class ResolvedGalaxy:
             "cutout_size": cutout_size,
             "h5_folder": h5_folder,
             "psf_kernels": psf_kernels,
+            "h5_path": h5path if type(h5_name) is not BytesIO else None,
+            "save_out": save_out,
         }
 
         if return_attr:
@@ -1148,6 +1163,24 @@ class ResolvedGalaxy:
                     psfs, psfs_meta, galaxy_region,
                     cutout_size, h5_folder)
         """
+
+    @classmethod
+    def init_from_basics(
+        self,
+        galaxy_id: str,
+        sky_coord: SkyCoord,
+        survey: str,
+        im_paths: typing.Dict[str, str],
+        err_paths: typing.Dict[str, str],
+        cutout_size: typing.Union[int, u.Quantity, "auto"] = "auto",
+    ):
+        """
+        This function will be the barebones function to initialize a Galaxy,
+        without needing GALFIND.
+
+        """
+
+        raise NotImplementedError("This function is not yet implemented")
 
     def get_filter_wavs(
         self, facilities={"JWST": ["NIRCam"], "HST": ["ACS", "WFC3_IR"]}
@@ -1388,6 +1421,10 @@ class ResolvedGalaxy:
     def dump_to_h5(self, h5_folder=resolved_galaxy_dir, mode="append"):
         """Dump the galaxy data to an .h5 file"""
         # for strings
+
+        if not self.save_out:
+            print("Skipping writing to .h5")
+            return
 
         if not os.path.exists(h5_folder):
             print("Making directory", h5_folder)
@@ -1995,7 +2032,7 @@ class ResolvedGalaxy:
 
                     # h5file['psf_matched_data'][psf_type] = self.psf_matched_data
 
-                print(self.phot_imgs.keys(), self.bands)
+                # print(self.phot_imgs.keys(), self.bands)
                 self.psf_matched_data[psf_type][self.bands[-1]] = (
                     self.phot_imgs[self.bands[-1]]
                 )  # No need to convolve the last band
@@ -3480,6 +3517,10 @@ class ResolvedGalaxy:
         meta=None,
         setattr_gal_meta=None,
     ):
+        if not self.save_out:
+            print("Skipping writing to .h5")
+            return
+
         if type(original_data) in [u.Quantity, u.Magnitude]:
             data = original_data.value
         else:
@@ -4745,14 +4786,17 @@ class ResolvedGalaxy:
 
             if rbin == "RESOLVED":
                 continue
-
-            pipes_obj = self.load_pipes_object(
-                run_name,
-                rbin,
-                run_dir=run_dir,
-                cache=cache,
-                plotpipes_dir=plotpipes_dir,
-            )
+            try:
+                pipes_obj = self.load_pipes_object(
+                    run_name,
+                    rbin,
+                    run_dir=run_dir,
+                    cache=cache,
+                    plotpipes_dir=plotpipes_dir,
+                )
+            except FileNotFoundError:
+                print(f"File not found for {run_name} {rbin}")
+                continue
 
             fig_xlim, fig_ylim = [], []
             fig = pipes_obj.plot_corner_plot(
@@ -4840,15 +4884,33 @@ class ResolvedGalaxy:
             h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
 
             if rbin == "RESOLVED":
+                total_flux, total_wav = self.get_resolved_bagpipes_sed(
+                    run_name, run_dir=run_dir, plotpipes_dir=plotpipes_dir
+                )
+                total_flux *= u.uJy
+                total_wav *= u.um
+
+                axes.plot(
+                    total_wav.to(wav_units),
+                    total_flux.to(
+                        flux_units, equivalencies=u.spectral_density(total_wav)
+                    ),
+                    label="RESOLVED",
+                    color="tomato",
+                )
                 continue
 
-            pipes_obj = self.load_pipes_object(
-                run_name,
-                rbin,
-                run_dir=run_dir,
-                cache=cache,
-                plotpipes_dir=plotpipes_dir,
-            )
+            try:
+                pipes_obj = self.load_pipes_object(
+                    run_name,
+                    rbin,
+                    run_dir=run_dir,
+                    cache=cache,
+                    plotpipes_dir=plotpipes_dir,
+                )
+            except FileNotFoundError:
+                print(f"File not found for {run_name} {rbin}")
+                continue
 
             pipes_obj.plot_best_fit(
                 axes,
@@ -4985,13 +5047,12 @@ class ResolvedGalaxy:
 
                             set = True
 
-                        except ValueError as e:
+                        except (ValueError, FileNotFoundError) as e:
                             print("error!")
                             print(run_name, tbin)
                             print(e)
-                            print(traceback.format_exc())
-                            #
-                            pass
+                            # print(traceback.format_exc())
+                            continue
 
                     if set:
                         axes.plot(
@@ -5026,13 +5087,18 @@ class ResolvedGalaxy:
 
                 plt.close(dummy_fig)
             else:
-                pipes_obj = self.load_pipes_object(
-                    run_name,
-                    rbin,
-                    run_dir=run_dir,
-                    cache=cache,
-                    plotpipes_dir=plotpipes_dir,
-                )
+                try:
+                    pipes_obj = self.load_pipes_object(
+                        run_name,
+                        rbin,
+                        run_dir=run_dir,
+                        cache=cache,
+                        plotpipes_dir=plotpipes_dir,
+                    )
+                except FileNotFoundError:
+                    print(f"File not found for {run_name} {rbin}")
+                    continue
+
                 pipes_obj.plot_sfh(
                     axes,
                     color,
@@ -5052,8 +5118,6 @@ class ResolvedGalaxy:
         # cbar.ax.xaxis.set_label_position('top')
         # cbar.ax.tick_params(labelsize=8)
         # cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
-        if len(bins_to_show) == 0:
-            fig = plt.figure(facecolor=facecolor)
 
         return fig, cache
 
@@ -5350,7 +5414,7 @@ class ResolvedGalaxy:
 
             if param in ["stellar_mass", "sfr"]:
                 ref_band = {"stellar_mass": "F444W", "sfr": "1500A"}
-                print(param, np.nanmin(map), np.nanmax(map))
+                # print(param, np.nanmin(map), np.nanmax(map))
 
                 if weight_mass_sfr:
                     weight = ref_band[param]
@@ -5584,8 +5648,6 @@ class ResolvedGalaxy:
             run_dir,
         )
 
-        print(run_dir)
-
         if type(rbin) not in [list, np.ndarray]:
             single = True
             rbin = [rbin]
@@ -5746,14 +5808,17 @@ class ResolvedGalaxy:
         for rbin in bins_to_show:
             if rbin == "RESOLVED":
                 continue
-
-            pipes_obj = self.load_pipes_object(
-                run_name,
-                rbin,
-                run_dir=run_dir,
-                cache=cache,
-                plotpipes_dir=plotpipes_dir,
-            )
+            try:
+                pipes_obj = self.load_pipes_object(
+                    run_name,
+                    rbin,
+                    run_dir=run_dir,
+                    cache=cache,
+                    plotpipes_dir=plotpipes_dir,
+                )
+            except FileNotFoundError:
+                print(f"File not found for {run_name} {rbin}")
+                continue
 
             bin_number = True
             try:
@@ -5822,7 +5887,7 @@ class ResolvedGalaxy:
         param_str = parameter.replace("_", r" ")
 
         ax_samples.set_xlabel(f"{param_str} {unit}")
-        print(f"{param_str} {unit}")
+        # print(f"{param_str} {unit}")
         return fig, cache
 
     def get_total_resolved_mass(
@@ -5854,15 +5919,19 @@ class ResolvedGalaxy:
             except:
                 pass
 
-        pipes_objs = self.load_pipes_object(
-            run_name,
-            bins,
-            get_advanced_quantities=True,
-            run_dir=run_dir,
-            plotpipes_dir=pipes_dir,
-        )
+        try:
+            pipes_objs = self.load_pipes_object(
+                run_name,
+                bins,
+                get_advanced_quantities=True,
+                run_dir=run_dir,
+                plotpipes_dir=pipes_dir,
+            )
+        except FileNotFoundError:
+            print(f"Files not found for {run_name} {bins}")
+            return None
 
-        print(pipes_objs)
+        # print(pipes_objs)
         all_samples = []
 
         for obj in pipes_objs:
@@ -6049,7 +6118,12 @@ class ResolvedGalaxy:
             and run_name in self.resolved_sed.keys()
             and not overwrite
         ):
-            return self.resolved_sed[run_name]
+            # Check its 2D
+            if len(self.resolved_sed[run_name].shape) == 2:
+                return (
+                    self.resolved_sed[run_name][:, 1],
+                    self.resolved_sed[run_name][:, 0],
+                )
 
         table = self.sed_fitting_table["bagpipes"][run_name]
 
@@ -6057,7 +6131,7 @@ class ResolvedGalaxy:
         count = []
         for i, gal_id in enumerate(table["#ID"]):
             try:
-                gal_id = float(gal_id)
+                gal_id = int(gal_id)
                 count.append(gal_id)
             except:
                 pass
@@ -6066,18 +6140,23 @@ class ResolvedGalaxy:
             count.remove(0)
 
         if len(count) == 0:
-            return False, False
+            return (False, False)
 
-        for pos, galaxy_id in enumerate(count):
-            pipes_obj = self.load_pipes_object(
+        try:
+            # Load all
+            pipes_objs = self.load_pipes_object(
                 run_name,
-                galaxy_id,
+                count,
                 run_dir=run_dir,
                 cache=None,
                 plotpipes_dir=plotpipes_dir,
             )
-            # Get SED
+        except FileNotFoundError:
+            print(f"File not found for {run_name} {self.galaxy_id}")
+            return (False, False)
 
+        # Get SED
+        for pos, pipes_obj in enumerate(pipes_objs):
             wav, flux = pipes_obj.plot_best_fit(
                 None, wav_units=u.um, flux_units=u.uJy, return_flux=True
             )
@@ -6104,14 +6183,14 @@ class ResolvedGalaxy:
         out_array[:, 0] = total_wav
         out_array[:, 1] = total_flux
 
-        self.add_to_h5(total_flux, "resolved_sed", run_name, overwrite=True)
+        self.add_to_h5(out_array, "resolved_sed", run_name, overwrite=True)
 
         if self.resolved_sed is None:
             self.resolved_sed = {}
 
         self.resolved_sed[run_name] = out_array
 
-        return total_flux, total_wav
+        return (total_flux, total_wav)
 
     def plot_bagpipes_sed(
         self,
@@ -6120,6 +6199,7 @@ class ResolvedGalaxy:
         bins_to_show="all",
         plotpipes_dir="pipes_scripts/",
     ):
+        """WARNING! NOT USED IN APP"""
         if (
             not hasattr(self, "sed_fitting_table")
             or "bagpipes" not in self.sed_fitting_table.keys()
@@ -6176,24 +6256,35 @@ class ResolvedGalaxy:
             bins_to_show = bins_to_show
 
         for pos, rbin in enumerate(bins_to_show):
-            print("rbin", rbin)
+            # print("rbin", rbin)
             if rbin == "RESOLVED":
                 total_flux, total_wav = self.get_resolved_bagpipes_sed(
                     run_name, run_dir=run_dir, plotpipes_dir=plotpipes_dir
                 )
+                total_flux = total_flux * u.uJy
+                total_wav = total_wav * u.um
+
                 ax_sed.plot(
-                    total_wav, total_flux, label="Resolved", color="black"
+                    total_wav,
+                    total_flux,
+                    label="RESOLVED",
+                    color="tomato",
                 )
                 continue
 
             else:
-                pipes_obj = self.load_pipes_object(
-                    run_name,
-                    rbin,
-                    run_dir=run_dir,
-                    cache=None,
-                    plotpipes_dir=plotpipes_dir,
-                )
+                try:
+                    pipes_obj = self.load_pipes_object(
+                        run_name,
+                        rbin,
+                        run_dir=run_dir,
+                        cache=None,
+                        plotpipes_dir=plotpipes_dir,
+                    )
+                except:
+                    print(f"File not found for {run_name} {rbin}")
+                    continue
+
                 # This plots the observed SED
                 # pipes_obj.plot_sed(ax=ax_sed, colour=color[bin],
                 #  wav_units=u.um, flux_units=u.ABmag, x_ticks=None, zorder=4, ptsize=40,
@@ -6721,13 +6812,17 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             meta_properties=meta_properties,
             already_psf_matched=already_psf_matched,
             det_data=det_data,
-            overwrite=True,
+            overwrite=False,
             **kwargs,
         )
 
     @classmethod
     def init_from_h5(
-        cls, h5_name, h5_folder=resolved_galaxy_dir, return_attr=False
+        cls,
+        h5_name,
+        h5_folder=resolved_galaxy_dir,
+        return_attr=False,
+        save_out=True,
     ):
         # Just get the mock data then call the super init_from h5
         if type(h5_name) != BytesIO:
@@ -6741,10 +6836,16 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             h5path = h5_name
 
         with h5.File(h5path, "r") as hfile:
-            print(hfile.keys())
-            mock_galaxy = hfile["mock_galaxy"]
+            try:
+                mock_galaxy = hfile["mock_galaxy"]
+            except KeyError:
+                raise Exception(
+                    f"{h5_name} does not contain a mock_galaxy class, but has been opened as a mock resolved galaxy"
+                )
 
             params = {}
+
+            params["save_out"] = save_out
 
             if "synthesizer_galaxy" in mock_galaxy.keys():
                 params["synthesizer_galaxy"] = mock_galaxy[
@@ -6799,7 +6900,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                             ][()]
 
         variables = super().init_from_h5(
-            h5_name=h5_name, h5_folder=h5_folder, return_attr=True
+            h5_name=h5_name,
+            h5_folder=h5_folder,
+            return_attr=True,
         )
 
         # Combine the two dictionaries
@@ -7971,6 +8074,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         galaxy_id=None,
         overwrite=False,
         h5_folder=resolved_galaxy_dir,
+        save_out=True,
         **kwargs,
     ):
         # load from h5 if it exists
@@ -7994,7 +8098,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         if os.path.exists(file_path) and not overwrite:
             print("Loading from .h5")
-            return cls.init_from_h5(galaxy_id, h5_folder=h5_folder)
+            return cls.init_from_h5(
+                galaxy_id, h5_folder=h5_folder, save_out=save_out
+            )
         else:
             print("Generating from synthesizer.")
             return cls.init_mock_from_synthesizer(
@@ -8058,6 +8164,13 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             "stellar_age",
             "stellar_metallicity",
         ],
+        parameter_units={
+            "stellar_mass": u.Msun,
+            "sfr": u.Msun / u.yr,
+            "ssfr": u.yr**-1,
+            "stellar_age": u.Gyr,
+            "stellar_metallicity": u.dimensionless_unscaled,
+        },
         save=False,
         facecolor="white",
         max_on_row=4,
@@ -8180,7 +8293,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
 
             param_str = param.replace("_", r"\ ")
-            unit = ""
+            unit = parameter_units[param]
             cbar.set_label(
                 rf"$\rm{{{param_str}}}${unit}", labelpad=10, fontsize=8
             )
@@ -8284,9 +8397,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         # filter_codes = self.meta_properties.get('filters', None)
         filter_codes = None
         if filter_codes is None:
-            print(
-                "No filter codes found in meta_properties. Using default filters."
-            )
+            # print(
+            #    "No filter codes found in meta_properties. Using default filters."
+            # )
             observatories = 5 * ["HST"] + 14 * ["JWST"]
             instruments = 5 * ["ACS_WFC"] + 14 * ["NIRCam"]
             bands = self.bands
@@ -8295,7 +8408,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 f"{obs}/{inst}.{band}"
                 for obs, inst, band in zip(observatories, instruments, bands)
             ]
-            print(filter_codes)
         filters = Filters(filter_codes, new_lam=grid.lam)
 
         filter_code_from_band = {
@@ -8305,6 +8417,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         gal_id = self.meta_properties["id"]
         tag = self.meta_properties["tag"]
         region = self.meta_properties["region"]
+
+        if int(region) == 0:
+            region = "00"  # 00 is getting lost
 
         # file_path = self.meta_properties['file_path']
 
@@ -8554,7 +8669,6 @@ class MethodForwardingMeta(type):
 
         # Get methods from the contained class
         contained_class = attrs.get("contained_class", None)
-        print("contained_class", contained_class)
         if contained_class:
             for method_name in dir(contained_class):
                 if not method_name.startswith("__") and isinstance(

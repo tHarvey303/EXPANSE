@@ -111,7 +111,7 @@ def get_spectra_in_mask(
     return spectra_mask_total
 
 
-def calculate_sfh(galaxy, binw=5 * Myr, pixel_mask=None, plot=False):
+def calculate_sfh(galaxy, binw=10 * Myr, pixel_mask=None, plot=False):
     if pixel_mask is not None:
         mask = apply_pixel_coordinate_mask(galaxy, pixel_mask)
     else:
