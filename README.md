@@ -19,7 +19,10 @@ Python package to perform resolved SED fitting using publically availabe SED fit
 
 1. Interfacing with other sims - SPHINX is planned, other suggestions welcome.
 2. Further improvements to Viewer.
-3. Additional SED fitting tools, and improvement of pixel-by-pixel case.
-4. Better tools for MetaClass for population analysis - spatially resolved main sequence, outshining etc.
-5. Furhter reionization estimates - maps of fesc, zi_ion etc
-7. Bug fixes, documentation and examples.
+3. Modelling of morphology - probably using pyautogalaxy or pygalfitm
+4. Direct conversion of cutouts with modelled morphology into components for Pandeia - e.g. to plan JWST observations.
+5. More interactivity in the viewer - e.g. to select regions for further analysis - e.g. to measure the SED of a region, or to fit a model to it, based on drawing an aperture, or grouping pixels.
+6. Additional SED fitting tools, and improvement of pixel-by-pixel case.
+7. Better tools for MetaClass for population analysis - spatially resolved main sequence, outshining etc.
+8. Furhter reionization estimates - maps of fesc, zi_ion etc
+9. Bug fixes, documentation and examples.

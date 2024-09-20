@@ -13,7 +13,7 @@ import typing
 import warnings
 from io import BytesIO
 from pathlib import Path
-
+from matplotlib.patches import FancyArrow
 import astropy.units as u
 import h5py as h5
 import matplotlib.pyplot as plt
@@ -185,8 +185,8 @@ class ResolvedGalaxy:
         resolved_sfh=None,
         resolved_sed=None,
         h5_folder=resolved_galaxy_dir,
-        psf_kernel_folder="psfs/kernels/",
-        psf_folder="psfs/psf_models/",
+        psf_kernel_folder="internal",
+        psf_folder="internal",
         psf_type="star_stack",
         overwrite=False,
         save_out=True,
@@ -297,8 +297,25 @@ class ResolvedGalaxy:
 
         self.sed_fitting_table = sed_fitting_table
 
-        self.psf_kernel_folder = psf_kernel_folder
-        self.psf_folder = psf_folder
+        if psf_kernel_folder == "internal":
+            self.psf_kernel_folder = (
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+                + "/psfs/kernels/"
+            )
+        else:
+            self.psf_kernel_folder = psf_kernel_folder
+
+        if psf_folder == "internal":
+            self.psf_folder = (
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+                + "/psfs/psf_models/"
+            )
+        else:
+            self.psf_folder = psf_folder
         # self.psf_kernels = {psf_type: {}}
         self.psf_kernels = psf_kernels
 
@@ -346,6 +363,38 @@ class ResolvedGalaxy:
         dont_psf_match_bands=[],
         already_psf_matched=False,
     ):
+        """Initialise a galaxy object from either a .h5 file or GALFIND catalogue
+
+        Parameters
+        ----------
+
+        galaxy_id : str, list, np.ndarray, Column
+            The ID of the galaxy to load. If a list, will load multiple galaxies.
+        survey : str
+            The survey to load the galaxy from.
+        version : str
+            The version of the survey to load the galaxy from.
+        instruments : list, optional
+            The instruments to load the galaxy from. Default is ['ACS_WFC', 'NIRCam'].
+        excl_bands : list, optional
+            The bands to exclude from the galaxy. Default is [].
+        cutout_size : int, optional
+            The size of the cutout to load. Default is 64 pixels.
+        forced_phot_band : list, optional
+            The bands to use for forced photometry. Default is ['F277W', 'F356W', 'F444W'].
+        aper_diams : list, optional
+            The aperture diameters to use for aperture photometry. Default is [0.32] * u.arcsec.
+        output_flux_unit : astropy.unit, optional
+            The output flux unit to use. Default is u.uJy.
+        h5_folder : str, optional
+            The folder to save the .h5 files to. Default is resolved_galaxy_dir.
+        dont_psf_match_bands : list, optional
+            The bands to not PSF match. Default is [].
+        already_psf_matched : bool, optional
+            Whether the bands are already PSF matched. Default is False.
+
+
+        """
         if type(galaxy_id) not in [list, np.ndarray, Column]:
             galaxy_name = f"{survey}_{galaxy_id}"
             if os.path.exists(f"{h5_folder}{galaxy_name}.h5"):
@@ -364,15 +413,43 @@ class ResolvedGalaxy:
                 return cls.init_multiple_from_h5(
                     galaxy_names, h5_folder=h5_folder
                 )
+            else:
+                # Load those that are found
+                found_ids = [
+                    gal_id for gal_id, f in zip(galaxy_id, found) if f
+                ]
+
+                if len(found_ids) > 0:
+                    print("Loading some from .h5")
+                    galaxy_names = [
+                        f"{survey}_{gal_id}" for gal_id in found_ids
+                    ]
+                    found_galaxies = cls.init_multiple_from_h5(
+                        galaxy_names, h5_folder=h5_folder
+                    )
+
+                else:
+                    found_galaxies = []
+
+        unfound_ids = [
+            gal_id for gal_id in galaxy_id if gal_id not in found_ids
+        ]
+
+        if type(cutout_size) in [list, np.ndarray, Column]:
+            filt_cutout_size = [
+                i for i, f in zip(cutout_size, galaxy_id) if f not in found_ids
+            ]
+        else:
+            filt_cutout_size = cutout_size
 
         print("Loading from GALFIND")
-        return cls.init_from_galfind(
-            galaxy_id,
+        unfound_galaxies = cls.init_from_galfind(
+            unfound_ids,
             survey,
             version,
             instruments=instruments,
             excl_bands=excl_bands,
-            cutout_size=cutout_size,
+            cutout_size=filt_cutout_size,
             forced_phot_band=forced_phot_band,
             aper_diams=aper_diams,
             output_flux_unit=output_flux_unit,
@@ -380,6 +457,18 @@ class ResolvedGalaxy:
             dont_psf_match_bands=dont_psf_match_bands,
             already_psf_matched=already_psf_matched,
         )
+
+        # Match the order of the input galaxy_id
+        galaxies = []
+        for gal_id in galaxy_id:
+            if gal_id in found_ids:
+                galaxies.append(found_galaxies[found_ids.index(gal_id)])
+            elif gal_id in unfound_ids:
+                galaxies.append(unfound_galaxies[unfound_ids.index(gal_id)])
+            else:
+                raise Exception(f"Galaxy {gal_id} not found.")
+
+        return galaxies
 
     @classmethod
     def init_from_galfind(
@@ -485,6 +574,7 @@ class ResolvedGalaxy:
         # Obtain galaxy object
 
         cat.make_cutouts(galaxy_id, cutout_size=cutout_size_dict)
+
         objects = []
 
         for position, gal_id in enumerate(galaxy_id):
@@ -586,56 +676,121 @@ class ResolvedGalaxy:
 
             for band in bands:
                 cutout_path = cutout_paths[band]
-                hdu = fits.open(cutout_path)
-                assert (
-                    hdu[1].header["NAXIS1"]
-                    == hdu[1].header["NAXIS2"]
-                    == cutout_size_gal
-                ), f"Cutout size is {hdu[1].header['NAXIS1']}, not {cutout_size_gal}"
-                # assert int(hdu[0].header['cutout_size_as'] / cat.data.im_pixel_scales[forced_phot_band[0]]) == cutout_size, f"Cutout size is {hdu[0].header['cutout_size_as'] / cat.data.im_pixel_scales[forced_phot_band[0]]}, not {cutout_size}"
-                data = hdu["SCI"].data
-                try:
-                    rms_data = hdu["RMS_ERR"].data
-                except KeyError:
-                    weight_data = hdu["WHT"].data
-                    rms_data = np.where(
-                        weight_data == 0, 0, 1 / np.sqrt(weight_data)
-                    )
-                unit = u.Unit(hdu["SCI"].header["BUNIT"])
-                pix_scale = im_pixel_scales[band]
-                # convert to flux_unit
-                if unit == u.Unit("MJy/sr"):
-                    if output_flux_unit == u.Unit("MJy/sr"):
-                        data = data * u.MJy / u.sr
-                        rms_data = rms_data * u.MJy / u.sr
-                        unit = u.MJy / u.sr
-                    else:
-                        data = data * unit * pix_scale**2
-                        rms_data = rms_data * unit * pix_scale**2
+                with fits.open(cutout_path) as hdu:
+                    assert (
+                        hdu[1].header["NAXIS1"]
+                        == hdu[1].header["NAXIS2"]
+                        == cutout_size_gal
+                    ), f"Cutout size is {hdu[1].header['NAXIS1']}, not {cutout_size_gal}"
+                    # assert int(hdu[0].header['cutout_size_as'] / cat.data.im_pixel_scales[forced_phot_band[0]]) == cutout_size, f"Cutout size is {hdu[0].header['cutout_size_as'] / cat.data.im_pixel_scales[forced_phot_band[0]]}, not {cutout_size}"
+                    data = hdu["SCI"].data
+                    try:
+                        rms_data = hdu["RMS_ERR"].data
+                    except KeyError:
+                        weight_data = hdu["WHT"].data
+                        rms_data = np.where(
+                            weight_data == 0, 0, 1 / np.sqrt(weight_data)
+                        )
+                    try:
+                        unit = u.Unit(hdu["SCI"].header["BUNIT"])
+                        zero_point = None
+                    except (KeyError, ValueError):
+                        zeropoint = hdu["SCI"].header["ZEROPNT"]
+                        unit = None
 
-                        if output_flux_unit in [u.Jy, u.mJy, u.uJy, u.nJy]:
-                            data = data.to(output_flux_unit)
-                            rms_data = rms_data.to(output_flux_unit)
-                            unit = output_flux_unit
-                        elif output_flux_unit == u.erg / u.s / u.cm**2 / u.AA:
-                            data = data.to(
-                                output_flux_unit,
-                                equivalencies=u.spectral_density(wave[band]),
-                            )
-                            rms_data = rms_data.to(
-                                output_flux_unit,
-                                equivalencies=u.spectral_density(wave[band]),
-                            )
-                            unit = output_flux_unit
+                    pix_scale = im_pixel_scales[band]
+                    # convert to flux_unit
+                    if unit == u.Unit("MJy/sr"):
+                        if output_flux_unit == u.Unit("MJy/sr"):
+                            data = data * u.MJy / u.sr
+                            rms_data = rms_data * u.MJy / u.sr
+                            unit = u.MJy / u.sr
                         else:
-                            raise Exception("Output flux unit not recognised")
+                            data = data * unit * pix_scale**2
+                            rms_data = rms_data * unit * pix_scale**2
 
-                phot_imgs[band] = data
-                phot_pix_unit[band] = unit
-                rms_err_imgs[band] = rms_data
-                seg_imgs[band] = hdu["SEG"].data
-                phot_img_headers[band] = str(hdu["SCI"].header)
-                hdu.close()
+                            if output_flux_unit in [u.Jy, u.mJy, u.uJy, u.nJy]:
+                                data = data.to(output_flux_unit)
+                                rms_data = rms_data.to(output_flux_unit)
+                                unit = output_flux_unit
+                            elif (
+                                output_flux_unit
+                                == u.erg / u.s / u.cm**2 / u.AA
+                            ):
+                                data = data.to(
+                                    output_flux_unit,
+                                    equivalencies=u.spectral_density(
+                                        wave[band]
+                                    ),
+                                )
+                                rms_data = rms_data.to(
+                                    output_flux_unit,
+                                    equivalencies=u.spectral_density(
+                                        wave[band]
+                                    ),
+                                )
+                                unit = output_flux_unit
+                            else:
+                                raise Exception(
+                                    "Output flux unit not recognised"
+                                )
+
+                            final_data = data
+                            final_rms_data = rms_data
+                            final_unit = unit
+                    elif zeropoint is not None:
+                        # print('Found zeropoint')
+                        # import psutil
+
+                        # print(proc.open_files())
+                        ##proc = psutil.Process()
+
+                        output_zeropoint = output_flux_unit.to(u.ABmag)
+                        final_data = data * 10 ** (
+                            (output_zeropoint - zeropoint) / 2.5
+                        )
+                        final_rms_data = rms_data * 10 ** (
+                            (output_zeropoint - zeropoint) / 2.5
+                        )
+                        final_unit = output_flux_unit
+
+                    else:
+                        data = data * unit
+                        rms_data = rms_data * unit
+
+                        final_data = data
+                        final_rms_data = rms_data
+                        final_unit = unit
+
+                    assert final_data is not None, "Final data is None"
+                    assert final_rms_data is not None, "Final rms data is None"
+                    assert final_unit is not None, "Final unit is None"
+
+                    phot_imgs[band] = copy.deepcopy(final_data)
+                    phot_pix_unit[band] = copy.deepcopy(final_unit)
+                    rms_err_imgs[band] = copy.deepcopy(final_rms_data)
+                    seg_imgs[band] = copy.deepcopy(hdu["SEG"].data)
+                    phot_img_headers[band] = str(hdu["SCI"].header)
+
+                    final_data = None
+                    final_rms_data = None
+                    final_unit = None
+
+                    hdu.close()
+                    # Close file
+                    del (
+                        hdu,
+                        data,
+                        rms_data,
+                        final_data,
+                        final_rms_data,
+                        final_unit,
+                    )
+
+                # import psutil
+
+                # proc = psutil.Process()
+                # print(proc.open_files())
 
             if already_psf_matched:
                 psf_matched_data = {psf_type: {}}
@@ -818,17 +973,20 @@ class ResolvedGalaxy:
                 auto_photometry = None
 
             total_photometry = None
+            """
             if "total_photometry" in hfile.keys():
                 if (
                     hfile["total_photometry"].get("total_photometry")
                     is not None
                 ):
+                    print(hfile["total_photometry"]["total_photometry"][()])
                     total_photometry = ast.literal_eval(
                         hfile["total_photometry"]["total_photometry"][()]
                         .decode("utf-8")
                         .replace("<Quantity", "")
                         .replace(">", "")
                     )
+            """
 
             # Load paths and exts
             im_paths = ast.literal_eval(
@@ -2143,7 +2301,16 @@ class ResolvedGalaxy:
                 else:
                     data = self.phot_imgs[band]
 
-            norm = simple_norm(data, stretch="log", max_percent=99.9)
+            if type(data) is u.Quantity:
+                data = data.value
+
+            # Set normalization by brightest pixel in central 30x30 pixels
+
+            central_data = np.copy(data)[
+                self.cutout_size // 2 - 15 : self.cutout_size // 2 + 15,
+                self.cutout_size // 2 - 15 : self.cutout_size // 2 + 15,
+            ]
+            norm = simple_norm(central_data, stretch="log", max_percent=99.9)
             im = ax.imshow(
                 data, origin="lower", interpolation="none", norm=norm
             )
@@ -2690,6 +2857,8 @@ class ResolvedGalaxy:
 
         remove_files = True
 
+        stamp_size = (self.cutout_size, self.cutout_size)
+
         img_process = images_processing(
             filters,
             sci_img,
@@ -2775,6 +2944,12 @@ class ResolvedGalaxy:
             f"{dir_images}/{self.survey}_{self.galaxy_id}_fluxmap.fits"
         )
         Gal_EBV = 0  # Placeholder
+
+        # Check gal_region is same shape as flux map
+        assert (
+            np.shape(self.gal_region[gal_region_use])
+            == (self.cutout_size, self.cutout_size)
+        ), f"Galaxy region shape {np.shape(self.gal_region[gal_region_use])} not same as cutout size {self.cutout_size}"
 
         img_process.flux_map(
             self.gal_region[gal_region_use],
@@ -3260,7 +3435,15 @@ class ResolvedGalaxy:
         ):
             data = hdu[ext].data
             header = hdu[ext].header
-            unit = u.Unit(header["BUNIT"]) if flux_unit is not None else False
+            zeropoint = (
+                header["ZEROPNT"] if "ZEROPNT" in header.keys() else None
+            )
+            unit = header["BUNIT"] if "BUNIT" in header.keys() else None
+            try:
+                unit = u.Unit(unit)
+            except ValueError:
+                unit = None
+
             wcs = WCS(header)
             # print(wcs.world_to_pixel(self.sky_coord))
             # print(wcs_test.world_to_pixel(self.sky_coord))
@@ -3269,31 +3452,57 @@ class ResolvedGalaxy:
                 self.meta_properties["DELTA_J2000"] * u.deg,
                 frame="icrs",
             )
-            # print(skycoord, self.sky_coord)
+
+            print(self.sky_coord, type(self.sky_coord))
+
+            print(self.cutout_size, type(self.cutout_size))
+
             cutout = Cutout2D(
-                data, skycoord, (self.cutout_size, self.cutout_size), wcs=wcs
+                data,
+                position=self.sky_coord,
+                size=(self.cutout_size, self.cutout_size),
+                wcs=wcs,
             )
+
             data = cutout.data
 
-            if unit:
-                if unit == u.Unit("MJy/sr"):
-                    if output_flux_unit == u.Unit("MJy/sr"):
-                        data = data * u.MJy / u.sr
+            assert (
+                np.shape(data) == (self.cutout_size, self.cutout_size)
+            ), f"Cutout shape {np.shape(data)} not same as cutout size {self.cutout_size}"
+            if flux_unit is not None:
+                if unit or zeropoint:
+                    if unit == u.Unit("MJy/sr"):
+                        if output_flux_unit == u.Unit("MJy/sr"):
+                            data = data * u.MJy / u.sr
+
+                        else:
+                            data = data * unit * pix_scale**2
+
+                            if output_flux_unit in [u.Jy, u.mJy, u.uJy, u.nJy]:
+                                data = data.to(output_flux_unit)
+                                unit = output_flux_unit
+                            elif (
+                                output_flux_unit
+                                == u.erg / u.s / u.cm**2 / u.AA
+                            ):
+                                data = data.to(
+                                    output_flux_unit,
+                                    equivalencies=u.spectral_density(
+                                        wave[band]
+                                    ),
+                                )
+                                unit = output_flux_unit
+                            else:
+                                raise Exception(
+                                    "Output flux unit not recognised"
+                                )
+                    elif zeropoint is not None:
+                        outzp = output_flux_unit.to(u.ABmag)
+                        data = data * 10 ** ((outzp - zeropoint) / 2.5)
 
                     else:
-                        data = data * unit * pix_scale**2
-
-                        if output_flux_unit in [u.Jy, u.mJy, u.uJy, u.nJy]:
-                            data = data.to(output_flux_unit)
-                            unit = output_flux_unit
-                        elif output_flux_unit == u.erg / u.s / u.cm**2 / u.AA:
-                            data = data.to(
-                                output_flux_unit,
-                                equivalencies=u.spectral_density(wave[band]),
-                            )
-                            unit = output_flux_unit
-                        else:
-                            raise Exception("Output flux unit not recognised")
+                        data = data * unit
+                        data = data.to(output_flux_unit)
 
             self.add_to_h5(data, "det_data", f"{name}", overwrite=overwrite)
             det_data[name] = data
@@ -3353,14 +3562,19 @@ class ResolvedGalaxy:
             )
             # Make cutouts - this may not work currently as data.wht_types doesn't appear to be defined.
 
+        # print(len(cat))
+        # print([gal.ID for gal in cat.gals])
+
         cat.make_cutouts(
-            [self.galaxy_id],
+            [int(self.galaxy_id)],
             cutout_size=self.cutout_size
             * self.im_pixel_scales["F444W"].to(u.arcsec),
         )
 
         # Obtain galaxy object
-        galaxy = [gal for gal in cat.gals if gal.ID == self.galaxy_id]
+        galaxy = [
+            gal for gal in cat.gals if str(gal.ID) == str(self.galaxy_id)
+        ]
         if len(galaxy) == 0:
             raise ValueError(f"Galaxy with ID {self.galaxy_id} not found")
 
@@ -3370,6 +3584,7 @@ class ResolvedGalaxy:
         galaxy = galaxy[0]
 
         cutout_paths = galaxy.cutout_paths
+        print(cutout_paths)
         bands = (
             galaxy.phot.instrument.band_names
         )  # should be bands just for galaxy!
@@ -3417,7 +3632,23 @@ class ResolvedGalaxy:
                 rms_data = np.where(
                     weight_data == 0, 0, 1 / np.sqrt(weight_data)
                 )
-            unit = u.Unit(hdu["SCI"].header["BUNIT"])
+
+            unit = (
+                hdu["SCI"].header["BUNIT"]
+                if "BUNIT" in hdu["SCI"].header.keys()
+                else None
+            )
+            zeropoint = (
+                hdu["SCI"].header["ZEROPNT"]
+                if "ZEROPNT" in hdu["SCI"].header.keys()
+                else None
+            )
+            if unit:
+                try:
+                    unit = u.Unit(unit)
+                except ValueError:
+                    unit = None
+
             pix_scale = self.im_pixel_scales[band]
             # convert to flux_unit
             if unit == u.Unit("MJy/sr"):
@@ -3445,6 +3676,15 @@ class ResolvedGalaxy:
                         unit = output_flux_unit
                     else:
                         raise Exception("Output flux unit not recognised")
+            elif zeropoint is not None:
+                outzp = output_flux_unit.to(u.ABmag)
+                data = data * 10 ** ((outzp - zeropoint) / 2.5)
+                rms_data = rms_data * 10 ** ((outzp - zeropoint) / 2.5)
+            else:
+                data = data * unit
+                rms_data = rms_data * unit
+                rms_data = rms_data.to(output_flux_unit)
+                data = data.to(output_flux_unit)
 
             phot_imgs[band] = data
             phot_pix_unit[band] = unit
@@ -3760,7 +4000,6 @@ class ResolvedGalaxy:
                 flux_err = flux_err.to(u.uJy)
                 row.append(flux)
                 row.append(flux_err)
-                print(row)
             table.add_row(row)
         # Add MAG_APER
         for aper in self.aperture_dict.keys():
@@ -3955,6 +4194,7 @@ class ResolvedGalaxy:
             for j, band in enumerate(self.bands):
                 flux = table[mask][band]
                 flux_err = table[mask][f"{band}_err"]
+
                 wav = self.filter_wavs[band]
                 # print(wav, flux, flux_err)
                 if flux_unit == u.ABmag:
@@ -3967,6 +4207,15 @@ class ResolvedGalaxy:
                     inner = fnu_jy / (fnu_jy - fnu_jy_err)
                     err_up = 2.5 * np.log10(inner)
                     err_low = 2.5 * np.log10(1 + (fnu_jy_err / fnu_jy))
+                    err_low = (
+                        err_low.value
+                        if type(err_low) is u.Quantity
+                        else err_low
+                    )
+                    err_up = (
+                        err_up.value if type(err_up) is u.Quantity else err_up
+                    )
+
                     yerr = [
                         np.atleast_1d(np.abs(err_low)),
                         np.atleast_1d(np.abs(err_up)),
@@ -3992,22 +4241,39 @@ class ResolvedGalaxy:
 
                 label = label if color not in colorss else ""
 
-                ax.errorbar(
-                    wav.to(wav_unit),
-                    flux,
-                    yerr=yerr,
-                    fmt="o",
-                    color=color,
-                    label=label,
-                    markeredgecolor="black",
-                )
+                # If error low or high is nan, plot point as upper limit
+
+                if np.isnan(yerr[0]) or np.isnan(yerr[1]):
+                    # calculate dy as 5% of the plot range
+
+                    patch = FancyArrow(
+                        x=wav.to(wav_unit).value,
+                        y=flux.item(),
+                        dx=0,
+                        dy=0.15,
+                        width=0.02,
+                        fc=color,
+                        ec="black",
+                        transform=ax.transData,
+                    )
+                    ax.add_patch(patch)
+                else:
+                    ax.errorbar(
+                        wav.to(wav_unit),
+                        flux,
+                        yerr=yerr,
+                        fmt="o",
+                        color=color,
+                        label=label,
+                        markeredgecolor="black",
+                    )
                 colorss.append(color)
             # Plot the Bagpipes input
-            tab = self.provide_bagpipes_phot(rbin)
-            for row, band in zip(tab, self.bands):
-                flux, err = row * u.uJy
-                wav = self.filter_wavs[band]
-                # ax.errorbar(wav.to(wav_unit)+0.05*u.um, flux.to(flux_unit), yerr=err.to(flux_unit), fmt='x', color=color)
+            # tab = self.provide_bagpipes_phot(rbin)
+            # for row, band in zip(tab, self.bands):
+            #    flux, err = row * u.uJy
+            #    wav = self.filter_wavs[band]
+            # ax.errorbar(wav.to(wav_unit)+0.05*u.um, flux.to(flux_unit), yerr=err.to(flux_unit), fmt='x', color=color)
 
         ax.set_xlabel(f"Wavelength ({wav_unit})")
         ax.set_ylabel(f"Flux ({flux_unit})")
@@ -4188,6 +4454,7 @@ class ResolvedGalaxy:
         figsize=(12, 8),
         bands_to_show=["F814W", "F115W", "F200W", "F335M", "F444W"],
         show=True,
+        flux_unit=u.ABmag,
         save=False,
     ):
         # GridSpec
@@ -4217,7 +4484,7 @@ class ResolvedGalaxy:
             fig=fig_sed,
             show=False,
             bins_to_show=["TOTAL_BIN", "MAG_APER_TOTAL", "1"],
-            flux_unit=u.ABmag,
+            flux_unit=flux_unit,
             label_individual=True,
         )
 
@@ -4264,6 +4531,9 @@ class ResolvedGalaxy:
             arr[arr == val] = i
         arr[arr == 0] == np.nan
 
+        if type(arr) is u.Quantity:
+            arr = arr.value
+
         # remove everything from last_cutout_ax
         last_cutout_ax.clear()
         norm = last_cutout_ax.imshow(
@@ -4292,6 +4562,11 @@ class ResolvedGalaxy:
         # Plot RGB and pixedfit in fig_bins - 2 rows
         ax_rgb = fig_bins.add_subplot(211)
         ax_pixedfit = fig_bins.add_subplot(212)
+
+        fig.savefig(
+            f"{resolved_galaxy_dir}/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png",
+            dpi=200,
+        )
 
         self.plot_lupton_rgb(
             ax=ax_rgb,
@@ -4336,12 +4611,12 @@ class ResolvedGalaxy:
                 z84 = z84[0]
             if type(z16) in [list, np.ndarray]:
                 z16 = z16[0]
-            error = f"$^{{+{z84-z50:.2f}}}_{{-{z50-z16:.2f}}}$"
+            error = f"$^{{+{np.abs(z84-z50):.2f}}}_{{-{np.abs(z50-z16):.2f}}}$"
         except:
             z50 = self.redshift
             error = ""
 
-        textstr = f"Galaxy {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nNumber of bins: {len(np.unique(self.pixedfit_map))}"
+        textstr = f"Galaxy {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nNumber of bins: {len(np.unique(self.pixedfit_map))-1}"
         fig.text(
             0.05,
             0.46,
@@ -4363,6 +4638,9 @@ class ResolvedGalaxy:
         )
 
         if save:
+            if not os.path.exists(f"{resolved_galaxy_dir}/diagnostic_plots"):
+                os.makedirs(f"{resolved_galaxy_dir}/diagnostic_plots")
+
             fig.savefig(
                 f"{resolved_galaxy_dir}/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png",
                 dpi=200,
@@ -5148,9 +5426,18 @@ class ResolvedGalaxy:
             return
 
         table = Table.read(catalogue_path)
-        table = table[table[id_column] == self.galaxy_id]
+        mask = [str(i) == str(self.galaxy_id) for i in table[id_column]]
+
+        # fix mask so it isn't single boolean
+
+        if type(mask) is bool:
+            raise Exception("mask not working properly")
+        table = table[mask]
         if len(table) == 0:
             raise Exception(f"ID {self.galaxy_id} not found in {table}.")
+        if len(table) > 1:
+            print(len(table))
+            raise Exception(f"Multiple IDs found for {self.galaxy_id}.")
 
         total_photometry = {}
         band_cols = [col for col in columns_to_add if "band" in col]
@@ -5162,27 +5449,49 @@ class ResolvedGalaxy:
             for col in band_cols:
                 if "band" in col:
                     col = col.replace("band", band)
-                    total_photometry[band][col] = table[col][0]
+                    val = table[col]
+
+                    val = (
+                        val[0]
+                        if type(val) in [np.ndarray, list, Column]
+                        else val
+                    )
+                    # total_photometry[band][col] = val
                     if "FLUX_" in col:
                         # Convert to uJy
-                        flux = (
-                            table[col][0] * u.Jy
-                        )  # 10**(-zp/2.5) * 3631 * u.Jy
+                        if getattr(val, "unit", None) is None:
+                            flux = val * u.Jy
+                        else:
+                            flux = val
+
+                        if type(flux) in [np.ndarray, list]:
+                            flux = flux[0]
+
+                        # 0**(-zp/2.5) * 3631 * u.Jy
                         flux = flux.to(u.uJy)
                         total_photometry[band]["flux"] = flux.value
                         total_photometry[band]["flux_unit"] = str(flux.unit)
 
                     elif "FLUXERR_" in col:
-                        err = (
-                            table[col][0] * u.Jy
-                        )  # 10**(-zp/2.5) * 3631 * u.Jy
+                        if getattr(val, "unit", None) is None:
+                            err = val * u.Jy
+                        else:
+                            err = val
+
+                        # ensure flux err is not a single length array
+                        if type(err) in [np.ndarray, list]:
+                            err = err[0]
+
                         total_photometry[band]["flux_err"] = err.to(
                             u.uJy
                         ).value
 
         total_photometry[stacked_band] = {}
         for col in other_cols:
-            data = table[f"{col}{stacked_band}"][0]
+            data = table[f"{col}{stacked_band}"]
+            data = (
+                data[0] if type(data) in [np.ndarray, list, Column] else data
+            )
             if type(data) in [u.Quantity, u.Magnitude]:
                 data = data.value
 
@@ -6198,6 +6507,7 @@ class ResolvedGalaxy:
         run_dir="pipes/",
         bins_to_show="all",
         plotpipes_dir="pipes_scripts/",
+        flux_unit=u.ABmag,
     ):
         """WARNING! NOT USED IN APP"""
         if (
@@ -6297,7 +6607,7 @@ class ResolvedGalaxy:
                     ax_sed,
                     colour=color[str(rbin)],
                     wav_units=u.um,
-                    flux_units=u.ABmag,
+                    flux_units=flux_unit,
                     lw=1,
                     fill_uncertainty=False,
                     zorder=5,
@@ -6309,7 +6619,7 @@ class ResolvedGalaxy:
                     ax_sed,
                     colour=color[str(rbin)],
                     wav_units=u.um,
-                    flux_units=u.ABmag,
+                    flux_units=flux_unit,
                     zorder=6,
                     fcolour=color[str(rbin)],
                     ptsize=15,
@@ -8127,31 +8437,39 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             fig, ax = plt.subplots(
                 1, 1, figsize=(8, 4.5), facecolor=facecolor, dpi=200
             )
+            made_fig = True
+        else:
+            made_fig = False
 
         if type(components) is str:
             components = [components]
 
         for component in components:
+            if type(label) is str:
+                lab = label
+            elif label:
+                lab = components
+            else:
+                lab = ""
             wav = self.seds["wav"] * u.Angstrom
             flux = self.seds[component]["total"] * u.uJy
             ax.plot(
                 wav.to(wav_unit),
                 flux.to(flux_unit, equivalencies=u.spectral_density(wav)),
                 **kwargs,
-                label=component if label else "",
+                label=lab,
             )
 
         if label:
-            ax.set_xlim(0.5, 5)
-
-            # Get max flux in the xlim range
-            max_flux = np.max(flux[(wav > 0.5 * u.um) & (wav < 5 * u.um)])
-            ax.set_ylim(0, 1.1 * max_flux.to(flux_unit).value)
-
-            # ax.set_ylim(0, 5)
-            ax.legend()
-            ax.set_xlabel("Wavelength (um)")
-            ax.set_ylabel("Flux (uJy)")
+            if made_fig:
+                ax.set_xlim(0.5, 5)
+                max_flux = np.max(flux[(wav > 0.5 * u.um) & (wav < 5 * u.um)])
+                # Get max flux in the xlim range
+                ax.set_ylim(0, 1.1 * max_flux.to(flux_unit).value)
+                # ax.set_ylim(0, 5)
+                ax.legend()
+                ax.set_xlabel("Wavelength (um)")
+                ax.set_ylabel("Flux (uJy)")
 
         return fig
 

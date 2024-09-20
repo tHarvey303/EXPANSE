@@ -667,6 +667,16 @@ def plot_sed(
                 which_run_aperture_param
             ] = cache
 
+    # If MockResolvedGalaxy, plot the true SED
+    if isinstance(resolved_galaxy, MockResolvedGalaxy):
+        resolved_galaxy.plot_mock_spectra(
+            components=["det_segmap_fnu"],
+            ax=ax,
+            fig=fig,
+            wav_unit=x_unit,
+            flux_unit=y_unit,
+        )
+
     ax.legend(loc="upper left", frameon=False, fontsize="small")
     plt.close(fig)
     return pn.pane.Matplotlib(

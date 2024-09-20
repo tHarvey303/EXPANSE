@@ -19,6 +19,7 @@ galaxies/diagnostic_plots/*
 galaxies/*.fits
 test.pdf
 galaxies/bckp/*
+galaxies/*.h5
 python
 pregrids
 .ruff_cache

@@ -66,8 +66,8 @@ if __name__ == "__main__":
         catalog_path_selected = "/nvme/scratch/work/tharvey/EXPANSE/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits"
         cat_selected = Table.read(catalog_path_selected)
         ids = cat_selected["NUMBER"]
-        cutout_size = cat_selected["CUTOUT_SIZE"][10:]
-        ids = ids[10:]  # For testing
+        cutout_size = cat_selected["CUTOUT_SIZE"]
+        ids = ids  # For testing
         overwrite = False
         h5_folder = resolved_galaxy_dir
     elif computer == "singularity":
@@ -88,6 +88,7 @@ if __name__ == "__main__":
 
     cat = None
     num_of_bins = 0
+    num_of_single_bin = 0
     initial_load = (
         True  # Set to True if you want to load the data from the catalogue
     )
@@ -102,7 +103,7 @@ if __name__ == "__main__":
             # Add total fluxes
             galaxy.add_flux_aper_total(
                 catalogue_path="/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v11/ACS_WFC+NIRCam/JOF_psfmatched/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total.fits",
-                overwrite=overwrite,
+                overwrite=True,
             )
 
             # Add Detection data
@@ -113,7 +114,7 @@ if __name__ == "__main__":
             # fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_seg_stamps.png', dpi=300, bbox_inches='tight')
             # plt.close()
             # Currently set to use segmentation map from detection image. May change this in future.
-            if galaxy.gal_region is None or overwrite:
+            if galaxy.gal_region in [None, {}] or overwrite:
                 galaxy.pixedfit_processing(
                     gal_region_use="detection", overwrite=overwrite
                 )  # Maybe seg map should be from detection image?
@@ -124,15 +125,33 @@ if __name__ == "__main__":
             if galaxy.pixedfit_map is None or overwrite:
                 galaxy.pixedfit_binning(overwrite=overwrite)
 
-            if galaxy.photometry_table is None or overwrite:
+            if galaxy.photometry_table in [None, {}] or overwrite:
                 galaxy.measure_flux_in_bins(overwrite=overwrite)
 
-            galaxy.overview_plot(save=True)
+            if (
+                not os.path.exists(
+                    f"{h5_folder}/diagnostic_plots/JOF_psfmatched_{galaxy.galaxy_id}_overview.png"
+                )
+                or overwrite
+            ):
+                galaxy.plot_overview(save=True)
 
-            num_of_bins += galaxy.get_number_of_bins()
+            import psutil
+
+            process = psutil.Process(os.getpid())
+            print(process.open_files())
+
+            nbins = galaxy.get_number_of_bins()
+            if nbins == 1:
+                num_of_single_bin += 1
+
+            num_of_bins += nbins
 
         print(f"Total number of bins to fit: {num_of_bins}")
+        print(f"Number of galaxies with only one bin: {num_of_single_bin}")
         # Run Bagpipes in parallel
+
+    crash
 
     from .bagpipes.pipes_models import (
         continuity_dict,

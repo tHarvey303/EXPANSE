@@ -28,6 +28,9 @@ from photutils.psf import SplitCosineBellWindow, create_matching_kernel
 from scipy.ndimage import binary_dilation, zoom
 from skimage.morphology import disk
 
+# stop ruff from removing import
+import cmasher  # noqa
+
 np.errstate(invalid="ignore")
 from astropy.visualization import LinearStretch, LogStretch
 from regions import PointPixelRegion, PointSkyRegion, Regions
@@ -2425,7 +2428,7 @@ if __name__ == "__main__":
     # Reset
     # For Nathan
     # Special case for nathan
-
+    """
     for name in [
         "L5_NEP-2_HST",
         "L15_NEP-3_HST",
@@ -2487,8 +2490,7 @@ if __name__ == "__main__":
             psf_fov=psf_fov,
             pypher_r=1e-4,
         )
-
-    crash_here
+    """
 
     # bands = []
     for band in ["F850LP", "F814W", "F775W", "F606W", "F435W"]:
@@ -2609,7 +2611,16 @@ if __name__ == "__main__":
 
     bands = ["F850LP", "F814W", "F775W", "F606W", "F435W"]
     # Convolve images with bands
-    # convolve_images(bands, im_paths, wht_paths, err_paths, outdir_matched_images, kernel_dir, match_band, overwrite=True)
+    convolve_images(
+        bands,
+        im_paths,
+        wht_paths,
+        err_paths,
+        outdir_matched_images,
+        kernel_dir,
+        match_band,
+        overwrite=True,
+    )
 
     for apersize in [0.2, 0.32, 0.5, 1, 1.5, 2]:
         # Derive correction factor for apertures from a PSF model
