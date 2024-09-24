@@ -25,4 +25,5 @@ Python package to perform resolved SED fitting using publically availabe SED fit
 6. Additional SED fitting tools, and improvement of pixel-by-pixel case.
 7. Better tools for MetaClass for population analysis - spatially resolved main sequence, outshining etc.
 8. Furhter reionization estimates - maps of fesc, zi_ion etc
-9. Bug fixes, documentation and examples.
+9. More radial/annular tools - annular SED fitting, radial profiles of properties etc.
+10. Bug fixes, documentation and examples.

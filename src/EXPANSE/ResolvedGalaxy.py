@@ -684,6 +684,14 @@ class ResolvedGalaxy:
                     ), f"Cutout size is {hdu[1].header['NAXIS1']}, not {cutout_size_gal}"
                     # assert int(hdu[0].header['cutout_size_as'] / cat.data.im_pixel_scales[forced_phot_band[0]]) == cutout_size, f"Cutout size is {hdu[0].header['cutout_size_as'] / cat.data.im_pixel_scales[forced_phot_band[0]]}, not {cutout_size}"
                     data = hdu["SCI"].data
+                    # CHECK if data is all O or NaN
+                    if np.all(data == 0) or np.all(np.isnan(data)):
+                        print(
+                            f"All data is 0 or NaN for {band} - removing band from galaxy"
+                        )
+                        bands = bands[bands != band]
+                        continue
+
                     try:
                         rms_data = hdu["RMS_ERR"].data
                     except KeyError:
@@ -801,6 +809,9 @@ class ResolvedGalaxy:
             else:
                 psf_matched_data = None
                 psf_matched_rms_err = None
+
+            if type(cutout_size_gal) is u.Quantity:
+                cutout_size_gal = int(cutout_size_gal.value)
 
             object = cls(
                 galaxy_id=gal_id,
@@ -2859,6 +2870,12 @@ class ResolvedGalaxy:
 
         stamp_size = (self.cutout_size, self.cutout_size)
 
+        print("sci_img", sci_img)
+        print("var_img", var_img)
+        print("img_unit", img_unit)
+        print("img_pixsizes", img_pixsizes)
+        print("scale_factors", scale_factors)
+
         img_process = images_processing(
             filters,
             sci_img,
@@ -3453,10 +3470,6 @@ class ResolvedGalaxy:
                 frame="icrs",
             )
 
-            print(self.sky_coord, type(self.sky_coord))
-
-            print(self.cutout_size, type(self.cutout_size))
-
             cutout = Cutout2D(
                 data,
                 position=self.sky_coord,
@@ -3603,7 +3616,12 @@ class ResolvedGalaxy:
 
         bands_mask = galaxy.phot.flux_Jy.mask
         bands = bands[~bands_mask]
-        assert len(bands) == len(self.bands)
+
+        # bands =
+
+        assert (
+            len(bands) >= len(self.bands)
+        ), f"Bands {bands} ({len(bands)} do not match input bands {self.bands} ({len(self.bands)})"
 
         phot_imgs = {}
         phot_pix_unit = {}
@@ -3686,29 +3704,36 @@ class ResolvedGalaxy:
                 rms_data = rms_data.to(output_flux_unit)
                 data = data.to(output_flux_unit)
 
-            phot_imgs[band] = data
+            phot_imgs[band] = copy.copy(data)
             phot_pix_unit[band] = unit
-            rms_err_imgs[band] = rms_data
-            seg_imgs[band] = hdu["SEG"].data
+            rms_err_imgs[band] = copy.copy(rms_data)
+            seg_imgs[band] = copy.copy(hdu["SEG"].data)
             # phot_img_headers[band] = str(hdu['SCI'].header)
-            hdu.close()
+
+            # Remove all references to the fits file so it can be closed
 
             if f"phot_{band}" in hfile["unmatched_data"].keys():
-                hfile["unmatched_data"][f"phot_{band}"][()] = data
-                hfile["unmatched_data"][f"rms_err_{band}"][()] = rms_data
+                hfile["unmatched_data"][f"phot_{band}"][()] = phot_imgs[band]
+                hfile["unmatched_data"][f"rms_err_{band}"][()] = rms_err_imgs[
+                    band
+                ]
                 hfile["unmatched_data"][f"seg_{band}"][()] = seg_imgs[band]
             else:
                 hfile["unmatched_data"].create_dataset(
-                    f"phot_{band}", data=data
+                    f"phot_{band}", data=phot_imgs[band]
                 )
                 hfile["unmatched_data"].create_dataset(
-                    f"rms_err_{band}", data=rms_data
+                    f"rms_err_{band}", data=rms_err_imgs[band]
                 )
                 hfile["unmatched_data"].create_dataset(
                     f"seg_{band}", data=seg_imgs[band]
                 )
 
+            hdu.close()
+            del data, rms_data, hdu
+
         hfile.close()
+
         self.unmatched_data = phot_imgs
         self.unmatched_rms_err = rms_err_imgs
         self.unmatched_seg = seg_imgs
@@ -4007,8 +4032,13 @@ class ResolvedGalaxy:
                 aper = aper.value
             row = [f"MAG_APER_{aper}", f"MAG_APER_{aper}"]
             for pos, band in enumerate(self.bands):
-                flux = self.aperture_dict[aper]["flux"][pos] * u.Jy
-                flux_err = self.aperture_dict[aper]["flux_err"][pos] * u.Jy
+                flux = self.aperture_dict[aper]["flux"][pos]
+                flux_err = self.aperture_dict[aper]["flux_err"][pos]
+                if type(flux) != u.Quantity:
+                    flux *= u.Jy
+                if type(flux_err) != u.Quantity:
+                    flux_err *= u.Jy
+
                 flux = flux.to(u.uJy)
                 flux_err = flux_err.to(u.uJy)
                 row.append(flux)
