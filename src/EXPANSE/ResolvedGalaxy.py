@@ -2049,7 +2049,7 @@ class ResolvedGalaxy:
         # Add anything else from the old file to the new file
         if os.path.exists(self.h5_path) and append != "":
             old_hfile = h5.File(self.h5_path, "r")
-            print("Removing temp", self.h5_path)
+            # print("Removing temp", self.h5_path)
             hfile = h5.File(self.h5_path.replace(".h5", f"{append}.h5"), "a")
             for key in old_hfile.keys():
                 if key not in hfile.keys():
