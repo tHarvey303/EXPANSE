@@ -9195,6 +9195,7 @@ def run_bagpipes_wrapper(
     version="v11",
     overwrite=False,
     overwrite_internal=False,
+    alert=False,
 ):
     # print('Doing', galaxy_id, resolved_dict['meta']['run_name'], overwrite, overwrite_internal)
     # return
@@ -9241,4 +9242,13 @@ def run_bagpipes_wrapper(
     except Exception as e:
         print(f"Error in {galaxy_id}: {e}")
         print(traceback.format_exc())
+        if alert:
+            from utils import send_email
+
+            ctime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            send_email(
+                contents=f'Crash for {galaxy_id} and {resolved_dict["meta"]["run_name"]} \n {e} \n {traceback.format_exc()}',
+                subject=f"{sys.argv[0]} crash at {ctime} for {self.galaxy_id}",
+            )
+
         return None

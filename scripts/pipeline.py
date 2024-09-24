@@ -87,11 +87,12 @@ if __name__ == "__main__":
     # Should speed it up?
 
     cat = None
+
+    initial_load = False
+    # Set to True if you want to load the data from the catalogue
+
     num_of_bins = 0
     num_of_single_bin = 0
-    initial_load = (
-        True  # Set to True if you want to load the data from the catalogue
-    )
     if rank == 0 and initial_load:
         for posi, galaxy in enumerate(galaxies):
             # Add original imaging back
@@ -208,6 +209,7 @@ if __name__ == "__main__":
                     resolved_dict,
                     cutout_size=cutout_size,
                     h5_folder=h5_folder,
+                    alert=True,
                 )
                 for galaxy_id, resolved_dict in zip(ids, run_dicts)
             )
