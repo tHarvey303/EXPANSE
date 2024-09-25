@@ -64,6 +64,8 @@ from .utils import (
     is_cli,
     make_EAZY_SED_fit_params_arr,
     update_mpl,
+    FieldInfo,
+    PhotometryBandInfo,
 )
 
 try:
@@ -156,8 +158,7 @@ class ResolvedGalaxy:
         detection_band="F277W+F356W+F444W",
         psf_matched_data=None,
         psf_matched_rms_err=None,
-        pixedfit_map=None,
-        voronoi_map=None,
+        maps=None,
         binned_flux_map=None,
         binned_flux_err_map=None,
         photometry_table=None,
@@ -278,8 +279,11 @@ class ResolvedGalaxy:
                 == (self.cutout_size, self.cutout_size)
             ), f"Segmentation map shape for {band} is {self.seg_imgs[band].shape}, not {(self.cutout_size, self.cutout_size)}"
         # Bin the pixels
-        self.voronoi_map = voronoi_map
-        self.pixedfit_map = pixedfit_map
+        for key in maps:
+            setattr(self, f"{key}_map", maps[key])
+        # store names of maps
+        self.maps = list(maps.keys())
+
         # print('type', type(pixedfit_map))
         self.psf_matched_data = psf_matched_data
         self.psf_matched_rms_err = psf_matched_rms_err
@@ -1078,13 +1082,11 @@ class ResolvedGalaxy:
                         ][psf_type][band][()]
             else:
                 psf_matched_rms_err = None
-            pixedfit_map = None
-            voronoi_map = None
+
+            maps = {}
             if hfile.get("bin_maps") is not None:
-                if hfile["bin_maps"].get("pixedfit") is not None:
-                    pixedfit_map = hfile["bin_maps"]["pixedfit"][()]
-                if hfile["bin_maps"].get("voronoi") is not None:
-                    voronoi_map = hfile["bin_maps"]["voronoi"][()]
+                for key in hfile["bin_maps"].keys():
+                    maps[key] = hfile["bin_maps"][key][()]
 
             binned_flux_map = None
             binned_flux_err_map = None
@@ -1282,8 +1284,7 @@ class ResolvedGalaxy:
             "psf_matched_data": psf_matched_data,
             "galfind_version": galfind_version,
             "psf_matched_rms_err": psf_matched_rms_err,
-            "pixedfit_map": pixedfit_map,
-            "voronoi_map": voronoi_map,
+            "maps": maps,
             "binned_flux_map": binned_flux_map,
             "binned_flux_err_map": binned_flux_err_map,
             "photometry_table": photometry_table,
@@ -1335,13 +1336,16 @@ class ResolvedGalaxy:
 
     @classmethod
     def init_from_basics(
-        self,
+        cls,
         galaxy_id: str,
         sky_coord: SkyCoord,
         survey: str,
-        im_paths: typing.Dict[str, str],
-        err_paths: typing.Dict[str, str],
+        field_info: FieldInfo,
         cutout_size: typing.Union[int, u.Quantity, "auto"] = "auto",
+        dont_psf_match_bands: typing.List[str] = [],
+        redshift: float = -1,
+        already_psf_matched: bool = False,
+        forced_phot_band: typing.List[str] = ["F277W", "F356W", "F444W"],
     ):
         """
         This function will be the barebones function to initialize a Galaxy,
@@ -1349,7 +1353,136 @@ class ResolvedGalaxy:
 
         """
 
-        raise NotImplementedError("This function is not yet implemented")
+        # To Do
+
+        # Make Cutouts from FieldInfo
+        phot_imgs = {}
+        phot_pix_unit = {}
+        phot_img_headers = {}
+        rms_err_imgs = {}
+        seg_imgs = {}
+
+        for band in field_info.band_names:
+            im_path = field_info.im_paths[band]
+
+            im_data = fits.getdata(im_path, field_info.im_exts[band])
+            im_header = fits.getheader(im_path, field_info.im_exts[band])
+            wcs = WCS(im_header)
+            phot_img_headers[band] = str(im_header)
+
+            cutout = Cutout2D(
+                im_data,
+                position=sky_coord,
+                size=(cutout_size, cutout_size),
+                wcs=wcs,
+            )
+
+            data = cutout.data
+
+            # Check if data is all O or NaN
+            if np.all(data == 0) or np.all(np.isnan(data)):
+                raise Exception(f"All data is 0 or NaN for {band}")
+
+            # Work out the unit or zero point (prefer zero point)
+            if field_info.im_zps[band] is not None:
+                zero_point = field_info.im_zps[band]
+                # conversion_factor
+                out_zeropoint = u.uJy.to(u.ABmag)
+                scale_factor = 10 ** ((out_zeropoint - zero_point) / 2.5)
+                final_data = data * scale_factor * u.uJy
+                unit = u.uJy
+            elif field_info.im_units[band] is not None:
+                unit = u.Unit(field_info.im_units[band])
+                if unit == u.Unit("MJy/sr"):
+                    # Convert using pixel scale
+                    scale_factor = field_info.im_pixel_scales[band] ** 2
+                    data = data * unit * scale_factor
+
+                    final_data = data.to(u.uJy)
+                else:
+                    scale_factor = 1
+                    final_data = data * unit * scale_factor
+                    final_data = final_data.to(u.uJy)
+
+            phot_imgs[band] = copy.deepcopy(final_data)
+            phot_pix_unit[band] = u.uJy
+
+            del im_data
+
+            # Check if we have rms, wht or seg files to cutout
+            if field_info.err_paths[band] is not None:
+                rms_err_path = field_info.err_paths[band]
+                rms_err_data = fits.getdata(
+                    rms_err_path, field_info.rms_err_exts[band]
+                )
+                rms_err_cutout = Cutout2D(
+                    rms_err_data,
+                    position=sky_coord,
+                    size=(cutout_size, cutout_size),
+                    wcs=wcs,
+                )
+
+                # Do the same conversion for the rms_err data
+                rms_err_data = rms_err_cutout.data
+                rms_err_data_final = rms_err_data * scale_factor * unit
+                rms_err_imgs[band] = copy.deepcopy(
+                    rms_err_data_final.to(u.uJy)
+                )
+                del rms_err_data
+
+            if field_info.seg_paths[band] is not None:
+                seg_path = field_info.seg_paths[band]
+                seg_data = fits.getdata(seg_path)
+                seg_cutout = Cutout2D(
+                    seg_data,
+                    position=sky_coord,
+                    size=(cutout_size, cutout_size),
+                    wcs=wcs,
+                )
+
+                seg_imgs[band] = copy.deepcopy(seg_cutout.data)
+                del seg_data
+        # Get the photometry from the cutouts
+
+        if not already_psf_matched:
+            psf_matched_data = None
+            psf_matched_rms_err = None
+        else:
+            psf_matched_data = copy.deepcopy(phot_imgs)
+            psf_matched_rms_err = copy.deepcopy(rms_err_imgs)
+
+        meta_properties = {}
+
+        return cls(
+            galaxy_id=galaxy_id,
+            sky_coord=sky_coord,
+            survey=survey,
+            bands=field_info.band_names,
+            im_paths=field_info.im_paths,
+            im_exts=field_info.im_exts,
+            im_zps=field_info.im_zps,
+            seg_paths=field_info.seg_paths,
+            detection_band="+".join(forced_phot_band),
+            galfind_version="",
+            rms_err_paths=field_info.err_paths,
+            rms_err_exts=field_info.rms_err_exts,
+            im_pixel_scales=field_info.im_pixel_scales,
+            phot_imgs=phot_imgs,
+            phot_pix_unit=phot_pix_unit,
+            phot_img_headers=phot_img_headers,
+            rms_err_imgs=rms_err_imgs,
+            seg_imgs=seg_imgs,
+            aperture_dict={},
+            redshift=redshift,
+            cutout_size=cutout_size,
+            dont_psf_match_bands=dont_psf_match_bands,
+            auto_photometry={},
+            psf_matched_data=psf_matched_data,
+            psf_matched_rms_err=psf_matched_rms_err,
+            meta_properties=meta_properties,
+            already_psf_matched=already_psf_matched,
+            overwrite=False,
+        )
 
     def get_filter_wavs(
         self, facilities={"JWST": ["NIRCam"], "HST": ["ACS", "WFC3_IR"]}
@@ -1839,18 +1972,11 @@ class ResolvedGalaxy:
             # Save galaxy region
 
             # Save binned maps
-            if self.voronoi_map is not None:
+            for map in self.maps:
                 hfile["bin_maps"].create_dataset(
-                    "voronoi",
-                    data=self.voronoi_map,
-                    compression="gzip",
+                    map, data=getattr(self, f"{map}_map"), compression="gzip"
                 )
-            if self.pixedfit_map is not None:
-                hfile["bin_maps"].create_dataset(
-                    "pixedfit",
-                    data=self.pixedfit_map,
-                    compression="gzip",
-                )
+
             if self.binned_flux_map is not None:
                 hfile["bin_fluxes"].create_dataset(
                     "pixedfit", data=self.binned_flux_map, compression="gzip"
@@ -3240,6 +3366,8 @@ class ResolvedGalaxy:
             if self.total_photometry is None:
                 if return_params:
                     return 0, 0, 0
+                else:
+                    return False
             # kron = self.total_photometry[self.detection_band][f'KRON_RADIUS_{self.detection_band}']
             a = self.total_photometry[self.detection_band][
                 f"a_{self.detection_band}"
@@ -3914,7 +4042,13 @@ class ResolvedGalaxy:
         )
 
     def pixel_by_pixel_galaxy_region(
-        self, snr_req=5, band_req="F444W", region_name="auto", overwrite=False
+        self,
+        snr_req=5,
+        band_req="F444W",
+        region_name="auto",
+        overwrite=False,
+        override_psf_type=None,
+        mask=None,
     ):
         # Make a boolean galaxy region based on pixels in band_req that have SNR > snr_req
 
@@ -3925,13 +4059,21 @@ class ResolvedGalaxy:
         if not hasattr(self, "psf_matched_rms_err"):
             raise ValueError("No PSF matched rms_err found.")
 
-        galaxy_region = np.zeros_like(self.psf_matched_data[band_req])
+        if hasattr(self, "use_psf_type") and override_psf_type is None:
+            psf_type = self.use_psf_type
+        galaxy_region = np.zeros_like(
+            self.psf_matched_data[psf_type][band_req]
+        )
 
         snr_map = (
-            self.psf_matched_data[band_req]
-            / self.psf_matched_rms_err[band_req]
+            self.psf_matched_data[psf_type][band_req]
+            / self.psf_matched_rms_err[psf_type][band_req]
         )
         galaxy_region[snr_map > snr_req] = 1
+
+        if mask is not None:
+            assert np.shape(mask) == np.shape(galaxy_region)
+            galaxy_region[mask == 0] = 0
 
         if region_name == "auto":
             region_name = f"SNR_{snr_req}_{band_req}"
@@ -3951,8 +4093,13 @@ class ResolvedGalaxy:
                 raise ValueError(
                     "No galaxy region found. Run pixedfit_processing() first"
                 )
+            if len(self.gal_region.keys()) == 1:
+                galaxy_region = self.gal_region[
+                    list(self.gal_region.keys())[0]
+                ]
 
-            galaxy_region = self.gal_region
+        elif type(galaxy_region) is str:
+            galaxy_region = self.gal_region[galaxy_region]
 
         # Make a binmap where each pixel wihin the galaxy region is a seperate bin
 
@@ -3962,6 +4109,7 @@ class ResolvedGalaxy:
 
         # Loop over each pixel in the galaxy region and assign a bin number
         bin_number = 1
+        print(np.shape(galaxy_region))
         for i in range(np.shape(galaxy_region)[0]):
             for j in range(np.shape(galaxy_region)[1]):
                 if galaxy_region[i, j] == 1:
@@ -4045,51 +4193,54 @@ class ResolvedGalaxy:
             row.append(np.sqrt(np.sum(table[f"{band}_err"] ** 2)))
         table.add_row(row)
 
-        # Add MAG_AUTO and MAGERR_AUTO
-        for i in ["MAG_AUTO", "MAG_ISO", "MAG_BEST"]:
-            row = [i, i]
-            self.get_filter_wavs()
-            for pos, band in enumerate(self.bands):
-                try:
-                    mag = self.auto_photometry[band][i] * u.ABmag
+        if self.auto_photometry not in [None, {}]:
+            # Add MAG_AUTO and MAGERR_AUTO
+            for i in ["MAG_AUTO", "MAG_ISO", "MAG_BEST"]:
+                row = [i, i]
+                self.get_filter_wavs()
+                for pos, band in enumerate(self.bands):
                     try:
-                        mag_err = self.auto_photometry[band][
-                            i.replace("_", "ERR_")
-                        ]
-                    except:
-                        mag_err = 0.1
-                        print(
-                            f"No {i} error found for {band}, setting to 0.1 mag"
+                        mag = self.auto_photometry[band][i] * u.ABmag
+                        try:
+                            mag_err = self.auto_photometry[band][
+                                i.replace("_", "ERR_")
+                            ]
+                        except:
+                            mag_err = 0.1
+                            print(
+                                f"No {i} error found for {band}, setting to 0.1 mag"
+                            )
+                        flux = mag.to(
+                            u.uJy,
+                            equivalencies=u.spectral_density(
+                                self.filter_wavs[band]
+                            ),
                         )
-                    flux = mag.to(
-                        u.uJy,
-                        equivalencies=u.spectral_density(
-                            self.filter_wavs[band]
-                        ),
-                    )
-                    flux_err = 0.4 * np.log(10) * flux * mag_err
+                        flux_err = 0.4 * np.log(10) * flux * mag_err
 
-                except (TypeError, KeyError) as e:
-                    print(e)
-                    print(
-                        f"WARNING! No {i} found for {band}, falling back to aperture photometry!! Should switch to SEP. "
-                    )
-                    flux = (
-                        self.aperture_dict[str(0.32 * u.arcsec)]["flux"][pos]
-                        * u.Jy
-                    )
-                    flux_err = (
-                        self.aperture_dict[str(0.32 * u.arcsec)]["flux_err"][
-                            pos
-                        ]
-                        * u.Jy
-                    )
+                    except (TypeError, KeyError) as e:
+                        print(e)
+                        print(
+                            f"WARNING! No {i} found for {band}, falling back to aperture photometry!! Should switch to SEP. "
+                        )
+                        flux = (
+                            self.aperture_dict[str(0.32 * u.arcsec)]["flux"][
+                                pos
+                            ]
+                            * u.Jy
+                        )
+                        flux_err = (
+                            self.aperture_dict[str(0.32 * u.arcsec)][
+                                "flux_err"
+                            ][pos]
+                            * u.Jy
+                        )
 
-                flux = flux.to(u.uJy)
-                flux_err = flux_err.to(u.uJy)
-                row.append(flux)
-                row.append(flux_err)
-            table.add_row(row)
+                    flux = flux.to(u.uJy)
+                    flux_err = flux_err.to(u.uJy)
+                    row.append(flux)
+                    row.append(flux_err)
+                table.add_row(row)
         # Add MAG_APER
         for aper in self.aperture_dict.keys():
             if type(aper) is u.Quantity:
@@ -4261,7 +4412,7 @@ class ResolvedGalaxy:
             bins_to_show = np.unique(table["ID"])
 
         # Set up color map
-        map = self.pixedfit_map
+        map = getattr(self, f"{binmap_type}_map")
         cmap = plt.get_cmap(cmap_bins)
         norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
         colors = {i: cmap(norm(i)) for i in np.unique(map)}
@@ -4269,7 +4420,11 @@ class ResolvedGalaxy:
         colorss = []
         for i, rbin in enumerate(bins_to_show):
             mask = table["ID"] == rbin
-            name = table["type"][mask][0]
+
+            name = table["type"][mask]
+            if len(name) == 0:
+                raise Exception(f"Bin {rbin} not found in table")
+            name = name[0]
             if name == "TOTAL_BIN":
                 color = "black"
             if name == "MAG_AUTO":
@@ -4384,6 +4539,7 @@ class ResolvedGalaxy:
         emcee_samples=10000,
         plot=False,
         n_jobs=4,
+        binmap_type=None,
         min_flux_err=0.1,
     ):
         # import dense_basis as db
@@ -4404,7 +4560,7 @@ class ResolvedGalaxy:
         else:
             psf_type = "webbpsf"
 
-        if hasattr(self, "use_binmap_type"):
+        if hasattr(self, "use_binmap_type") and binmap_type is None:
             binmap_type = self.use_binmap_type
         else:
             binmap_type = "pixedfit"
@@ -4547,9 +4703,11 @@ class ResolvedGalaxy:
         self,
         figsize=(12, 8),
         bands_to_show=["F814W", "F115W", "F200W", "F335M", "F444W"],
+        bins_to_show=["TOTAL_BIN", "MAG_APER_TOTAL", "1"],
         show=True,
         flux_unit=u.ABmag,
         save=False,
+        binmap_type="pixedfit",
     ):
         # GridSpec
 
@@ -4577,9 +4735,10 @@ class ResolvedGalaxy:
             ax=ax_sed,
             fig=fig_sed,
             show=False,
-            bins_to_show=["TOTAL_BIN", "MAG_APER_TOTAL", "1"],
+            bins_to_show=bins_to_show,
             flux_unit=flux_unit,
             label_individual=True,
+            binmap_type=binmap_type,
         )
 
         ax_filt = fig_sed.add_subplot(gs[1])
@@ -4677,7 +4836,7 @@ class ResolvedGalaxy:
 
         # plot pixedfit
         norm = ax_pixedfit.imshow(
-            self.pixedfit_map,
+            getattr(self, f"{binmap_type}_map"),
             origin="lower",
             interpolation="none",
             cmap="nipy_spectral_r",
@@ -4710,7 +4869,7 @@ class ResolvedGalaxy:
             z50 = self.redshift
             error = ""
 
-        textstr = f"Galaxy {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nNumber of bins: {len(np.unique(self.pixedfit_map))-1}"
+        textstr = f"Galaxy {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nBinmap Type: {binmap_type.replace('_', ' ')}\nNumber of bins: {len(np.unique(getattr(self, f'{binmap_type}_map')))-1}"
         fig.text(
             0.05,
             0.46,
@@ -9307,7 +9466,7 @@ def run_bagpipes_wrapper(
         print(f"Error in {galaxy_id}: {e}")
         print(traceback.format_exc())
         if alert:
-            from utils import send_email
+            from .utils import send_email
 
             ctime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
             send_email(

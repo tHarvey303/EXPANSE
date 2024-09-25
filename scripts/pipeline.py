@@ -162,7 +162,7 @@ if __name__ == "__main__":
         print(f"Number of galaxies with only one bin: {num_of_single_bin}")
         # Run Bagpipes in parallel
 
-    from .bagpipes.pipes_models import (
+    from EXPANSE.bagpipes.pipes_models import (
         continuity_dict,
         create_dicts,
         delayed_dict,
@@ -176,13 +176,20 @@ if __name__ == "__main__":
         "redshift_sigma": "eazy",
         "use_bpass": True,
     }
-    delayed_dicts = create_dicts(delayed_dict, override_meta=override_meta)
-    continuity_dicts = create_dicts(
-        continuity_dict, override_meta=override_meta
+    delayed_dicts = create_dicts(
+        delayed_dict, override_meta=override_meta, num=len(ids)
     )
-    dpl_dicts = create_dicts(dpl_dict, override_meta=override_meta)
-    lognorm_dicts = create_dicts(lognorm_dict, override_meta=override_meta)
-    resolved_dicts = create_dicts(resolved_dict)
+    continuity_dicts = create_dicts(
+        continuity_dict, override_meta=override_meta, num=len(ids)
+    )
+
+    dpl_dicts = create_dicts(
+        dpl_dict, override_meta=override_meta, num=len(ids)
+    )
+    lognorm_dicts = create_dicts(
+        lognorm_dict, override_meta=override_meta, num=len(ids)
+    )
+    resolved_dicts = create_dicts(resolved_dict, num=len(ids))
 
     # Not fitting resolved yet
     for run_dicts in [

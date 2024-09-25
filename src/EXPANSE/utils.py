@@ -8,6 +8,9 @@ import matplotlib as mpl
 import numpy as np
 from astropy import units as u
 from photutils.aperture import EllipticalAperture, aperture_photometry
+from astropy.wcs import WCS
+from astropy.io import fits
+import glob
 
 
 def update_mpl(tex_on=True):
@@ -339,3 +342,514 @@ def send_email(contents, subject="", address="tharvey303@gmail.com"):
         oauth2_file="/nvme/scratch/work/tharvey/scripts/testing/client_secret.json",
     ).send(address, subject, contents)
     print("Sent email.")
+
+
+class PhotometryBandInfo:
+    """
+    A class to store information about a photometry band.
+    File Paths to image, wht, err, and segmentation maps.
+    As well as hdu extensions for each.
+
+    """
+
+    def __init__(
+        self,
+        band_name,
+        survey,
+        image_path,
+        instrument="auto",
+        wht_path=None,
+        err_path=None,
+        seg_path=None,
+        im_pixel_scale="HEADER",
+        image_zp="HEADER",
+        image_unit="HEADER",
+        im_hdu_ext=0,
+        wht_hdu_ext=0,
+        err_hdu_ext=0,
+        seg_hdu_ext=0,
+    ):
+        self.band_name = band_name
+        self.instrument = instrument
+
+        if wht_path == "im_folder":
+            wht_path = image_path
+
+        if err_path == "im_folder":
+            err_path = image_path
+
+        if seg_path == "im_folder":
+            seg_path = image_path
+
+        # Perform same checks for err, wht and seg
+
+        if wht_path is not None and os.path.isdir(wht_path):
+            wht_path_finder = glob.glob(
+                os.path.join(wht_path, f"*{band_name.upper()}*wht*.fits")
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(wht_path, f"*{band_name.lower()}*wht*.fits")
+                )
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        wht_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*wht*.fits",
+                    )
+                )
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        wht_path, f"*{band_name.upper()}*weight*.fits"
+                    )
+                )
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        wht_path, f"*{band_name.lower()}*weight*.fits"
+                    )
+                )
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        wht_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*weight*.fits",
+                    )
+                )
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(wht_path, f"*{band_name.upper()}*WHT*.fits")
+                )
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(wht_path, f"*{band_name.lower()}*WHT*.fits")
+                )
+            )
+            wht_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        wht_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*WHT*.fits",
+                    )
+                )
+            )
+
+            # Remove duplicates
+            wht_path = list(set(wht_path_finder))
+
+            if len(wht_path) > 1:
+                raise ValueError(
+                    f"Multiple files found for band {band_name}. Please provide full path."
+                )
+            elif len(wht_path) == 0:
+                raise ValueError(
+                    f"No files found for band {band_name}. Please provide full path."
+                )
+            else:
+                wht_path = wht_path[0]
+                print(
+                    f"Auto detected weight path {wht_path} for band {band_name}."
+                )
+
+        if err_path is not None and os.path.isdir(err_path):
+            err_path_finder = glob.glob(
+                os.path.join(err_path, f"*{band_name.upper()}*err*.fits")
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.lower()}*err*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        err_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*err*.fits",
+                    )
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.upper()}*error*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.lower()}*error*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        err_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*error*.fits",
+                    )
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.upper()}*ERR*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.lower()}*ERR*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        err_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*ERR*.fits",
+                    )
+                )
+            )
+            # Same for RMS
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.upper()}*rms*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.lower()}*rms*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        err_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*rms*.fits",
+                    )
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.upper()}*RMS*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(err_path, f"*{band_name.lower()}*RMS*.fits")
+                )
+            )
+            err_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        err_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*RMS*.fits",
+                    )
+                )
+            )
+
+            # Remove duplicates
+            err_path = list(set(err_path_finder))
+
+            if len(err_path) > 1:
+                raise ValueError(
+                    f"Multiple files found for band {band_name}. Please provide full path."
+                )
+            elif len(err_path) == 0:
+                raise ValueError(
+                    f"No files found for band {band_name}. Please provide full path."
+                )
+            else:
+                err_path = err_path[0]
+                print(
+                    f"Auto detected error path {err_path} for band {band_name}."
+                )
+
+        # Check if imagepath is a folder
+        if os.path.isdir(image_path):
+            # Use glob to find the image
+            image_path_finder = glob.glob(
+                os.path.join(image_path, f"*{band_name.upper()}*.fits")
+            )
+            image_path_finder.extend(
+                glob.glob(
+                    os.path.join(image_path, f"*{band_name.lower()}*.fits")
+                )
+            )
+            # Try lowercase first letter
+            image_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        image_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*.fits",
+                    )
+                )
+            )
+            # Remove duplicates
+            image_path = list(set(image_path_finder))
+
+            if len(image_path) > 1:
+                im_endings = [
+                    "drz.fits",
+                    "sci.fits",
+                    "drz_aligned.fits",
+                    "sci_aligned.fits",
+                    "drz_sci.fits",
+                    "drz_sci_aligned.fits",
+                    "drz_matched.fits",
+                    "sci_matched.fits",
+                ]
+                # See if any one of the files has a common ending
+                good_endings = []
+                for ending in im_endings:
+                    test_image_path = [im for im in image_path if ending in im]
+                    good_endings.extend(test_image_path)
+                if len(good_endings) == 1:
+                    image_path = good_endings[0]
+                    print(
+                        f"Auto detected image path {image_path} for band {band_name}."
+                    )
+                elif len(good_endings) > 1:
+                    raise ValueError(
+                        f"Multiple files found for band {band_name} even when guessing ending. Please provide full path."
+                    )
+                else:
+                    raise ValueError(
+                        f"Multiple files found for band {band_name}. Please provide full path."
+                    )
+
+            elif len(image_path) == 0:
+                raise ValueError(
+                    f"No files found for band {band_name}. Please provide full path."
+                )
+            else:
+                image_path = image_path[0]
+
+        self.image_path = image_path
+        self.wht_path = wht_path
+        self.err_path = err_path
+        self.seg_path = seg_path
+
+        self.im_pixel_scale = im_pixel_scale
+        self.image_zp = image_zp
+        self.image_unit = image_unit
+        self.im_hdu_ext = im_hdu_ext
+        self.wht_hdu_ext = wht_hdu_ext
+        self.err_hdu_ext = err_hdu_ext
+        self.seg_hdu_ext = seg_hdu_ext
+
+        if self.instrument == "HEADER":
+            instruments = {
+                "F435W": "ACS_WFC",
+                "F606W": "ACS_WFC",
+                "F775W": "ACS_WFC",
+                "F814W": "ACS_WFC",
+                "F850LP": "ACS_WFC",
+                "F090W": "NIRCam",
+                "F105W": "WFC3IR",
+                "F110W": "WFC3IR",
+                "F115W": "NIRCam",
+                "F125W": "WC3IR",
+                "F140W": "NIRCam",
+                "F140M": "WFC3IR",
+                "F150W": "WFC3IR",
+                "F160W": "WFC3IR",
+                "F162M": "NIRCam",
+                "F182M": "WFC3IR",
+                "F200W": "NIRCam",
+                "F210M": "NIRCam",
+                "F250M": "NIRCam",
+                "F277W": "NIRCam",
+                "F300M": "NIRCam",
+                "F335M": "NIRCam",
+                "F356W": "NIRCam",
+                "F360M": "NIRCam",
+                "F410M": "NIRCam",
+                "F430M": "NIRCam",
+                "F444W": "NIRCam",
+                "F460M": "NIRCam",
+                "F480M": "NIRCam",
+                "F560W": "MIRI",
+                "F770W": "MIRI",
+                "F1000W": "MIRI",
+                "F1130W": "MIRI",
+                "F1280W": "MIRI",
+                "F1500W": "MIRI",
+                "F1800W": "MIRI",
+                "F2100W": "MIRI",
+                "F2550W": "MIRI",
+            }
+            self.instrument = instruments[self.band_name.upper()]
+            print(
+                f"Auto detected instrument {self.instrument} for band {self.band_name}."
+            )
+
+        if (
+            self.image_path == self.wht_path == self.err_path
+            or (self.wht_path == "im")
+            or (self.err_path == "im")
+        ):
+            print(f"Detected single HDUList for {self.band_name}.")
+            print(
+                "Assuming JWST style HDUList with PrimaryHDU (0), SCI [1],  WHT [2], and ERR [3]."
+            )
+            if self.im_hdu_ext == 0:
+                self.im_hdu_ext = "SCI"
+            if self.wht_hdu_ext == 0:
+                self.wht_hdu_ext = "WHT"
+            if self.err_hdu_ext == 0:
+                self.err_hdu_ext = "ERR"
+
+            self.err_path = self.image_path
+            self.wht_path = self.image_path
+
+        # Open image to get header
+
+        im_header = fits.open(self.image_path)[self.im_hdu_ext].header
+        if self.image_zp == "HEADER":
+            phot_zp_keywords = [
+                "PHOTZP",
+                "MAGZPT",
+                "MAGZEROPOINT",
+                "MAGZP",
+                "MAGZERO",
+                "ZEROPNT",
+                "ZP",
+                "ZEROPOINT",
+                "MAGABZPT",
+                "MAGABZERO",
+                "MAGABZP",
+                "MAGABZEROPOINT",
+            ]
+            for key in phot_zp_keywords:
+                if key in im_header:
+                    self.image_zp = im_header[key]
+                    print(
+                        f"Auto detected zero point {self.image_zp} with keyword {key} for band {self.band_name}."
+                    )
+                    break
+
+            if self.image_zp == "HEADER":
+                # Attempt to calculate from photometry keywords
+                if "PHOTFLAM" in im_header and "PHOTPLAM" in im_header:
+                    self.image_zp = (
+                        -2.5 * np.log10(im_header["PHOTFLAM"])
+                        - 21.10
+                        - 5 * np.log10(im_header["PHOTPLAM"])
+                        + 18.6921
+                    )
+                    print(
+                        f"Auto calculated zero point {self.image_zp} from PHOTFLAM and PHOTPLAM for band {self.band_name}."
+                    )
+                    print("WARNING! THIS IS CALIBRATED ONLY TO ACS_WFC")
+        if self.image_zp == "HEADER":
+            self.image_zp = None
+
+        if self.image_unit == "HEADER":
+            phot_unit_keywords = ["BUNIT", "UNITS", "UNIT", "BUNITS"]
+            for key in phot_unit_keywords:
+                if key in im_header:
+                    self.image_unit = im_header[key]
+                    print(
+                        f"Auto detected unit {self.image_unit} with keyword {key} for band {self.band_name}."
+                    )
+                    break
+        if self.image_unit == "HEADER":
+            self.image_unit = None
+
+        assert (self.image_zp != "HEADER") or (
+            self.image_unit != "HEADER"
+        ), f"Failed to detect zero point or unit for band {self.band_name}."
+
+        # if both found, print warning and prefer unit
+
+        if (self.image_zp not in ["HEADER", None]) and (
+            self.image_unit not in ["HEADER", None]
+        ):
+            print(
+                f"Both zero point and unit found for band {self.band_name}. Using ZP {self.image_zp}."
+            )
+            self.image_unit = None
+
+        # Get pixel scale from header
+
+        if self.im_pixel_scale == "HEADER":
+            pixel_scale_keywords = [
+                "PIXSCALE",
+                "PIXELSCL",
+                "PIXELSC",
+                "PIXSCAL",
+                "PIXSCA",
+                "PIXSC",
+            ]
+            for key in pixel_scale_keywords:
+                if key in im_header:
+                    self.im_pixel_scale = im_header[key]
+                    print(
+                        f"Auto detected pixel scale {self.im_pixel_scale} with keyword {key} for band {self.band_name}."
+                    )
+                    break
+            if self.im_pixel_scale == "HEADER":
+                # Get from WCS
+                wcs = WCS(im_header)
+                # Get the pixel scale matrix
+                cd = wcs.pixel_scale_matrix
+
+                # Calculate the pixel scale in degrees
+                scale_deg = np.sqrt(np.abs(np.linalg.det(cd)))
+
+                # Convert to arcseconds
+                scale_arcsec = scale_deg * 3600
+                self.im_pixel_scale = scale_arcsec * u.arcsec
+                print(
+                    f"Auto detected pixel scale {self.im_pixel_scale:.4f} arcsec/pixel from WCS for band {self.band_name}."
+                )
+
+
+class FieldInfo:
+    """
+    Just a container for a list of PhotometryBandInfo objects.
+    """
+
+    def __init__(self, band_info_list):
+        self.band_info_list = band_info_list
+        # Get list of bands
+        self.band_names = [band.band_name for band in band_info_list]
+        # Get list of instruments
+        self.instruments = [band.instrument for band in band_info_list]
+
+        self.im_pixel_scales = {
+            band.band_name: band.im_pixel_scale for band in band_info_list
+        }
+        self.im_zps = {
+            band.band_name: band.image_zp for band in band_info_list
+        }
+        self.im_units = {
+            band.band_name: band.image_unit for band in band_info_list
+        }
+        self.im_exts = {
+            band.band_name: band.im_hdu_ext for band in band_info_list
+        }
+        self.wht_exts = {
+            band.band_name: band.wht_hdu_ext for band in band_info_list
+        }
+        self.rms_err_exts = {
+            band.band_name: band.err_hdu_ext for band in band_info_list
+        }
+        self.seg_exts = {
+            band.band_name: band.seg_hdu_ext for band in band_info_list
+        }
+
+        self.im_paths = {
+            band.band_name: band.image_path for band in band_info_list
+        }
+        self.wht_paths = {
+            band.band_name: band.wht_path for band in band_info_list
+        }
+        self.err_paths = {
+            band.band_name: band.err_path for band in band_info_list
+        }
+        self.seg_paths = {
+            band.band_name: band.seg_path for band in band_info_list
+        }

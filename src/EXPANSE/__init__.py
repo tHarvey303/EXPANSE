@@ -8,7 +8,7 @@ from .synthesizer_functions import (convert_coordinates,
                                    get_spectra_in_mask,
                                    calculate_sfh)
 
-from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli
+from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli, PhotometryBandInfo, FieldInfo
 
 from .bagpipes.plotpipes import (calculate_bins, PlotPipes, PipesFit)
 

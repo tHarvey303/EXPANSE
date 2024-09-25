@@ -16,7 +16,10 @@ from astropy import units as u
 import xarray as xr
 from bokeh.models import PrintfTickFormatter
 import matplotlib.cm as cm
+from holoviews import opts, streams
 
+hv.extension("bokeh", logo=False)
+pn.extension("mathjax")
 
 MAX_SIZE_MB = 150
 ACCENT = "goldenrod"
@@ -97,6 +100,10 @@ class GalaxyTab(param.Parameterized):
         default="Galaxy Region",
         objects=["Galaxy Region", "Fluxes", "Segmentation Map", "Radial SNR"],
     )
+
+    # Parameters for interactive tab
+    interactive_band = param.Selector(default="F444W", objects=[])
+    drawn_shapes = param.Dict(default={})
 
     TOTAL_FIT_COLORS = {
         "TOTAL_BIN": "springgreen",
@@ -515,6 +522,11 @@ class GalaxyTab(param.Parameterized):
             scroll=False,
         )
 
+        self.interactive_tab = pn.panel(
+            self.create_interactive_tab, loading_indicator=True
+        )
+        self.info_tabs.append(("Interactive", self.interactive_tab))
+
         if isinstance(self.resolved_galaxy, MockResolvedGalaxy):
             self.synthesizer_tab = pn.panel(
                 self.create_synthesizer_tab, loading_indicator=True
@@ -692,7 +704,6 @@ class GalaxyTab(param.Parameterized):
         else:
             return pn.pane.Markdown("No Bagpipes results found.")
 
-    # @lru_cache(maxsize=None)
     def create_photometric_properties_tab(self):
         phot_prop_page = pn.Column(
             loading=True,
@@ -726,6 +737,130 @@ class GalaxyTab(param.Parameterized):
         )
 
         return phot_prop_page
+
+    def create_interactive_tab(self):
+        interactive_plot = self.create_interactive_plot()
+        controls = pn.Column(
+            pn.widgets.Select(
+                name="Band",
+                options=self.resolved_galaxy.bands,
+                value=self.interactive_band,
+            ),
+            pn.widgets.StaticText(
+                name="Drawn Shapes", value=self.drawn_shapes
+            ),
+            pn.layout.Divider(),
+            pn.pane.Markdown("""### How to use
+
+                                    - Choose one of the tools on the right side of the plot
+                                    - There are three tools available:
+                                        - Box Edit: Draw rectangles
+                                        - Poly Draw: Draw polygons
+                                        - Point Draw: Draw points
+                                    - For box edit and poly draw, double click to start and finish a shape.
+                                    - For point draw, click to draw a point.
+                                    - To remove a point or shape, click on it, then hit the 'Backspace' key.
+
+                                    - When finished, click the 'Save' button to save the drawn shapes.
+                                    - The photometry for the drawn shapes will be displayed below the plot.
+                                    - If you want to perform SED fitting on the drawn shapes, configure the SED fitting options and click 'Run SED Fitting'.
+                                    - SED fitting results will be displayed in the SED Results tab, and saved to the .h5 file.
+                                    """),
+        )
+
+        return pn.Row(interactive_plot, controls)
+
+    @param.depends("interactive_band", "drawn_shapes")
+    def create_interactive_plot(self):
+        image_data = self.resolved_galaxy.phot_imgs[self.interactive_band]
+        image = hv.Image(
+            image_data, bounds=(0, 0, image_data.shape[1], image_data.shape[0])
+        )
+
+        # Create a simple scatter plot as the base
+        scatter = hv.Scatter(np.random.rand(20, 2)).opts(tools=["hover"])
+
+        poly = hv.Polygons([])
+        boxes = hv.Rectangles([])
+        points = hv.Points([])
+        # paths = hv.Path([])
+
+        image.opts(
+            aspect="equal", xaxis=None, yaxis=None, width=500, height=500
+        )
+
+        poly_stream = streams.PolyDraw(
+            source=poly,
+            drag=True,
+            num_objects=30,
+            show_vertices=False,
+            styles={"fill_color": ["red"]},
+        )
+
+        box_stream = streams.BoxEdit(source=boxes, num_objects=30)
+
+        points_stream = streams.PointDraw(source=points, num_objects=30)
+
+        def on_draw_box(data):
+            self.drawn_shapes["boxes"] = data
+
+        def on_draw_poly(data):
+            self.drawn_shapes["polygons"] = data
+
+        def on_draw_points(data):
+            self.drawn_shapes["points"] = data
+
+        box_stream.add_subscriber(on_draw)
+        poly_stream.add_subscriber(on_draw)
+        points_stream.add_subscriber(on_draw)
+
+        plot = (image * poly * boxes * points).opts(
+            opts.Image(cmap="gray"),
+            opts.Rectangles(fill_alpha=0.3, active_tools=["box_edit"]),
+            opts.Polygons(fill_alpha=0.3, active_tools=["poly_draw"]),
+            opts.Points(
+                active_tools=["point_draw"], size=30, fill_color="none"
+            ),
+            # opts.Path(active_tools=['freehand_draw'])
+        )
+
+        return pn.pane.HoloViews(plot, height=500, width=500)
+
+    def convert_shapes_to_apertures(drawn_shapes):
+        apertures = []
+
+        # Convert boxes to RectangularAperture
+        if "boxes" in drawn_shapes:
+            for box in drawn_shapes["boxes"]:
+                x, y, width, height = (
+                    box["x0"],
+                    box["y0"],
+                    box["x1"] - box["x0"],
+                    box["y1"] - box["y0"],
+                )
+                apertures.append(
+                    RectangularAperture(
+                        (x + width / 2, y + height / 2), width, height
+                    )
+                )
+
+        # Convert polygons to PolygonalAperture
+        if "polygons" in drawn_shapes:
+            for poly in drawn_shapes["polygons"]:
+                vertices = list(zip(poly["xs"], poly["ys"]))
+                apertures.append(PolygonalAperture(vertices))
+
+        # Convert points to CircularAperture
+        if "points" in drawn_shapes:
+            for point in drawn_shapes["points"]:
+                x, y = point["x"], point["y"]
+                # You might want to adjust the radius based on your needs
+                radius = 5  # Example radius, adjust as needed
+                apertures.append(CircularAperture((x, y), r=radius))
+
+        return apertures
+
+    # @lru_cache(maxsize=None)
 
     def update_sidebar(self):
         sidebar = pn.Column(
@@ -778,7 +913,19 @@ class GalaxyTab(param.Parameterized):
                 ]
             )
 
-        # Add Synthesizer tab options if it's a MockResolvedGalaxy
+        if self.active_tab == 3:  # Interactive tab
+            sidebar.extend(
+                [
+                    "#### Interactive Plot Controls",
+                    pn.widgets.Select(
+                        name="Band",
+                        options=self.resolved_galaxy.bands,
+                        value=self.interactive_band,
+                    ),
+                ]
+            )
+
+            # Add Synthesizer tab options if it's a MockResolvedGalaxy
         if isinstance(self.resolved_galaxy, MockResolvedGalaxy):
             if (
                 self.active_tab == 3
@@ -1599,7 +1746,7 @@ class GalaxyTab(param.Parameterized):
                 )
 
             ax.set_xlabel("Lookback Time (Gyr)")
-            ax.set_ylabel("SFR (M$_{\odot}$ yr$^{-1}$)")
+            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)")
             ax.set_yscale("log")
             ax.legend(loc="upper left", fontsize="small")
 
@@ -1627,7 +1774,7 @@ class GalaxyTab(param.Parameterized):
         mass_map = self.plot_map_with_controls(
             self.resolved_galaxy.property_images["stellar_mass"],
             label="Stellar Mass",
-            unit=r"$M_{\odot}$",
+            unit=r"$$M_{\odot}$$",
         )
 
         age_map = self.plot_map_with_controls(
@@ -1639,7 +1786,7 @@ class GalaxyTab(param.Parameterized):
         metallicity_map = self.plot_map_with_controls(
             self.resolved_galaxy.property_images["stellar_metallicity"],
             label="Metallicity",
-            unit=r"$Z_{\odot}$",
+            unit=r"$$Z_{\odot}$$",
         )
 
         top_row.append(mass_map)
@@ -1698,7 +1845,7 @@ class GalaxyTab(param.Parameterized):
             if clim[0] == clim[1]:
                 clim = (clim[0] - 1, clim[1] + 1)
 
-            logtext = "$\log_{10}$ " if log_scale else ""
+            logtext = r"$$\log_{10}$$ " if log_scale else ""
 
             return hv.Image(
                 data,
@@ -1875,7 +2022,7 @@ def resolved_sed_interface():
 
 # CLI command remains largely unchanged
 @click.command()
-@click.option("--port", default=5004, help="Port to run the server on.")
+@click.option("--port", default=5005, help="Port to run the server on.")
 @click.option(
     "--gal_dir", default="internal", help="Directory containing galaxy files."
 )
