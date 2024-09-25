@@ -14,6 +14,8 @@ import os
 from .ResolvedGalaxy import ResolvedGalaxy, MockResolvedGalaxy
 from astropy import units as u
 import xarray as xr
+from bokeh.models import PrintfTickFormatter
+import matplotlib.cm as cm
 
 
 MAX_SIZE_MB = 150
@@ -60,6 +62,26 @@ class GalaxyTab(param.Parameterized):
         default="stellar_mass", objects=["stellar_mass", "sfr"]
     )
     upscale_select = param.Boolean(default=False)
+
+    # Parameters for SED accordian
+    sed_log_x = param.Boolean(
+        default=False, doc="Use logarithmic x-axis for SED plot"
+    )
+    sed_log_y = param.Boolean(
+        default=False, doc="Use logarithmic y-axis for SED plot"
+    )
+    sed_x_min = param.Number(
+        default=0.3, doc="Minimum x-axis value for SED plot"
+    )
+    sed_x_max = param.Number(
+        default=5, doc="Maximum x-axis value for SED plot"
+    )
+    sed_y_min = param.Number(
+        default=None, allow_None=True, doc="Minimum y-axis value for SED plot"
+    )
+    sed_y_max = param.Number(
+        default=None, allow_None=True, doc="Maximum y-axis value for SED plot"
+    )
 
     # Parameters for cutouts tab
     red_channel = param.List(default=["F444W"])
@@ -131,7 +153,9 @@ class GalaxyTab(param.Parameterized):
             delete_button=True,
             placeholder="Click on bin map to add bins",
         )
-        self.multi_choice_bins_widget.link(self, value="multi_choice_bins")
+        self.multi_choice_bins_widget.link(
+            self, value="multi_choice_bins", bidirectional=True
+        )
 
         self.total_fit_options_widget = pn.widgets.MultiChoice(
             name="Aperture Fits",
@@ -166,6 +190,9 @@ class GalaxyTab(param.Parameterized):
             value=self.which_run_aperture,
         )
         self.which_run_aperture_widget.link(self, value="which_run_aperture")
+
+        # Call the possible_runs_select method to update the options
+        self.possible_runs_select(self.which_sed_fitter)
 
         self.show_sed_photometry_widget.link(self, value="show_sed_photometry")
 
@@ -291,6 +318,77 @@ class GalaxyTab(param.Parameterized):
         )
         self.other_plot_select_widget.link(self, value="other_plot_select")
 
+        self.sed_log_x_widget = pn.widgets.Checkbox(
+            name="Log X-axis", value=self.sed_log_x
+        )
+        self.sed_log_y_widget = pn.widgets.Checkbox(
+            name="Log Y-axis", value=self.sed_log_y
+        )
+        self.sed_x_min_widget = pn.widgets.FloatInput(
+            name="X-axis Min", value=self.sed_x_min
+        )
+        self.sed_x_max_widget = pn.widgets.FloatInput(
+            name="X-axis Max", value=self.sed_x_max
+        )
+        self.sed_y_min_widget = pn.widgets.FloatInput(
+            name="Y-axis Min", value=self.sed_y_min
+        )
+        self.sed_y_max_widget = pn.widgets.FloatInput(
+            name="Y-axis Max", value=self.sed_y_max
+        )
+
+        self.sed_log_x_widget.link(self, value="sed_log_x")
+        self.sed_log_y_widget.link(self, value="sed_log_y")
+        self.sed_x_min_widget.link(self, value="sed_x_min")
+        self.sed_x_max_widget.link(self, value="sed_x_max")
+        self.sed_y_min_widget.link(self, value="sed_y_min")
+        self.sed_y_max_widget.link(self, value="sed_y_max")
+
+        self.sed_plot_controls = pn.Accordion(
+            (
+                "SED Plot Controls",
+                pn.Column(
+                    pn.Row(self.sed_log_x_widget, self.sed_log_y_widget),
+                    pn.Row(self.sed_x_min_widget, self.sed_x_max_widget),
+                    pn.Row(self.sed_y_min_widget, self.sed_y_max_widget),
+                ),
+            ),
+            active=[0],  # Open by default
+        )
+
+    @param.depends("point_selector.point")
+    def update_selected_bins(self):
+        if self.point_selector.point:
+            x, y = self.point_selector.point
+            bin_map = getattr(self.resolved_galaxy, f"{self.which_map}_map")
+            selected_bin = int(bin_map[int(y), int(x)])
+
+            if (
+                selected_bin not in self.multi_choice_bins
+                and selected_bin != 0
+            ):
+                self.multi_choice_bins = self.multi_choice_bins + [
+                    selected_bin
+                ]
+            elif selected_bin in self.multi_choice_bins:
+                self.multi_choice_bins = [
+                    bin
+                    for bin in self.multi_choice_bins
+                    if bin != selected_bin
+                ]
+
+            # Update the widget
+            self.multi_choice_bins_widget.value = self.multi_choice_bins
+
+    @param.depends(
+        "resolved_galaxy",
+        "which_map",
+        "which_run_resolved",
+        "which_sed_fitter",
+        "norm",
+        "upscale_select",
+        "type_select",
+    )
     def plot_bagpipes_results(
         self, parameters=["stellar_mass", "sfr"], max_on_row=3
     ):
@@ -336,8 +434,14 @@ class GalaxyTab(param.Parameterized):
             self.param.choose_show_band,
         )
 
+        # Add the update_selected_bins method to be called when the bin map is clicked
+        # bin_map = pn.panel(bin_map).add_periodic_callback(self.update_selected_bins, period=100)
+
         top_row = pn.Row(
-            bin_map, self.plot_sed, sizing_mode="stretch_width", height=350
+            bin_map,
+            pn.param.ParamMethod(self.plot_sed, loading_indicator=True),
+            sizing_mode="stretch_width",
+            height=350,
         )
 
         # sfh_plot = pn.pane.Matplotlib(self.plot_sfh, sizing_mode='stretch_both')
@@ -385,14 +489,17 @@ class GalaxyTab(param.Parameterized):
             self.app.update_sidebar()
 
     def setup_streams(self):
-        self.stream = hv.streams.Tap(transient=True)
+        self.point_selector = hv.streams.Tap(
+            transient=True, source=hv.Image(([]))
+        )
+        # self.point_selector = hv.streams.PointSelector(
 
     def setup_tabs(self):
         self.cutouts_tab = pn.param.ParamMethod(
             self.create_cutouts_tab, loading_indicator=True, lazy=True
         )
         self.sed_results_tab = pn.param.ParamMethod(
-            self.create_sed_results_tab, loading_indicator=True, lazy=True
+            self.create_sed_results_tab, loading_indicator=False, lazy=True
         )
         self.photometric_properties_tab = pn.param.ParamMethod(
             self.create_photometric_properties_tab,
@@ -525,7 +632,7 @@ class GalaxyTab(param.Parameterized):
         ]
         actual_options = [i.replace("_50", "") for i in options]
         dist_options = [i for i in options if i.endswith("50")]
-        self.pdf_param_property.options = [
+        self.pdf_param_property_widget.options = [
             i.replace("_50", "") for i in dist_options
         ]
         self.other_bagpipes_properties_widget.options = actual_options
@@ -552,6 +659,7 @@ class GalaxyTab(param.Parameterized):
 
             fig = self.resolved_galaxy.plot_bagpipes_map_gif(
                 parameter=param_property,
+                run_name=p_run_name,
                 weight_mass_sfr=weight_mass_sfr,
                 logmap=logmap,
                 path="temp",
@@ -601,7 +709,7 @@ class GalaxyTab(param.Parameterized):
             options=plt.colormaps(), value="viridis", width=100
         )
 
-        plot1 = pn.param.ParamFunction(
+        plot1 = pn.param.ParamMethod(
             pn.bind(
                 self.plot_phot_property,
                 drop_down1.param.value,
@@ -659,6 +767,7 @@ class GalaxyTab(param.Parameterized):
                     self.which_flux_unit_widget,
                     self.multi_choice_bins_widget,
                     self.total_fit_options_widget,
+                    self.sed_plot_controls,
                 ]
             )
         elif self.active_tab == 2:  # Photometric Properties
@@ -670,12 +779,12 @@ class GalaxyTab(param.Parameterized):
             )
 
         # Add Synthesizer tab options if it's a MockResolvedGalaxy
-        if isinstance(active_galaxy.resolved_galaxy, MockResolvedGalaxy):
+        if isinstance(self.resolved_galaxy, MockResolvedGalaxy):
             if (
-                active_galaxy.info_tabs.active == 3
+                self.active_tab == 3
             ):  # Assuming Synthesizer is the 4th tab (index 3)
-                self.sidebar.append(pn.layout.Divider())
-                self.sidebar.append("### Synthesizer Options")
+                sidebar.append(pn.layout.Divider())
+                sidebar.append("### Synthesizer Options")
                 # Add any specific Synthesizer options here
 
         return sidebar
@@ -804,7 +913,15 @@ class GalaxyTab(param.Parameterized):
             yaxis=None,
             clabel=f"{bin_type} Bin",
             alpha=scale_alpha,
+            # tools=['tap'],
         )
+
+        opts = np.unique(array)
+        # Make ints
+        opts = opts[~np.isnan(opts)].astype(int)
+        # Update options for the multi-choice widget
+        if bin_type == "pixedfit":
+            self.multi_choice_bins_widget.options = ["RESOLVED"] + list(opts)
 
         if show_kron:
             center = self.resolved_galaxy.cutout_size / 2
@@ -848,7 +965,10 @@ class GalaxyTab(param.Parameterized):
         bin_map = pn.pane.HoloViews(
             hvplot, height=300, width=400, aspect_ratio=1
         )
-        self.stream.source = bin_map.object
+        self.point_selector.source = bin_map.object
+
+        # Update the point selector stream
+        # self.point_selector.source = hvplot
 
         return bin_map
 
@@ -930,6 +1050,7 @@ class GalaxyTab(param.Parameterized):
             min_width=200,
         )
 
+    # NOT USED
     def handle_map_click(self, x, y, mode):
         """
         Handle clicks on the bin map and update relevant plots.
@@ -1017,10 +1138,13 @@ class GalaxyTab(param.Parameterized):
         if len(options_aperture) > 0:
             self.which_run_aperture = options_aperture[0]
 
-        return pn.Column(self.which_run_resolved, self.which_run_aperture)
+        return pn.Column(
+            self.which_run_resolved_widget, self.which_run_aperture_widget
+        )
 
     @param.depends(
         "resolved_galaxy",
+        "which_map",
         "which_sed_fitter",
         "which_run_resolved",
         "which_run_aperture",
@@ -1028,30 +1152,65 @@ class GalaxyTab(param.Parameterized):
         "total_fit_options",
         "pdf_param_property",
     )
-    def plot_bagpipes_pdf(self):
-        multi_choice_bins_param_safe = [
-            int(i) if i != "RESOLVED" and i != np.nan else i
-            for i in self.multi_choice_bins
-        ]
-
+    def plot_bagpipes_pdf(self, cmap="nipy_spectral_r"):
         if self.which_sed_fitter == "bagpipes":
-            if self.which_run_resolved:
-                run_name = self.which_run_resolved
-                bins_to_show = multi_choice_bins_param_safe
-            elif self.which_run_aperture:
-                run_name = self.which_run_aperture
-                bins_to_show = self.total_fit_options
-            else:
-                return pn.pane.Markdown("No Bagpipes results found.")
+            if (
+                self.which_run_resolved
+                and self.which_run_resolved
+                in self.resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            ):
+                if self.which_map == "pixedfit":
+                    map = self.resolved_galaxy.pixedfit_map
 
-            fig, _ = self.resolved_galaxy.plot_bagpipes_component_comparison(
-                parameter=self.pdf_param_property,
-                run_name=run_name,
-                bins_to_show=bins_to_show,
-                save=False,
-                run_dir="pipes/",
-                facecolor=self.facecolor,
-            )
+                cmap = cm.get_cmap(cmap)
+                colors_bins = [
+                    cmap(
+                        Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(
+                            rbin
+                        )
+                    )
+                    for pos, rbin in enumerate(self.multi_choice_bins_param)
+                ]
+
+                fig, _ = (
+                    self.resolved_galaxy.plot_bagpipes_component_comparison(
+                        parameter=self.pdf_param_property,
+                        run_name=self.which_run_resolved,
+                        bins_to_show=self.multi_choice_bins_param,
+                        save=False,
+                        run_dir="pipes/",
+                        facecolor=self.facecolor,
+                        colors=colors_bins,
+                    )
+                )
+
+                ax = fig.get_axes()[0]
+            else:
+                fig = None
+                ax = None
+
+            if (
+                self.which_run_aperture
+                and self.which_run_aperture
+                in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            ):
+                colors_total = [
+                    self.TOTAL_FIT_COLORS[rbin]
+                    for rbin in self.total_fit_options
+                ]
+
+                fig, _ = (
+                    self.resolved_galaxy.plot_bagpipes_component_comparison(
+                        parameter=self.pdf_param_property,
+                        run_name=self.which_run_aperture,
+                        bins_to_show=self.total_fit_options,
+                        save=False,
+                        run_dir="pipes/",
+                        facecolor=self.facecolor,
+                        fig=fig,
+                        axes=ax,
+                    )
+                )
 
             plt.close(fig)
             return pn.pane.Matplotlib(
@@ -1078,6 +1237,12 @@ class GalaxyTab(param.Parameterized):
         "which_run_resolved",
         "total_fit_options",
         "show_sed_photometry",
+        "sed_log_x",
+        "sed_log_y",
+        "sed_x_min",
+        "sed_x_max",
+        "sed_y_min",
+        "sed_y_max",
     )
     def plot_sed(self):
         multi_choice_bins_param_safe = [
@@ -1256,7 +1421,18 @@ class GalaxyTab(param.Parameterized):
             ax.set_xlim(ax.get_xlim())
             ax.set_ylim(ax.get_ylim())
 
+        if self.sed_log_x:
+            ax.set_xscale("log")
+        if self.sed_log_y:
+            ax.set_yscale("log")
+
+        ax.set_xlim(self.sed_x_min, self.sed_x_max)
+
+        if self.sed_y_min is not None or self.sed_y_max is not None:
+            ax.set_ylim(self.sed_y_min, self.sed_y_max)
+
         ax.legend(loc="upper left", frameon=False, fontsize="small")
+
         plt.close(fig)
         return pn.pane.Matplotlib(
             fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both"
@@ -1312,6 +1488,7 @@ class GalaxyTab(param.Parameterized):
                     colors=colors_total,
                     run_dir="pipes/",
                 )
+            """
 
             if self.which_run_resolved:
                 bins_to_show = multi_choice_bins_param_safe
@@ -1324,6 +1501,7 @@ class GalaxyTab(param.Parameterized):
                     run_dir="pipes/",
                     fig=fig,
                 )
+            """
 
             if fig is None:
                 return pn.pane.Markdown(
@@ -1438,57 +1616,57 @@ class GalaxyTab(param.Parameterized):
                 f"SFH plotting not implemented for {self.which_sed_fitter}."
             )
 
-        def create_synthesizer_tab(self):
-            synthesizer_page = pn.Column()
+    def create_synthesizer_tab(self):
+        synthesizer_page = pn.Column()
 
-            synthesizer_page.append("### Synthesizer Properties")
+        synthesizer_page.append("### Synthesizer Properties")
 
-            top_row = pn.Row()
-            middle_row = pn.Row()
+        top_row = pn.Row()
+        middle_row = pn.Row()
 
-            mass_map = self.plot_map_with_controls(
-                self.resolved_galaxy.property_images["stellar_mass"],
-                label="Stellar Mass",
-                unit=r"$M_{\odot}$",
-            )
+        mass_map = self.plot_map_with_controls(
+            self.resolved_galaxy.property_images["stellar_mass"],
+            label="Stellar Mass",
+            unit=r"$M_{\odot}$",
+        )
 
-            age_map = self.plot_map_with_controls(
-                self.resolved_galaxy.property_images["stellar_age"],
-                label="Age",
-                unit="Gyr",
-            )
+        age_map = self.plot_map_with_controls(
+            self.resolved_galaxy.property_images["stellar_age"],
+            label="Age",
+            unit="Gyr",
+        )
 
-            metallicity_map = self.plot_map_with_controls(
-                self.resolved_galaxy.property_images["stellar_metallicity"],
-                label="Metallicity",
-                unit=r"$Z_{\odot}$",
-            )
+        metallicity_map = self.plot_map_with_controls(
+            self.resolved_galaxy.property_images["stellar_metallicity"],
+            label="Metallicity",
+            unit=r"$Z_{\odot}$",
+        )
 
-            top_row.append(mass_map)
-            middle_row.append(age_map)
-            middle_row.append(metallicity_map)
+        top_row.append(mass_map)
+        middle_row.append(age_map)
+        middle_row.append(metallicity_map)
 
-            synthesizer_page.append(top_row)
-            synthesizer_page.append(middle_row)
+        synthesizer_page.append(top_row)
+        synthesizer_page.append(middle_row)
 
-            synthesizer_page.append(pn.layout.Divider())
+        synthesizer_page.append(pn.layout.Divider())
 
-            synthesizer_page.append("### Spectra")
-            bottom_row = pn.Row()
+        synthesizer_page.append("### Spectra")
+        bottom_row = pn.Row()
 
-            fig = pn.pane.Matplotlib(
-                self.plot_mock_spectra(components=["det_segmap_fnu"]),
-                dpi=144,
-                tight=True,
-                format="svg",
-                sizing_mode="stretch_both",
-                max_height=500,
-            )
+        fig = pn.pane.Matplotlib(
+            self.plot_mock_spectra(components=["det_segmap_fnu"]),
+            dpi=144,
+            tight=True,
+            format="svg",
+            sizing_mode="stretch_both",
+            max_height=500,
+        )
 
-            bottom_row.append(fig)
-            synthesizer_page.append(bottom_row)
+        bottom_row.append(fig)
+        synthesizer_page.append(bottom_row)
 
-            return synthesizer_page
+        return synthesizer_page
 
     def plot_map_with_controls(self, map_array, label="", unit=""):
         range_slider = pn.widgets.RangeSlider(
@@ -1497,7 +1675,7 @@ class GalaxyTab(param.Parameterized):
             value=(np.nanmin(map_array), np.nanmax(map_array)),
             step=0.01 * (np.nanmax(map_array) - np.nanmin(map_array)),
             name="Colorbar Range",
-            format=pn.widgets.NumberFormatter(format="0.1e"),
+            format=PrintfTickFormatter(format="%1.1e"),
         )
         colormap_choice = pn.widgets.Select(
             options=plt.colormaps(), value="viridis", name="Colormap"

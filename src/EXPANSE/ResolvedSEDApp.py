@@ -146,6 +146,7 @@ def get_h5(url):
     return h5.File(BytesIO(response.content), "r")
 
 
+"""
 def update_image(value):
     # global shown_bins
 
@@ -154,6 +155,7 @@ def update_image(value):
     bin_plot = plot_bins(value, "nipy_spectral_r")
     bin_map.object = bin_plot
     stream.source = bin_map.object
+"""
 
 
 def possible_runs_select(sed_fitting_tool):
