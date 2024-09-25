@@ -146,6 +146,7 @@ def get_h5(url):
     return h5.File(BytesIO(response.content), "r")
 
 
+"""
 def update_image(value):
     # global shown_bins
 
@@ -154,6 +155,7 @@ def update_image(value):
     bin_plot = plot_bins(value, "nipy_spectral_r")
     bin_map.object = bin_plot
     stream.source = bin_map.object
+"""
 
 
 def possible_runs_select(sed_fitting_tool):
@@ -2345,3 +2347,40 @@ def expanse_viewer(
 
 if __name__ == "__main__":
     expanse_viewer()
+
+
+# Convert this to a class, with a seperate class for each galaxy tab so they can be updated independently
+"""
+class GalaxyTab:
+    def __init__(self, galaxy, tab_name):
+        self.galaxy = galaxy
+        self.tab_name = tab_name
+        self.tab = pn.Column()
+        self.components = [self.sidebar, self.tab]
+
+    @classmethod
+    def init_from_upload(self, value):
+        pass
+
+    def sidebar(self):
+        return pn.Column()
+
+    def tab(self):
+        return pn.Column()
+
+    def update(self):
+        pass
+
+class ResolvedSEDApp:
+    def __init__(self, tabs = {}):
+        self.tabs = tabs
+
+    def handle_file_upload(self, value):
+
+        new_tab = GalaxyTab.init_from_upload(value)
+        self.tabs[new_tab.tab_id] = new_tab
+
+    # Update sidebar
+    def display_sidebar(tab_id, page):
+        pass
+"""

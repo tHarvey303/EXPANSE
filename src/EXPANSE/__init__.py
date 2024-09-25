@@ -17,9 +17,10 @@ from . import bagpipes
 from . import dense_basis
 
 from .ResolvedSEDApp import expanse_viewer
+from .NewResolvedSEDApp import expanse_viewer_class
 
 __all__ = ['ResolvedGalaxy', 'MockResolvedGalaxy', 'MultipleResolvedGalaxy',
            'convert_coordinates', 'apply_pixel_coordinate_mask', 'get_spectra_in_mask', 
            'calculate_sfh', 'make_EAZY_SED_fit_params_arr', 'update_mpl', 
            'scale_fluxes', 'CLIInterface', 'is_cli', 'calculate_bins', 
-           'PlotPipes', 'PipesFit', 'bagpipes', 'expanse_viewer']
+           'PlotPipes', 'PipesFit', 'bagpipes', 'expanse_viewer', 'expanse_viewer_class']

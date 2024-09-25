@@ -2049,7 +2049,7 @@ class ResolvedGalaxy:
         # Add anything else from the old file to the new file
         if os.path.exists(self.h5_path) and append != "":
             old_hfile = h5.File(self.h5_path, "r")
-            print("Removing temp", self.h5_path)
+            # print("Removing temp", self.h5_path)
             hfile = h5.File(self.h5_path.replace(".h5", f"{append}.h5"), "a")
             for key in old_hfile.keys():
                 if key not in hfile.keys():
@@ -3911,6 +3911,70 @@ class ResolvedGalaxy:
 
         plot_binmap(
             self.pixedfit_binmap_path, plot_binmap_spec=False, savefig=False
+        )
+
+    def pixel_by_pixel_galaxy_region(
+        self, snr_req=5, band_req="F444W", region_name="auto", overwrite=False
+    ):
+        # Make a boolean galaxy region based on pixels in band_req that have SNR > snr_req
+
+        # Use PSF matched data
+        if not hasattr(self, "psf_matched_data"):
+            raise ValueError("No PSF matched data found.")
+
+        if not hasattr(self, "psf_matched_rms_err"):
+            raise ValueError("No PSF matched rms_err found.")
+
+        galaxy_region = np.zeros_like(self.psf_matched_data[band_req])
+
+        snr_map = (
+            self.psf_matched_data[band_req]
+            / self.psf_matched_rms_err[band_req]
+        )
+        galaxy_region[snr_map > snr_req] = 1
+
+        if region_name == "auto":
+            region_name = f"SNR_{snr_req}_{band_req}"
+
+        self.add_to_h5(
+            galaxy_region, "galaxy_region", region_name, overwrite=overwrite
+        )
+
+        if not hasattr(self, "gal_region"):
+            self.gal_region = {}
+
+        self.gal_region[region_name] = galaxy_region
+
+    def pixel_by_pixel_binmap(self, galaxy_region=None, overwrite=False):
+        if galaxy_region is None:
+            if not hasattr(self, "gal_region"):
+                raise ValueError(
+                    "No galaxy region found. Run pixedfit_processing() first"
+                )
+
+            galaxy_region = self.gal_region
+
+        # Make a binmap where each pixel wihin the galaxy region is a seperate bin
+
+        # Count number of pixels in galaxy region
+        number_of_bins = np.sum(galaxy_region)
+        binmap = np.zeros_like(galaxy_region)
+
+        # Loop over each pixel in the galaxy region and assign a bin number
+        bin_number = 1
+        for i in range(np.shape(galaxy_region)[0]):
+            for j in range(np.shape(galaxy_region)[1]):
+                if galaxy_region[i, j] == 1:
+                    binmap[i, j] = bin_number
+                    bin_number += 1
+
+        self.add_to_h5(
+            binmap,
+            "bin_maps",
+            "pixel_by_pixel",
+            ext="BIN_MAP",
+            setattr_gal="pixel_by_pixel_map",
+            overwrite=overwrite,
         )
 
     def measure_flux_in_bins(
