@@ -71,25 +71,35 @@ if __name__ == "__main__":
         overwrite = False
         h5_folder = resolved_galaxy_dir
     elif computer == "singularity":
-        ids = [16, 36, 370, 478, 531, 575, 778, 801, 806, 830]
         overwrite = False
         h5_folder = "/mnt/galaxies/"
+        # Get all ids in the folder
+        ids = [
+            int(os.path.basename(f).split("_")[-1].split(".")[0])
+            for f in glob.glob(f"{h5_folder}/*.h5")
+            if "mock" not in f
+        ]
+        # remove
         cutout_size = None  # Not used when loading from h5
 
-    galaxies = ResolvedGalaxy.init(
-        list(ids),
-        "JOF_psfmatched",
-        "v11",
-        already_psf_matched=True,
-        cutout_size=cutout_size,
-        h5_folder=h5_folder,
-    )
     # Should speed it up?
 
     cat = None
 
     initial_load = False
+    n_jobs = 32
     # Set to True if you want to load the data from the catalogue
+    just_bagpipes_parallel = True
+
+    if not just_bagpipes_parallel:
+        galaxies = ResolvedGalaxy.init(
+            list(ids),
+            "JOF_psfmatched",
+            "v11",
+            already_psf_matched=True,
+            cutout_size=cutout_size,
+            h5_folder=h5_folder,
+        )
 
     num_of_bins = 0
     num_of_single_bin = 0
@@ -152,8 +162,6 @@ if __name__ == "__main__":
         print(f"Number of galaxies with only one bin: {num_of_single_bin}")
         # Run Bagpipes in parallel
 
-    crash
-
     from .bagpipes.pipes_models import (
         continuity_dict,
         create_dicts,
@@ -163,7 +171,11 @@ if __name__ == "__main__":
         resolved_dict,
     )
 
-    override_meta = {"redshift": "eazy", "redshift_sigma": "eazy"}
+    override_meta = {
+        "redshift": "eazy",
+        "redshift_sigma": "eazy",
+        "use_bpass": True,
+    }
     delayed_dicts = create_dicts(delayed_dict, override_meta=override_meta)
     continuity_dicts = create_dicts(
         continuity_dict, override_meta=override_meta
