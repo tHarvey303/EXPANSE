@@ -9607,7 +9607,7 @@ class MultipleResolvedGalaxy:
     def init(cls, list_of_ids, survey, version, **kwargs):
         list_of_galaxies = []
         for gal_id in list_of_ids:
-            if "mock" in gal_id:
+            if "mock" in str(gal_id):
                 galaxy = MockResolvedGalaxy.init(
                     galaxy_id=gal_id,
                     mock_survey=survey,
@@ -9769,7 +9769,7 @@ def run_bagpipes_wrapper(
     # return
 
     try:
-        if "mock" in galaxy_id:
+        if "mock" in str(galaxy_id):
             galaxy = MockResolvedGalaxy.init(
                 galaxy_id=galaxy_id,
                 mock_survey=field,
@@ -9818,7 +9818,7 @@ def run_bagpipes_wrapper(
             ctime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
             send_email(
                 contents=f'Crash for {galaxy_id} and {resolved_dict["meta"]["run_name"]} \n {e} \n {traceback.format_exc()}',
-                subject=f"{sys.argv[0]} crash at {ctime} for {self.galaxy_id}",
+                subject=f"{sys.argv[0]} crash at {ctime} for {galaxy_id}",
             )
 
         return None

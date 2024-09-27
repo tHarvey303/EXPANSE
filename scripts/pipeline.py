@@ -61,6 +61,11 @@ else:
 
 resolved_galaxy_dir = "../galaxies/"
 
+initial_load = False
+n_jobs = 10
+# Set to True if you want to load the data from the catalogue
+just_bagpipes_parallel = True
+
 if __name__ == "__main__":
     if computer == "morgan":
         catalog_path_selected = "/nvme/scratch/work/tharvey/EXPANSE/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits"
@@ -85,11 +90,6 @@ if __name__ == "__main__":
     # Should speed it up?
 
     cat = None
-
-    initial_load = False
-    n_jobs = 32
-    # Set to True if you want to load the data from the catalogue
-    just_bagpipes_parallel = True
 
     if not just_bagpipes_parallel:
         galaxies = ResolvedGalaxy.init(
@@ -204,10 +204,10 @@ if __name__ == "__main__":
             n_jobs = 6
         else:
             if computer == "morgan":
-                n_jobs = 6
+                n_jobs = n_jobs
                 backend = "loky"
             elif computer == "singularity":
-                n_jobs = np.min([len(galaxies) + 1, 6])
+                n_jobs = np.min([len(ids) + 1, n_jobs])
                 backend = "multiprocessing"
                 backend = "threading"
 
