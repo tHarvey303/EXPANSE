@@ -11,6 +11,7 @@ import traceback
 import types
 import typing
 import tempfile
+import time
 import warnings
 from io import BytesIO
 from pathlib import Path
@@ -6192,7 +6193,7 @@ class ResolvedGalaxy:
 
         if label is True:
             label = (
-                f"Region ${id_phot} \ (z={z_best:.2f} \ \chi^2={chi2:.2f})$"
+                rf"Region ${id_phot} \ (z={z_best:.2f} \ \chi^2={chi2:.2f})$"
             )
         else:
             label = ""

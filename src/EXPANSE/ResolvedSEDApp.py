@@ -1354,7 +1354,7 @@ def plot_map_with_controls(map_array, label="", unit=""):
             clim = (clim[0] - 1, clim[1] + 1)
 
         if log_scale:
-            logtext = "$\log_{10}$ "
+            logtext = r"$\log_{10}$ "
             if clim[0] <= 0:
                 clim = (0.001 * clim[1], clim[1])
         else:

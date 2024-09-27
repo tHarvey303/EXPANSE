@@ -77,7 +77,7 @@ if __name__ == "__main__":
         ids = [
             int(os.path.basename(f).split("_")[-1].split(".")[0])
             for f in glob.glob(f"{h5_folder}/*.h5")
-            if "mock" not in f
+            if "mock" not in f and "temp" not in f
         ]
         # remove
         cutout_size = None  # Not used when loading from h5
@@ -213,13 +213,13 @@ if __name__ == "__main__":
 
         if n_jobs == 1:
             print("Running in serial.")
-            for i in range(len(galaxies)):
+            for i in range(len(ids)):
                 print(i)
                 print(run_dicts[i])
                 galaxies[i].run_bagpipes(run_dicts[i])
         else:
             print(f"Using {n_jobs} cores.")
-            for i in range(len(galaxies)):
+            for i in range(len(ids)):
                 print(run_dicts[i])
 
             Parallel(n_jobs=n_jobs)(
