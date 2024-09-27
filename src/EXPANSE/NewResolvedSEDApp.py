@@ -14,7 +14,7 @@ import os
 from .ResolvedGalaxy import ResolvedGalaxy, MockResolvedGalaxy
 from astropy import units as u
 import xarray as xr
-from bokeh.models import PrintfTickFormatter
+from bokeh.models import PrintfTickFormatter, Label
 import matplotlib.cm as cm
 from holoviews import opts, streams
 
@@ -102,8 +102,11 @@ class GalaxyTab(param.Parameterized):
     )
 
     # Parameters for interactive tab
-    interactive_band = param.Selector(default="F444W", objects=[])
+    interactive_band = param.Selector(default="F444W")
     drawn_shapes = param.Dict(default={})
+    which_interactive_sed_fitter = param.Selector(
+        default="EAZY-py", objects=["EAZY-py", "Dense Basis"]
+    )
 
     TOTAL_FIT_COLORS = {
         "TOTAL_BIN": "springgreen",
@@ -361,6 +364,33 @@ class GalaxyTab(param.Parameterized):
                 ),
             ),
             active=[0],  # Open by default
+        )
+
+        self.interactive_photometry_button = pn.widgets.Button(
+            name="Measure Photometry", button_type="primary"
+        )
+        self.interactive_sed_fitting_dropdown = pn.widgets.Select(
+            name="SED Fitting",
+            options=["EAZY-py", "Dense Basis"],
+            value=self.which_interactive_sed_fitter,
+        )
+        self.interactive_sed_fitting_dropdown.link(
+            self, value="which_interactive_sed_fitter"
+        )
+
+        self.interactive_sed_fitting_button = pn.widgets.Button(
+            name="Run SED Fitting", button_type="primary"
+        )
+        self.interactive_band_widget = pn.widgets.Select(
+            name="Band",
+            options=self.resolved_galaxy.bands,
+            value=self.interactive_band,
+        )
+
+        self.interactive_band_widget.link(self, value="interactive_band")
+
+        self.clear_interactive_button = pn.widgets.Button(
+            name="Clear Shapes", button_type="danger"
         )
 
     @param.depends("point_selector.point")
@@ -741,44 +771,76 @@ class GalaxyTab(param.Parameterized):
     def create_interactive_tab(self):
         interactive_plot = self.create_interactive_plot()
         controls = pn.Column(
-            pn.widgets.Select(
-                name="Band",
-                options=self.resolved_galaxy.bands,
-                value=self.interactive_band,
-            ),
-            pn.widgets.StaticText(
-                name="Drawn Shapes", value=self.drawn_shapes
-            ),
-            pn.layout.Divider(),
-            pn.pane.Markdown("""### How to use
+            pn.pane.Markdown(
+                """
+            ### How to use
 
-                                    - Choose one of the tools on the right side of the plot
-                                    - There are three tools available:
-                                        - Box Edit: Draw rectangles
-                                        - Poly Draw: Draw polygons
-                                        - Point Draw: Draw points
-                                    - For box edit and poly draw, double click to start and finish a shape.
-                                    - For point draw, click to draw a point.
-                                    - To remove a point or shape, click on it, then hit the 'Backspace' key.
+            - Choose one of the tools on the right side of the plot
 
-                                    - When finished, click the 'Save' button to save the drawn shapes.
-                                    - The photometry for the drawn shapes will be displayed below the plot.
-                                    - If you want to perform SED fitting on the drawn shapes, configure the SED fitting options and click 'Run SED Fitting'.
-                                    - SED fitting results will be displayed in the SED Results tab, and saved to the .h5 file.
-                                    """),
+            - There are three tools available:
+                - Box Edit: Draw rectangles
+                - Poly Draw: Draw polygons
+                - Point Draw: Draw points
+
+            - For box edit and poly draw, double click to start and finish a shape.
+            - For point draw, click to draw a point.
+            - To remove a point or shape, click on it, then hit the 'Backspace' key.
+
+            - When finished, click the 'Save' button to save the drawn shapes.
+            - The photometry for the drawn shapes will be displayed below the plot.
+            - If you want to perform SED fitting on the drawn shapes, configure the SED fitting options and click 'Run SED Fitting'.
+            - SED fitting results will be displayed in the SED Results tab, and saved to the .h5 file.
+            """,
+                width=400,
+            ),
         )
 
-        return pn.Row(interactive_plot, controls)
+        # Link the button to the
+        self.interactive_photometry_button.on_click(
+            self.photometry_from_shapes
+        )
+
+        self.clear_interactive_button.on_click(
+            lambda event: setattr(self, "drawn_shapes", {})
+        )
+
+        self.interactive_sed_fitting_button.on_click(
+            self.photometry_from_shapes
+        )
+
+        self.interactive_sed_plot = pn.pane.Matplotlib(
+            plt.figure(),
+            dpi=144,
+            tight=True,
+            format="svg",
+            sizing_mode="stretch_width",
+            max_height=400,
+        )
+        self.interactive_sed_plot_pdf = pn.pane.Matplotlib(
+            plt.figure(),
+            dpi=144,
+            tight=True,
+            format="svg",
+            sizing_mode="stretch_width",
+            max_height=400,
+        )
+
+        return pn.Row(
+            pn.Column(interactive_plot, controls),
+            pn.Column(
+                self.interactive_sed_plot, self.interactive_sed_plot_pdf
+            ),
+        )
 
     @param.depends("interactive_band", "drawn_shapes")
     def create_interactive_plot(self):
         image_data = self.resolved_galaxy.phot_imgs[self.interactive_band]
+        # Flip the image data so that it is displayed correctly
+        image_data = np.flipud(image_data)
+
         image = hv.Image(
             image_data, bounds=(0, 0, image_data.shape[1], image_data.shape[0])
         )
-
-        # Create a simple scatter plot as the base
-        scatter = hv.Scatter(np.random.rand(20, 2)).opts(tools=["hover"])
 
         poly = hv.Polygons([])
         boxes = hv.Rectangles([])
@@ -789,17 +851,48 @@ class GalaxyTab(param.Parameterized):
             aspect="equal", xaxis=None, yaxis=None, width=500, height=500
         )
 
+        poly_colors_cmap = cm.get_cmap("nipy_spectral_r")
+        # draw 30 colors from the viridis colormap
+        poly_colors = [poly_colors_cmap(i) for i in np.linspace(0, 1, 10)]
+
+        poly_colors = [
+            "#%02x%02x%02x" % tuple(int(255 * x) for x in color[:3])
+            for color in poly_colors
+        ]
+
         poly_stream = streams.PolyDraw(
             source=poly,
             drag=True,
-            num_objects=30,
+            num_objects=10,
             show_vertices=False,
-            styles={"fill_color": ["red"]},
+            styles={"fill_color": poly_colors},
         )
 
-        box_stream = streams.BoxEdit(source=boxes, num_objects=30)
+        box_colors_cmap = cm.get_cmap("tab20")
+        # draw 30 colors from the tab20 colormap
+        box_colors = [box_colors_cmap(i) for i in np.linspace(0, 1, 10)]
 
-        points_stream = streams.PointDraw(source=points, num_objects=30)
+        box_colors = [
+            "#%02x%02x%02x" % tuple(int(255 * x) for x in color[:3])
+            for color in box_colors
+        ]
+
+        box_stream = streams.BoxEdit(
+            source=boxes, num_objects=10, styles={"fill_color": box_colors}
+        )
+
+        points_colors_cmap = cm.get_cmap("inferno")
+        # draw 30 colors from the inferno colormap
+        points_colors = [points_colors_cmap(i) for i in np.linspace(0, 1, 10)]
+
+        points_colors = [
+            "#%02x%02x%02x" % tuple(int(255 * x) for x in color[:3])
+            for color in points_colors
+        ]
+
+        points_stream = streams.PointDraw(
+            source=points, num_objects=10, styles={"line_color": points_colors}
+        )
 
         def on_draw_box(data):
             self.drawn_shapes["boxes"] = data
@@ -810,55 +903,268 @@ class GalaxyTab(param.Parameterized):
         def on_draw_points(data):
             self.drawn_shapes["points"] = data
 
-        box_stream.add_subscriber(on_draw)
-        poly_stream.add_subscriber(on_draw)
-        points_stream.add_subscriber(on_draw)
+        box_stream.add_subscriber(on_draw_box)
+        poly_stream.add_subscriber(on_draw_poly)
+        points_stream.add_subscriber(on_draw_points)
 
         plot = (image * poly * boxes * points).opts(
             opts.Image(cmap="gray"),
             opts.Rectangles(fill_alpha=0.3, active_tools=["box_edit"]),
             opts.Polygons(fill_alpha=0.3, active_tools=["poly_draw"]),
             opts.Points(
-                active_tools=["point_draw"], size=30, fill_color="none"
+                active_tools=["point_draw"],
+                size=45,
+                fill_color="none",
+                line_width=4,
             ),
             # opts.Path(active_tools=['freehand_draw'])
         )
+        self.interactive_plot = pn.pane.HoloViews(plot, height=500, width=500)
 
-        return pn.pane.HoloViews(plot, height=500, width=500)
+        return self.interactive_plot
 
-    def convert_shapes_to_apertures(drawn_shapes):
-        apertures = []
+    def photometry_from_shapes(self, event, flux_unit=u.ABmag):
+        # Label the drawn shapes on the bokeh plo
 
-        # Convert boxes to RectangularAperture
-        if "boxes" in drawn_shapes:
-            for box in drawn_shapes["boxes"]:
-                x, y, width, height = (
-                    box["x0"],
-                    box["y0"],
-                    box["x1"] - box["x0"],
-                    box["y1"] - box["y0"],
+        if event:
+            regions, region_labels = self.convert_shapes_to_regions()
+            num_regions = len(regions)
+
+            for reg in region_labels:
+                # label = Label(x=reg['x'], y=reg['y'], text=reg['name'], text_color=reg['color'] if type(reg['color']) == str else 'black')
+
+                text = hv.Text(
+                    x=reg["x"], y=reg["y"], text=reg["name"]
+                )  # color=reg['color'] if type(reg['color']) == str else 'black')
+                # Draw the text on the plot without removing the drawn shapes
+                self.interactive_plot.object = (
+                    self.interactive_plot.object * text
                 )
-                apertures.append(
-                    RectangularAperture(
-                        (x + width / 2, y + height / 2), width, height
+
+            # Readd the drawn shapes to the plot
+            for key in self.drawn_shapes:
+                for shape in self.drawn_shapes[key]:
+                    self.interactive_plot.object = (
+                        self.interactive_plot.object * shape
                     )
+
+            if num_regions == 0:
+                print("No regions drawn")
+                return
+
+            newfig = plt.figure(figsize=(8, 6))
+            ax = newfig.add_subplot(111)
+            ax.set_xlabel("Wavelength (microns)")
+
+            for region in regions:
+                self.resolved_galaxy.plot_photometry_from_region(
+                    region,
+                    facecolor=self.facecolor,
+                    ax=ax,
+                    fig=newfig,
+                    flux_unit=flux_unit,
                 )
 
-        # Convert polygons to PolygonalAperture
-        if "polygons" in drawn_shapes:
-            for poly in drawn_shapes["polygons"]:
-                vertices = list(zip(poly["xs"], poly["ys"]))
-                apertures.append(PolygonalAperture(vertices))
+            if flux_unit == u.ABmag:
+                ax.set_ylabel("AB Mag")
+                # Invert y axis
+                ax.invert_yaxis()
+            else:
+                ax.set_ylabel(f"Flux ({flux_unit})")
 
-        # Convert points to CircularAperture
-        if "points" in drawn_shapes:
-            for point in drawn_shapes["points"]:
-                x, y = point["x"], point["y"]
+            # Fix x axis range
+            ax.set_xlim(ax.get_xlim())
+            ax.set_ylim(ax.get_ylim())
+
+            print(event.obj.name)
+            if event.obj.name == "Run SED Fitting":
+                fluxes, flux_errs, flux_unit_arr = [], [], []
+                for region in regions:
+                    flux, flux_err = (
+                        self.resolved_galaxy.get_photometry_from_region(
+                            region, return_array=True
+                        )
+                    )
+
+                    fluxes.append(flux)
+                    flux_errs.append(flux_err)
+                    flux_unit_arr.append(flux.unit)
+                assert all(
+                    [unit == flux_unit_arr[0] for unit in flux_unit_arr]
+                ), "All fluxes must have the same units"
+
+                fluxes = np.array(fluxes) * flux_unit_arr[0]
+                flux_errs = np.array(flux_errs) * flux_unit_arr[0]
+
+                if self.which_interactive_sed_fitter == "EAZY-py":
+                    pdf_fig = plt.figure(figsize=(8, 6))
+                    ax_pdf = pdf_fig.add_subplot(111)
+                    ax_pdf.set_xlabel("Redshift (z)")
+                    ax_pdf.set_ylabel("Probability Density")
+                    # Hide the y-axis labels
+                    ax_pdf.yaxis.set_tick_params(labelleft=False)
+
+                    ez = self.resolved_galaxy.fit_eazy_photometry(
+                        run_name="app", fluxes=fluxes, flux_errs=flux_errs
+                    )
+                    for i, region in enumerate(regions):
+                        self.resolved_galaxy.plot_eazy_fit(
+                            ez,
+                            i,
+                            ax_sed=ax,
+                            fig=newfig,
+                            flux_units=flux_unit,
+                            ax_pz=ax_pdf,
+                            label=True,
+                        )
+
+                    # Get all lines on the ax_pdf plot, sum them, and set the x-axis limit based on percentiles of the y-axis peaks
+                    lines = ax_pdf.get_lines()
+                    y_data = np.array([line.get_ydata() for line in lines])
+                    y_data = np.sum(y_data, axis=0)
+
+                    print("shap", np.shape(y_data))
+
+                    norm = np.cumsum(y_data)
+                    norm = norm / np.max(norm)
+                    x_data = lines[0].get_xdata()
+                    lowz = x_data[np.argmin(np.abs(norm - 0.02))] - 0.3
+                    highz = x_data[np.argmin(np.abs(norm - 0.98))] + 0.3
+                    ax_pdf.set_xlim(lowz, highz)
+
+                    print("lowz", lowz, "highz", highz)
+
+                    self.interactive_sed_plot_pdf.object = pdf_fig
+
+                    ax.legend(frameon=False)
+
+                elif self.which_interactive_sed_fitter == "Dense Basis":
+                    raise NotImplementedError(
+                        "Dense Basis SED fitting is not implemented yet."
+                    )
+
+            self.interactive_sed_plot.object = newfig
+
+    def convert_shapes_to_regions(self):
+        from regions import (
+            PixCoord,
+            RectanglePixelRegion,
+            PolygonPixelRegion,
+            CirclePixelRegion,
+        )
+
+        regions = []
+
+        region_strings = []
+        num_regions = 0
+        region_labels = []
+        # Convert boxes to RectanglePixelRegion
+        if "boxes" in self.drawn_shapes:
+            if (
+                "color" in self.drawn_shapes["boxes"]
+                or "fill_color" in self.drawn_shapes["boxes"]
+            ):
+                colors = self.drawn_shapes["boxes"].get(
+                    "color", self.drawn_shapes["boxes"].get("fill_color")
+                )
+
+            for (
+                x0,
+                y0,
+                x1,
+                y1,
+                color,
+            ) in zip(
+                self.drawn_shapes["boxes"]["x0"],
+                self.drawn_shapes["boxes"]["y0"],
+                self.drawn_shapes["boxes"]["x1"],
+                self.drawn_shapes["boxes"]["y1"],
+                colors,
+            ):
+                x = (x0 + x1) / 2
+                y = (y0 + y1) / 2
+                width = abs(x1 - x0)
+                height = abs(y1 - y0)
+
+                center = PixCoord(x, y)
+                reg = RectanglePixelRegion(
+                    center, width, height, visual={"color": color}
+                )
+                regions.append(reg)
+                region_labels.append(
+                    {
+                        "name": f"Box {num_regions}",
+                        "x": x,
+                        "y": y,
+                        "color": color,
+                    }
+                )
+                num_regions += 1
+
+        # Convert polygons to PolygonPixelRegion
+
+        if "polygons" in self.drawn_shapes:
+            if (
+                "color" in self.drawn_shapes["polygons"]
+                or "fill_color" in self.drawn_shapes["polygons"]
+            ):
+                colors = self.drawn_shapes["polygons"].get(
+                    "color", self.drawn_shapes["polygons"].get("fill_color")
+                )
+
+            for poly_xs, poly_ys, color in zip(
+                self.drawn_shapes["polygons"]["xs"],
+                self.drawn_shapes["polygons"]["ys"],
+                colors,
+            ):
+                if len(poly_xs) < 3:
+                    continue
+                vertices = PixCoord(poly_xs, poly_ys)
+                reg = PolygonPixelRegion(vertices, visual={"color": color})
+                regions.append(reg)
+                x = np.mean(poly_xs)
+                y = np.mean(poly_ys)
+                region_labels.append(
+                    {
+                        "name": f"Polygon {num_regions}",
+                        "x": x,
+                        "y": y,
+                        "color": color,
+                    }
+                )
+                num_regions += 1
+
+        # Convert points to CirclePixelRegion
+        if "points" in self.drawn_shapes:
+            if (
+                "line_color" in self.drawn_shapes["points"]
+                or "fill_color" in self.drawn_shapes["points"]
+            ):
+                colors = self.drawn_shapes["points"].get(
+                    "line_color", self.drawn_shapes["points"].get("fill_color")
+                )
+            for point_x, point_y, color in zip(
+                self.drawn_shapes["points"]["x"],
+                self.drawn_shapes["points"]["y"],
+                colors,
+            ):
+                center = PixCoord(point_x, point_y)
                 # You might want to adjust the radius based on your needs
-                radius = 5  # Example radius, adjust as needed
-                apertures.append(CircularAperture((x, y), r=radius))
+                radius = 5.33333  # 0.16 arcsec in pixels
+                regions.append(
+                    CirclePixelRegion(center, radius, visual={"color": color})
+                )
+                region_labels.append(
+                    {
+                        "name": f"Point {num_regions}",
+                        "x": point_x,
+                        "y": point_y,
+                        "color": color,
+                    }
+                )
+                num_regions += 1
 
-        return apertures
+        return regions, region_labels
 
     # @lru_cache(maxsize=None)
 
@@ -917,11 +1223,11 @@ class GalaxyTab(param.Parameterized):
             sidebar.extend(
                 [
                     "#### Interactive Plot Controls",
-                    pn.widgets.Select(
-                        name="Band",
-                        options=self.resolved_galaxy.bands,
-                        value=self.interactive_band,
-                    ),
+                    self.interactive_band_widget,
+                    self.interactive_photometry_button,
+                    self.interactive_sed_fitting_dropdown,
+                    self.interactive_sed_fitting_button,
+                    self.clear_interactive_button,
                 ]
             )
 

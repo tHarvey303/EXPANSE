@@ -15,6 +15,7 @@ psfs/psf_models/*
 __pycache__/*
 __pycache__
 plots
+*.pkl
 galaxies/diagnostic_plots/*
 galaxies/*.fits
 test.pdf

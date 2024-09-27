@@ -16,6 +16,8 @@ from . import bagpipes
 
 from . import dense_basis
 
+from . import eazy
+
 from .ResolvedSEDApp import expanse_viewer
 from .NewResolvedSEDApp import expanse_viewer_class
 

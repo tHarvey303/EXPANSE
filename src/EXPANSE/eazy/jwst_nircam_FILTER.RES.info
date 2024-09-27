@@ -1,0 +1,50 @@
+1   563 jwst_nircam_f090w v20160902164019 lambda_c= 9.0229e+03
+2   563 jwst_nircam_f115w v20160902164019 lambda_c= 1.1543e+04
+3   563 jwst_nircam_f150w v20160902164019 lambda_c= 1.5007e+04
+4   564 jwst_nircam_f200w v20160902164019 lambda_c= 1.9886e+04
+5   319 jwst_nircam_f277w v20160902164019 lambda_c= 2.7623e+04
+6   495 jwst_nircam_f356w v20160902164019 lambda_c= 3.5682e+04
+7   420 jwst_nircam_f410m v20160902164019 lambda_c= 4.0821e+04
+8   420 jwst_nircam_f444w v20160902164019 lambda_c= 4.4037e+04
+9   23 REST_FRAME/maiz-apellaniz_Johnson_U.res 2006AJ....131.1184M lambda_c= 3.5900e+03 AB-Vega= 0.769 w95=862.3
+10  41 REST_FRAME/maiz-apellaniz_Johnson_B.res 2006AJ....131.1184M lambda_c= 4.3722e+03 AB-Vega=-0.106 w95=1321.3
+11  47 REST_FRAME/maiz-apellaniz_Johnson_V.res 2006AJ....131.1184M lambda_c= 5.4794e+03 AB-Vega= 0.002 w95=1369.1
+12  89 2MASS/J.res lambda_c= 1.2358e+04 AB-Vega= 0.885 w95=2311.1
+13  650 jwst_miri_f0560w v20171115151044 lambda_c= 5.6326e+04
+14  650 jwst_miri_f0770w v20171115151044 lambda_c= 7.6364e+04
+15  650 jwst_miri_f1000w v20171115151044 lambda_c= 9.9471e+04
+16  650 jwst_miri_f1130w v20171115151044 lambda_c= 1.1309e+05
+17  650 jwst_miri_f1280w v20171115151044 lambda_c= 1.2809e+05
+18  650 jwst_miri_f1500w v20171115151044 lambda_c= 1.5048e+05
+19  650 jwst_miri_f1800w v20171115151044 lambda_c= 1.7970e+05
+20  650 jwst_miri_f2100w v20171115151044 lambda_c= 2.0801e+05
+21  650 jwst_miri_f2550w v20171115151044 lambda_c= 2.5230e+05
+22  133 hst/ACS_update_sep07/wfc_f435w_t81.dat obs_AFTER_7-4-06+rebin-5A lambda_c= 4.3189e+03 AB-Vega=-0.104 w95=992.7
+23  173 hst/ACS_update_sep07/wfc_f606w_t81.dat obs_AFTER_7-4-06+rebin-5A lambda_c= 5.9211e+03 AB-Vega= 0.083 w95=2224.8
+24  117 hst/ACS_update_sep07/wfc_f814w_t81.dat obs_AFTER_7-4-06+rebin-5A lambda_c= 8.0570e+03 AB-Vega= 0.419 w95=2357.9
+25  206 hst/wfc3/IR/f105w.dat lambda_c= 1.0545e+04 AB-Vega= 0.641 w95=2781.0
+26  87 hst/wfc3/IR/f125w.dat lambda_c= 1.2471e+04 AB-Vega= 0.895 w95=2867.0
+27  105 hst/wfc3/IR/f140w.dat lambda_c= 1.3924e+04 AB-Vega= 1.072 w95=3759.7
+28  132 hst/wfc3/IR/f160w.dat lambda_c= 1.5396e+04 AB-Vega= 1.250 w95=2743.9
+29  251 g_HSC.txt http://cosmos.astro.caltech.edu/page/filterset  lambda_c=4798.2 AB-Vega=-0.089
+30  582 r_HSC.txt http://cosmos.astro.caltech.edu/page/filterset  lambda_c=6218.4 AB-Vega=0.223
+31  566 i_HSC.txt http://cosmos.astro.caltech.edu/page/filterset  lambda_c=7727.0 AB-Vega=0.468
+32   76 z_HSC.txt http://cosmos.astro.caltech.edu/page/filterset  lambda_c=8908.2 AB-Vega=0.522
+33 101 y_HSC.txt http://cosmos.astro.caltech.edu/page/filterset  lambda_c=9775.1 AB-Vega=0.740
+34 2401 NB816_HSC.txt http://cosmos.astro.caltech.edu/page/filterset  lambda_c=8176.7 AB-Vega=0.476
+35 1001 NB921_HSC.txt http://cosmos.astro.caltech.edu/page/filterset  lambda_c=9213.2 AB-Vega=0.647
+36  563 jwst_nircam_f070w v20160902164019 lambda_c= 7.0432e+03
+37  562 jwst_nircam_f140m v20160902164019 lambda_c= 1.4054e+04
+38  562 jwst_nircam_f162m v20160902164019 lambda_c= 1.6272e+04
+39  562 jwst_nircam_f182m v20160902164019 lambda_c= 1.8452e+04
+40  562 jwst_nircam_f210m v20160902164019 lambda_c= 2.0955e+04
+41  319 jwst_nircam_f250m v20160902164019 lambda_c= 2.5037e+04
+42  420 jwst_nircam_f300m v20160902164019 lambda_c= 2.9895e+04
+43  420 jwst_nircam_f335m v20160902164019 lambda_c= 3.3623e+04
+44  420 jwst_nircam_f360m v20160902164019 lambda_c= 3.6243e+04
+45  495 jwst_nircam_f430m v20160902164019 lambda_c= 4.2813e+04
+46  420 jwst_nircam_f460m v20160902164019 lambda_c= 4.6302e+04
+47  420 jwst_nircam_f480m v20160902164019 lambda_c= 4.8156e+04
+48  88 hst/ACS_update_sep07/wfc_f625w_t81.dat obs_AFTER_7-4-06+rebin-5A lambda_c= 6.3114e+03 AB-Vega= 0.158 w95=1391.2
+49  86 hst/ACS_update_sep07/wfc_f775w_t81.dat obs_AFTER_7-4-06+rebin-5A lambda_c= 7.6924e+03 AB-Vega= 0.384 w95=1490.9
+50 102 hst/ACS_update_sep07/wfc_f850lp_t81.dat obs_AFTER_7-4-06+rebin-5A lambda_c= 9.0331e+03 AB-Vega= 0.517 w95=2091.9

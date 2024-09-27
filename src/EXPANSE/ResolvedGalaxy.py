@@ -10,6 +10,7 @@ import sys
 import traceback
 import types
 import typing
+import tempfile
 import warnings
 from io import BytesIO
 from pathlib import Path
@@ -4909,6 +4910,7 @@ class ResolvedGalaxy:
         run_dir="pipes/",
         overwrite=False,
         overwrite_internal=False,
+        mpi_serial=False,
     ):
         # meta - run_name, use_bpass, redshift (override)
         assert (
@@ -5162,7 +5164,7 @@ class ResolvedGalaxy:
             print(fit_instructions)
             # Run this with MPI
 
-            fit_cat.fit(verbose=False, mpi_serial=True, sampler=sampler)
+            fit_cat.fit(verbose=False, mpi_serial=mpi_serial, sampler=sampler)
 
         # Move files to the correct location
         for i in ["posterior"]:
@@ -5469,6 +5471,138 @@ class ResolvedGalaxy:
         # cbar.ax.tick_params(labelsize=8)
         # cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
         return fig, cache
+
+    def get_photometry_from_region(
+        self, region, override_psf_type=None, debug=True, return_array=False
+    ):
+        """
+        Take an regions object and return the photometry from the region for all bands
+
+        """
+        regmask = region.to_mask(mode="subpixels", subpixels=10)
+        flux = {}
+        flux_err = {}
+        if override_psf_type is not None:
+            psf_type = override_psf_type
+        else:
+            psf_type = self.use_psf_type
+
+        for band in self.bands:
+            data = self.psf_matched_data[psf_type][band]
+            err = self.psf_matched_rms_err[psf_type][band]
+            band_flux = regmask.multiply(data)
+            flux[band] = np.sum(band_flux) * self.phot_pix_unit[band]
+            band_err = regmask.multiply(err)
+            flux_err[band] = (
+                np.sqrt(np.sum(band_err**2)) * self.phot_pix_unit[band]
+            )
+
+        if return_array:
+            flux_arr = (
+                np.array([flux[band].value for band in self.bands])
+                * flux[band].unit
+            )
+            flux_err_arr = (
+                np.array([flux_err[band].value for band in self.bands])
+                * flux[band].unit
+            )
+            return flux_arr, flux_err_arr
+
+        if debug:
+            # Plot the region on the image in a band
+            fig, ax = plt.subplots()
+            ax.imshow(data, origin="lower", cmap="viridis", norm=LogNorm())
+
+            region.plot(ax=ax, edgecolor="red")
+            fig.suptitle(f"Flux in region {band}: {flux[band].to(u.uJy)}")
+            plt.savefig(
+                f"{resolved_galaxy_dir}/diagnostic_plots/{self.survey}_{self.galaxy_id}_region_photometry.png"
+            )
+
+        return flux, flux_err
+
+    def plot_photometry_from_region(
+        self,
+        region,
+        ax=None,
+        fig=None,
+        show=True,
+        override_psf_type=None,
+        facecolor="white",
+        flux_unit=u.ABmag,
+        wav_unit=u.micron,
+        color="region",
+    ):
+        from regions import (
+            PixCoord,
+            RectanglePixelRegion,
+            PolygonPixelRegion,
+            CirclePixelRegion,
+        )
+
+        if fig is None:
+            fig = plt.figure(
+                figsize=(6, 3), constrained_layout=True, facecolor=facecolor
+            )
+
+        if ax is None:
+            ax = fig.add_subplot(111)
+
+        if color == "region":
+            color = region.visual["color"]
+
+        flux, flux_err = self.get_photometry_from_region(
+            region, override_psf_type=override_psf_type
+        )
+
+        if type(color) == int:
+            color = "black"
+        if type(region) is PolygonPixelRegion:
+            marker = "x"
+        elif type(region) is CirclePixelRegion:
+            marker = "o"
+        elif type(region) is RectanglePixelRegion:
+            marker = "s"
+
+        self.get_filter_wavs()
+
+        for band in self.bands:
+            wav = self.filter_wavs[band]
+            if flux_unit != u.ABmag:
+                yerr = flux_err[band].to(
+                    flux_unit,
+                    equivalencies=u.spectral_density(self.filter_wavs[band]),
+                )
+            else:
+                fnu_jy = flux[band].to(
+                    u.uJy, equivalencies=u.spectral_density(wav)
+                )
+                fnu_jy_err = flux_err[band].to(
+                    u.uJy, equivalencies=u.spectral_density(wav)
+                )
+                inner = fnu_jy / (fnu_jy - fnu_jy_err)
+                err_up = 2.5 * np.log10(inner)
+                err_low = 2.5 * np.log10(1 + (fnu_jy_err / fnu_jy))
+                err_low = (
+                    err_low.value if type(err_low) is u.Quantity else err_low
+                )
+                err_up = err_up.value if type(err_up) is u.Quantity else err_up
+
+                yerr = [
+                    np.atleast_1d(np.abs(err_low)),
+                    np.atleast_1d(np.abs(err_up)),
+                ]
+
+            ax.errorbar(
+                wav.to(wav_unit),
+                flux[band]
+                .to(flux_unit, equivalencies=u.spectral_density(wav))
+                .value,
+                yerr=yerr,
+                color=color,
+                marker=marker,
+                markersize=10,
+            )
 
     def plot_bagpipes_sfh(
         self,
@@ -5863,6 +5997,208 @@ class ResolvedGalaxy:
             return path
 
         return gif
+
+    def fit_eazy_photometry(
+        self,
+        run_name,
+        fluxes,
+        flux_errs,
+        n_proc=4,
+        min_percentage_err=0.05,
+        template_name="fsps_larson",
+        template_dir="/nvme/scratch/work/tharvey/EAZY/inputs/scripts/",
+        meta_details=None,
+        save_tempfilt=True,
+        load_tempfilt=True,
+        save_tempfilt_path="internal",
+        tempfilt=None,
+    ):
+        import eazy
+        from .eazy.eazy_config import make_params, filter_codes
+
+        eazy_path = os.getenv("EAZYCODE", "")
+        if not os.path.exists(eazy_path):
+            raise ValueError(
+                "EAZYCODE environment variable not set or invalid"
+            )
+
+        if save_tempfilt_path == "internal":
+            save_tempfilt_path = os.path.join(
+                os.path.dirname(__file__), "eazy/tempfilt/"
+            )
+
+        if type(fluxes) == list:
+            fluxes = np.array(fluxes)
+        if type(flux_errs) == list:
+            flux_errs = np.array(flux_errs)
+
+        # Check that last dimension of fluxes and flux_errs is the same and equal to the number of bands
+        assert (
+            fluxes.shape[-1] == flux_errs.shape[-1]
+        ), "Fluxes and flux errors must have the same number of bands"
+        assert (
+            fluxes.shape[-1] == len(self.bands)
+        ), f"Fluxes and flux errors must have the same number of bands as the number of bands in the survey. Expected {len(self.bands)} bands, got {fluxes.shape[-1]} bands"
+
+        if type(fluxes) is u.Quantity:
+            unit = fluxes.unit
+        elif type(fluxes[0]) is u.Quantity:
+            unit = fluxes[0].unit
+        elif type(fluxes[0][0]) is u.Quantity:
+            unit = fluxes[0][0].unit
+        else:
+            print(fluxes, type(fluxes))
+            raise ValueError(
+                "Fluxes must be a Quantity object or a list of Quantity objects"
+            )
+
+        flux = np.atleast_2d(fluxes)
+        flux_err = np.atleast_2d(flux_errs)
+
+        # Create a temporary directory
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create EAZY files
+            # Make input catalogue - IDs - numer of bands - then Flux Error flux Error for each band. Column names should be 'F{filter_codes[band]', 'E{filter_codes[band]}' etc.
+
+            # Create a temporary catalogue
+            cat = Table()
+            cat["id"] = np.arange(len(flux))
+            for i, band in enumerate(self.bands):
+                cat[f"F{filter_codes[band]}"] = flux[:, i]
+                cat[f"E{filter_codes[band]}"] = flux_err[:, i]
+
+            cat_path = f"{tmpdir}/eazy_input.fits"
+
+            # make empty fake translate file
+            translate_file = f"{tmpdir}/translate.dat"
+            with open(translate_file, "w") as f:
+                f.write("")
+
+            cat.write(cat_path, overwrite=True)
+
+            params = make_params(
+                cat_path,
+                tmpdir,
+                template_name="fsps_larson",
+                template_file=None,
+                z_step=0.01,
+                z_min=0.01,
+                z_max=20,
+                fix_zspec=False,
+                cat_flux_unit=unit,
+                template_dir=template_dir,
+            )
+
+            if load_tempfilt:
+                if tempfilt is None:
+                    import pickle
+
+                    tempfilt_path = f"{save_tempfilt_path}/{self.survey}_{template_name}_tempfilt.pkl"
+                    if os.path.exists(tempfilt_path):
+                        with open(tempfilt_path, "rb") as f:
+                            tempfilt = pickle.load(f)
+                        print("Loading tempfilt from file:", tempfilt_path)
+                    print(tempfilt_path)
+                else:
+                    print("Loading tempfilt from data")
+
+            ez = eazy.photoz.PhotoZ(
+                param_file=None,
+                translate_file=translate_file,
+                zeropoint_file=None,
+                params=params,
+                load_prior=False,
+                load_products=False,
+                n_proc=n_proc,
+                tempfilt=tempfilt,
+            )
+
+            if save_tempfilt:
+                print(f"Saving tempfilt to {save_tempfilt_path}")
+                tempfilt = ez.tempfilt.tempfilt
+                if not os.path.exists(save_tempfilt_path):
+                    os.makedirs(save_tempfilt_path)
+
+                # pickle tempfilt
+                import pickle
+
+                with open(
+                    f"{save_tempfilt_path}/{self.survey}_{template_name}_tempfilt.pkl",
+                    "wb",
+                ) as f:
+                    pickle.dump(ez.tempfilt, f)
+
+            ez.fit_catalog(
+                n_proc=n_proc, get_best_fit=True, prior=False, beta_prior=False
+            )
+
+            return ez
+
+    def plot_eazy_fit(
+        self,
+        ez,
+        id,
+        ax_sed=None,
+        ax_pz=None,
+        fig=None,
+        show=True,
+        color="black",
+        lw=1,
+        zorder=5,
+        wav_units=u.um,
+        flux_units=u.ABmag,
+        label=None,
+    ):
+        if fig is None:
+            fig = plt.figure(
+                figsize=(6, 3), constrained_layout=True, facecolor="white"
+            )
+        if ax_sed is None:
+            ax = fig.add_subplot(111)
+
+        idx = np.where(ez.OBJID == id)[0][0]
+        if ax_pz is not None:
+            p_z = 10 ** ez.lnp[idx]
+            z = ez.zgrid
+            ax_pz.plot(z, p_z / np.max(p_z), color=color, lw=lw, zorder=zorder)
+
+        data = ez.show_fit(
+            id,
+            id_is_idx=False,
+            show_components=False,
+            show_prior=False,
+            logpz=False,
+            get_spec=True,
+            show_fnu=1,
+        )
+
+        id_phot = data["id"]
+        z_best = data["z"]
+        chi2 = data["chi2"]
+        flux_unit = data["flux_unit"]
+        wav_unit = data["wave_unit"]
+        model_lam = data["templz"] * wav_unit
+        model_flux = data["templf"] * flux_unit
+
+        model_flux = model_flux.to(
+            flux_units, equivalencies=u.spectral_density(model_lam)
+        )
+
+        if label is True:
+            label = (
+                f"Region ${id_phot} \ (z={z_best:.2f} \ \chi^2={chi2:.2f})$"
+            )
+        else:
+            label = ""
+
+        ax_sed.plot(
+            model_lam.to(wav_units),
+            model_flux,
+            color=color,
+            lw=lw,
+            zorder=zorder,
+            label=label,
+        )
 
     def plot_bagpipes_results(
         self,
@@ -9419,6 +9755,7 @@ def run_bagpipes_wrapper(
     overwrite=False,
     overwrite_internal=False,
     alert=False,
+    mpi_serial=False,
 ):
     # print('Doing', galaxy_id, resolved_dict['meta']['run_name'], overwrite, overwrite_internal)
     # return
@@ -9446,6 +9783,7 @@ def run_bagpipes_wrapper(
             resolved_dict,
             overwrite=overwrite,
             overwrite_internal=overwrite_internal,
+            mpi_serial=mpi_serial,
         )
 
         if resolved_dict["meta"]["fit_photometry"] in ["bin", "all"]:
