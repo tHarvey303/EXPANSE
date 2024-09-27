@@ -4911,6 +4911,7 @@ class ResolvedGalaxy:
         overwrite=False,
         overwrite_internal=False,
         mpi_serial=False,
+        use_mpi=True,
     ):
         # meta - run_name, use_bpass, redshift (override)
         assert (
@@ -5164,7 +5165,12 @@ class ResolvedGalaxy:
             print(fit_instructions)
             # Run this with MPI
 
-            fit_cat.fit(verbose=False, mpi_serial=mpi_serial, sampler=sampler)
+            fit_cat.fit(
+                verbose=False,
+                mpi_serial=mpi_serial,
+                sampler=sampler,
+                use_mpi=use_mpi,
+            )
 
         # Move files to the correct location
         for i in ["posterior"]:
@@ -9756,6 +9762,7 @@ def run_bagpipes_wrapper(
     overwrite_internal=False,
     alert=False,
     mpi_serial=False,
+    use_mpi=False,
 ):
     # print('Doing', galaxy_id, resolved_dict['meta']['run_name'], overwrite, overwrite_internal)
     # return
@@ -9784,6 +9791,7 @@ def run_bagpipes_wrapper(
             overwrite=overwrite,
             overwrite_internal=overwrite_internal,
             mpi_serial=mpi_serial,
+            use_mpi=use_mpi,
         )
 
         if resolved_dict["meta"]["fit_photometry"] in ["bin", "all"]:
