@@ -208,8 +208,9 @@ if __name__ == "__main__":
                 backend = "loky"
             elif computer == "singularity":
                 n_jobs = np.min([len(ids) + 1, n_jobs])
-                backend = "multiprocessing"
-                backend = "threading"
+                # backend = "multiprocessing"
+                # backend = "threading"
+                backend = "loky"
 
         if n_jobs == 1:
             print("Running in serial.")
@@ -222,16 +223,18 @@ if __name__ == "__main__":
             for i in range(len(ids)):
                 print(run_dicts[i])
 
-            Parallel(n_jobs=n_jobs)(
-                delayed(run_bagpipes_wrapper)(
-                    galaxy_id,
-                    resolved_dict,
-                    cutout_size=cutout_size,
-                    h5_folder=h5_folder,
-                    alert=True,
+            with parallel_config(n_jobs=n_jobs, backend=backend):
+                Parallel()(
+                    delayed(run_bagpipes_wrapper)(
+                        galaxy_id,
+                        resolved_dict,
+                        cutout_size=cutout_size,
+                        h5_folder=h5_folder,
+                        alert=True,
+                        use_mpi=False,
+                    )
+                    for galaxy_id, resolved_dict in zip(ids, run_dicts)
                 )
-                for galaxy_id, resolved_dict in zip(ids, run_dicts)
-            )
 
     # Test the Galaxy class
     # galaxy = ResolvedGalaxy.init_from_galfind(645, 'NGDEEP2', 'v11', excl_bands = ['F435W', 'F775W', 'F850LP'])
