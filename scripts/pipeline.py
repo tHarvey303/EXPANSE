@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
 from astropy.table import Column, QTable, Table, vstack
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel_config
 from tqdm import tqdm
 
 
@@ -38,6 +38,9 @@ try:
     rank = MPI.COMM_WORLD.Get_rank()
     size = MPI.COMM_WORLD.Get_size()
     from mpi4py.futures import MPIPoolExecutor
+
+    if size > 1:
+        print('Running with mpirun/mpiexec detected.')
 
 except ImportError:
     rank = 0
@@ -62,7 +65,7 @@ else:
 resolved_galaxy_dir = "../galaxies/"
 
 initial_load = False
-n_jobs = 10
+n_jobs = 1
 # Set to True if you want to load the data from the catalogue
 just_bagpipes_parallel = True
 
@@ -91,7 +94,7 @@ if __name__ == "__main__":
 
     cat = None
 
-    if not just_bagpipes_parallel:
+    if not just_bagpipes_parallel and n_jobs > 1:
         galaxies = ResolvedGalaxy.init(
             list(ids),
             "JOF_psfmatched",
@@ -198,19 +201,30 @@ if __name__ == "__main__":
         dpl_dicts,
         lognorm_dicts,
     ]:
-        size = 1
-        if size >= 2:
-            # This option for running by with mpirun/mpiexec
-            n_jobs = 6
+        
+        if size > 1:
+            for galaxy_id, resolved_dict in zip(ids, run_dicts):
+                # This option for running by with mpirun/mpiexec
+                run_bagpipes_wrapper(
+                            galaxy_id,
+                            resolved_dict,
+                            cutout_size=cutout_size,
+                            h5_folder=h5_folder,
+                            alert=True,
+                            use_mpi=True,
+                            update_h5 = False)
+    
+            
+
         else:
             if computer == "morgan":
                 n_jobs = n_jobs
                 backend = "loky"
             elif computer == "singularity":
                 n_jobs = np.min([len(ids) + 1, n_jobs])
-                # backend = "multiprocessing"
-                # backend = "threading"
-                backend = "loky"
+                backend = "multiprocessing"
+                #backend = "threading"
+                #backend = "loky"
 
         if n_jobs == 1:
             print("Running in serial.")
