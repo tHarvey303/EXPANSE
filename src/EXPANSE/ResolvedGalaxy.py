@@ -9781,7 +9781,7 @@ def run_bagpipes_wrapper(
                 mock_version=version,
                 cutout_size=cutout_size,
                 h5_folder=h5_folder,
-                update_h5 = update_h5
+                save_out = update_h5
             )
         else:
             galaxy = ResolvedGalaxy.init(
@@ -9790,7 +9790,7 @@ def run_bagpipes_wrapper(
                 version,
                 cutout_size=cutout_size,
                 h5_folder=h5_folder,
-                update_h5 = update_h5,
+                save_out = update_h5,
             )
 
         # Run bagpipes
