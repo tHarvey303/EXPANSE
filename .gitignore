@@ -29,6 +29,8 @@ pregrids
 # If not tracked by git, add to .gitignore
 *.tar.gz
 *.wsl
+galaxies/eazy_outputs/*
+IFU_proposal*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

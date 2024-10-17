@@ -91,6 +91,7 @@ dependencies = [
   "photutils",
   "tqdm",
   "requests",
+  "pandas",
 ]
 
 # Optional dependencies for specific use cases
@@ -149,7 +150,7 @@ viewer = [
 
 [project.scripts]
 expanse-viewer = "EXPANSE:expanse_viewer"
-expanser-viewer-class = "EXPANSE:expanse_viewer_class"
+expanse-viewer-class = "EXPANSE:expanse_viewer_class"
 
 
 # Set up the build system

@@ -325,6 +325,9 @@ class PipesFit:
             os.makedirs(f"{pipes_path}/plots/plot_temp/")
 
         temp_file = Path(f"{pipes_path}/posterior/plot_temp/{galaxy_id}.h5")
+
+        print(f"temp, {pipes_path}/posterior/plot_temp/{galaxy_id}.h5")
+
         shutil.copy(path, temp_file)
         out_subdir = temp_file.relative_to(f"{pipes_path}/posterior/").parent
 

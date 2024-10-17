@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
 from astropy.table import Column, QTable, Table, vstack
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel_config
 from tqdm import tqdm
 
 
@@ -59,22 +59,29 @@ else:
     computer = "unknown"
 
 
-resolved_galaxy_dir = "../galaxies/"
+resolved_galaxy_dir = os.path.join(
+    os.path.dirname(os.path.dirname(file_path)), "galaxies/"
+)
 
-initial_load = False
-n_jobs = 10
+
+initial_load = True
+filter_single_bin = True
+n_jobs = 2
 # Set to True if you want to load the data from the catalogue
-just_bagpipes_parallel = True
+just_bagpipes_parallel = False
 
 if __name__ == "__main__":
     if computer == "morgan":
-        catalog_path_selected = "/nvme/scratch/work/tharvey/EXPANSE/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected.fits"
+        catalog_path_selected = "/nvme/scratch/work/tharvey/EXPANSE/catalogs/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total_selected_v2.fits"
         cat_selected = Table.read(catalog_path_selected)
         ids = cat_selected["NUMBER"]
         cutout_size = cat_selected["CUTOUT_SIZE"]
         ids = ids  # For testing
-        overwrite = False
+        overwrite = True
         h5_folder = resolved_galaxy_dir
+
+        print("Resolved Galaxy Dir", resolved_galaxy_dir)
+
     elif computer == "singularity":
         overwrite = False
         h5_folder = "/mnt/galaxies/"
@@ -85,7 +92,8 @@ if __name__ == "__main__":
             if "mock" not in f and "temp" not in f
         ]
         # remove
-        cutout_size = None  # Not used when loading from h5
+        cutout_size = [None] * len(ids)
+        # Not used when loading from h5
 
     # Should speed it up?
 
@@ -100,25 +108,35 @@ if __name__ == "__main__":
             cutout_size=cutout_size,
             h5_folder=h5_folder,
         )
+        # Do again to load from h5
+        galaxies = ResolvedGalaxy.init(
+            list(ids),
+            "JOF_psfmatched",
+            "v11",
+            already_psf_matched=True,
+            cutout_size=cutout_size,
+            h5_folder=h5_folder,
+        )
 
     num_of_bins = 0
     num_of_single_bin = 0
+    ids_single = []
     if rank == 0 and initial_load:
         for posi, galaxy in enumerate(galaxies):
             # Add original imaging back
             # print('Adding original imaging.')
 
             cat = galaxy.add_original_data(
-                cat=cat, return_cat=True, overwrite=overwrite, crop_by=None
+                cat=cat, return_cat=True, overwrite=False, crop_by=None
             )
             # Add total fluxes
             galaxy.add_flux_aper_total(
                 catalogue_path="/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v11/ACS_WFC+NIRCam/JOF_psfmatched/JOF_psfmatched_MASTER_Sel-F277W+F356W+F444W_v11_total.fits",
-                overwrite=True,
+                overwrite=False,
             )
 
             # Add Detection data
-            galaxy.add_detection_data(overwrite=overwrite)
+            galaxy.add_detection_data(overwrite=False)
 
             # Plot segmentation stamps
             # fig = galaxy.plot_seg_stamps()
@@ -133,7 +151,7 @@ if __name__ == "__main__":
                 # fig = galaxy.plot_gal_region()
                 # fig.savefig(f'{h5_folder}/diagnostic_plots/{galaxy.galaxy_id}_gal_region.png', dpi=300, bbox_inches='tight')
                 # plt.close()
-            if galaxy.pixedfit_map is None or overwrite:
+            if getattr(galaxy, "pixedfit_map", None) is None or overwrite:
                 galaxy.pixedfit_binning(overwrite=overwrite)
 
             if galaxy.photometry_table in [None, {}] or overwrite:
@@ -154,6 +172,7 @@ if __name__ == "__main__":
 
             nbins = galaxy.get_number_of_bins()
             if nbins == 1:
+                ids_single.append(galaxy.galaxy_id)
                 num_of_single_bin += 1
 
             num_of_bins += nbins
@@ -161,6 +180,13 @@ if __name__ == "__main__":
         print(f"Total number of bins to fit: {num_of_bins}")
         print(f"Number of galaxies with only one bin: {num_of_single_bin}")
         # Run Bagpipes in parallel
+
+    if filter_single_bin:
+        print(f"Total number of galaxies to fit: {len(ids)}")
+        print(f"Filtering out {num_of_single_bin} galaxies with only one bin.")
+        print(ids_single)
+        ids = [i for i in ids if i not in ids_single]
+        print(f"New number of galaxies to fit: {len(ids)}")
 
     from EXPANSE.bagpipes.pipes_models import (
         continuity_dict,
@@ -220,8 +246,8 @@ if __name__ == "__main__":
                 galaxies[i].run_bagpipes(run_dicts[i])
         else:
             print(f"Using {n_jobs} cores.")
-            for i in range(len(ids)):
-                print(run_dicts[i])
+            # for i in range(len(ids)):
+            # print(run_dicts[i])
 
             with parallel_config(n_jobs=n_jobs, backend=backend):
                 Parallel()(
@@ -230,10 +256,12 @@ if __name__ == "__main__":
                         resolved_dict,
                         cutout_size=cutout_size,
                         h5_folder=h5_folder,
-                        alert=True,
+                        alert=False,
                         use_mpi=False,
                     )
-                    for galaxy_id, resolved_dict in zip(ids, run_dicts)
+                    for galaxy_id, resolved_dict, cutout_size in zip(
+                        ids, run_dicts, cutout_size
+                    )
                 )
 
     # Test the Galaxy class

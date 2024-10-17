@@ -11,6 +11,8 @@ from photutils.aperture import EllipticalAperture, aperture_photometry
 from astropy.wcs import WCS
 from astropy.io import fits
 import glob
+from matplotlib.patches import Arrow, FancyArrow
+from astropy.coordinates import SkyCoord
 
 
 def update_mpl(tex_on=True):
@@ -853,3 +855,164 @@ class FieldInfo:
         self.seg_paths = {
             band.band_name: band.seg_path for band in band_info_list
         }
+
+
+def compass(
+    ra,
+    dec,
+    wcs,
+    axis,
+    arrow_length=0.5 * u.arcsec,
+    x_ax="ra",
+    ang_text=False,
+    arrow_width=200,
+    arrow_color="black",
+    text_color="black",
+    fontsize="large",
+    return_ang=False,
+    pix_scale=0.03 * u.arcsec,
+    compass_text_scale_factor=1.15,
+):
+    def calculate_arrow_vectors(angle_radians, length):
+        dx = length * np.sin(angle_radians)
+        dy = length * np.cos(angle_radians)
+        return dx, dy
+
+    xlim = axis.get_xlim()
+    ylim = axis.get_ylim()
+    origin_coord = SkyCoord(ra, dec, unit=u.deg)
+    bottom_coord = wcs.wcs_pix2world(xlim[0], ylim[0], 1)
+    top_coord = wcs.wcs_pix2world(xlim[1], ylim[1], 1)
+
+    size_x = abs(bottom_coord[0] - top_coord[0])
+    size_y = abs(bottom_coord[1] - top_coord[1])
+    north_coord = SkyCoord(ra, dec + size_y, unit=u.deg)
+    east_coord = SkyCoord(ra + size_x, dec, unit=u.deg)
+
+    origin_coord_pix = wcs.wcs_world2pix(
+        origin_coord.ra.degree, origin_coord.dec.degree, 1
+    )
+    north_coord_pix = wcs.wcs_world2pix(
+        north_coord.ra.degree, north_coord.dec.degree, 1
+    )
+    east_coord_pix = wcs.wcs_world2pix(
+        east_coord.ra.degree, east_coord.dec.degree, 1
+    )
+
+    if x_ax == "ra":
+        ang = np.arctan2(
+            north_coord_pix[0] - origin_coord_pix[0],
+            north_coord_pix[1] - origin_coord_pix[1],
+        )
+    elif x_ax == "dec":
+        ang = np.arctan2(
+            north_coord_pix[1] - origin_coord_pix[1],
+            north_coord_pix[0] - origin_coord_pix[0],
+        )
+
+    if return_ang:
+        return np.degrees(ang)
+
+    arrow_length = (
+        arrow_length.to(u.arcsec).value / pix_scale.to(u.arcsec).value
+    )
+
+    dx_north, dy_north = calculate_arrow_vectors(ang, arrow_length)
+
+    # Calculate east vector (perpendicu
+    #
+    # lar to north)
+    east_angle = ang - np.pi / 2
+
+    dx_east, dy_east = calculate_arrow_vectors(east_angle, arrow_length)
+
+    # Check if east is within ±π/2 of north and flip if necessary
+
+    offset = 1.3 * (arrow_width / 2)  # Half the arrow width
+    offset_angle = ang - np.pi / 4  # 45 degrees between north and east
+    dx_offset, dy_offset = calculate_arrow_vectors(offset_angle, offset)
+
+    north = FancyArrow(
+        origin_coord_pix[0],
+        origin_coord_pix[1],
+        dx_north,
+        dy_north,
+        color=arrow_color,
+        width=arrow_width,
+        length_includes_head=True,
+        head_width=2.2 * arrow_width,
+        head_length=1.3 * 2.2 * arrow_width,
+    )
+
+    east = FancyArrow(
+        origin_coord_pix[0] + dx_offset,
+        origin_coord_pix[1] + dy_offset,
+        dx_east,
+        dy_east,
+        color=arrow_color,
+        width=arrow_width,
+        length_includes_head=True,
+        head_width=2.2 * arrow_width,
+        head_length=1.3 * 2.2 * arrow_width,
+    )
+
+    axis.add_patch(north)
+    axis.add_patch(east)
+
+    if x_ax == "ra":
+        north_label, east_label = "N", "E"
+    elif x_ax == "dec":
+        north_label, east_label = "E", "N"
+
+    north_text_coord = (
+        origin_coord_pix[0] + compass_text_scale_factor * dx_north,
+        origin_coord_pix[1] + compass_text_scale_factor * dy_north,
+    )
+    east_text_coord = (
+        origin_coord_pix[0]
+        + compass_text_scale_factor * (dx_east + dx_offset),
+        origin_coord_pix[1]
+        + compass_text_scale_factor * (dy_east + dx_offset),
+    )
+    axis.text(
+        *north_text_coord,
+        north_label,
+        color=text_color,
+        fontsize=fontsize,
+        ha="center",
+        va="center",
+        fontweight="bold",
+    )
+    axis.text(
+        *east_text_coord,
+        east_label,
+        color=text_color,
+        fontsize=fontsize,
+        ha="center",
+        va="center",
+        fontweight="bold",
+    )
+
+
+# Example usage
+"""
+fig, ax = plt.subplots()
+wcs_compass(ra, dec, wcs, ax)
+plt.show()
+"""
+# Example usage
+"""
+fig, ax = plt.subplots()
+wcs_compass(ra, dec, wcs, ax)
+plt.show()
+"""
+# axis.text(north_coord_pix[0] + scale_x_text*np.cos((90-ang)*np.pi/180), north_coord_pix[1]+scale_x_text * np.sin((90-ang)*np.pi/180), x_label, color=text_color, fontsize=fontsize, ha='center', va='center')# fontweight="bold")
+# axis.text(east_coord_pix[0] - scale_y_text * np.cos(ang*np.pi/180), east_coord_pix[1] + scale_y_text * np.sin(ang*np.pi/180), y_label, color=text_color, fontsize=fontsize, ha='center', va='center')# fontweight="bold")
+# north_angle = wcs.wcs.cd[1,1]
+# east_angle = wcs.wcs.cd[0,0]
+
+# print(height_y)
+# print(east_coord_pix[0]-base_coord_pix[0])
+
+# size_x_pix = abs(xlim[0]-xlim[1])
+# size_y_pix = abs(ylim[0]-ylim[1])

@@ -6,6 +6,7 @@ import numpy as np
 from io import BytesIO
 import h5py as h5
 from astropy.io import fits
+import functools
 from astropy.wcs import WCS
 import click
 import copy
@@ -17,9 +18,11 @@ import xarray as xr
 from bokeh.models import PrintfTickFormatter, Label
 import matplotlib.cm as cm
 from holoviews import opts, streams
+from matplotlib.colors import Normalize
 
 hv.extension("bokeh", logo=False)
 pn.extension("mathjax")
+pn.extension("tabulator")
 
 MAX_SIZE_MB = 150
 ACCENT = "goldenrod"
@@ -30,12 +33,87 @@ galaxies_dir = os.path.join(
     "galaxies",
 )
 
+import param
+
+
+def custom_depends(*dependencies, watch=False):
+    def decorator(func):
+        @param.depends(*dependencies, watch=watch)
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            triggered = [
+                dep
+                for dep in dependencies
+                if self.param[dep.split(".")[-1]].changed
+            ]
+            return func(self, triggered=triggered, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+import functools
+import inspect
+import copy
+
+
+def check_dependencies(cache_attr="_cache"):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # Get the current function name
+            current_function = func.__name__
+
+            # Get the dependencies for this function
+            dependencies = [
+                o.name
+                for o in self.param.method_dependencies(current_function)
+            ]
+            print(
+                f"Current function: {current_function}, Dependencies: {dependencies}"
+            )
+
+            # Get the current values of the dependencies
+            current_args = [
+                copy.deepcopy(getattr(self, dep)) for dep in dependencies
+            ]
+
+            # Check if we have a cache for this function
+            if not hasattr(self, cache_attr):
+                setattr(self, cache_attr, {})
+            cache = getattr(self, cache_attr)
+
+            if current_function not in cache:
+                print("First time running")
+                result = func(self, *args, **kwargs)
+                cache[current_function] = {
+                    "args": current_args,
+                    "result": result,
+                }
+                return result
+
+            # Check if any of the arguments have changed
+            if current_args != cache[current_function]["args"]:
+                print("Arguments have changed")
+                result = func(self, *args, **kwargs)
+                cache[current_function]["args"] = current_args
+                cache[current_function]["result"] = result
+                return result
+            else:
+                print("Arguments have not changed")
+                return cache[current_function]["result"]
+
+        return wrapper
+
+    return decorator
+
 
 class GalaxyTab(param.Parameterized):
     # Parameters for SED results tab
     galaxy_id = param.String()
     survey = param.String()
-    resolved_galaxy = param.Parameter()
+    # resolved_galaxy = param.Parameter()
     active_tab = param.Integer(default=0)
     which_map = param.Selector(
         default="pixedfit", objects=["pixedfit", "voronoi", "pixel-by-pixel"]
@@ -58,13 +136,13 @@ class GalaxyTab(param.Parameterized):
         default="PSF Matched", objects=["PSF Matched", "Original"]
     )
     choose_show_band = param.Selector(default="F444W")
-    other_bagpipes_properties = param.Selector(default="constant:age_max")
+    other_bagpipes_properties = param.Selector(default="mass_weighted_age")
     norm = param.Selector(default="linear", objects=["linear", "log"])
     type_select = param.Selector(default="median", objects=["median", "gif"])
     pdf_param_property = param.Selector(
         default="stellar_mass", objects=["stellar_mass", "sfr"]
     )
-    upscale_select = param.Boolean(default=False)
+    upscale_select = param.Boolean(default=True)
 
     # Parameters for SED accordian
     sed_log_x = param.Boolean(
@@ -108,6 +186,8 @@ class GalaxyTab(param.Parameterized):
         default="EAZY-py", objects=["EAZY-py", "Dense Basis"]
     )
 
+    interactive_aperture_radius = param.Number(default=5.33, bounds=(1, 40))
+
     TOTAL_FIT_COLORS = {
         "TOTAL_BIN": "springgreen",
         "MAG_AUTO": "blue",
@@ -118,6 +198,7 @@ class GalaxyTab(param.Parameterized):
         "RESOLVED": "red",
     }
 
+    @param.depends()
     def __init__(self, resolved_galaxy, facecolor="#f7f7f7", **params):
         galaxy_id = resolved_galaxy.galaxy_id
         survey = resolved_galaxy.survey
@@ -125,15 +206,17 @@ class GalaxyTab(param.Parameterized):
         super().__init__(
             galaxy_id=galaxy_id,
             survey=survey,
-            resolved_galaxy=resolved_galaxy,
             **params,
         )
+
+        self.resolved_galaxy = resolved_galaxy
 
         self.facecolor = facecolor
         self.setup_widgets()
         self.setup_streams()
         self.setup_tabs()
 
+    @param.depends()
     def setup_widgets(self):
         self.which_map_widget = pn.widgets.RadioButtonGroup(
             name="Pixel Binning",
@@ -241,7 +324,7 @@ class GalaxyTab(param.Parameterized):
 
         self.other_bagpipes_properties_widget = pn.widgets.Select(
             name="SED Properties Map",
-            options=["constant:age_max"],
+            options=["mass_weighted_age"],
             value=self.other_bagpipes_properties,
         )
         self.other_bagpipes_properties_widget.link(
@@ -389,8 +472,30 @@ class GalaxyTab(param.Parameterized):
 
         self.interactive_band_widget.link(self, value="interactive_band")
 
+        self.save_shape_photometry_button = pn.widgets.Button(
+            name="Save regions", button_type="success"
+        )
+
         self.clear_interactive_button = pn.widgets.Button(
             name="Clear Shapes", button_type="danger"
+        )
+
+        self.interactive_poly = hv.Polygons([])
+        self.interactive_boxes = hv.Rectangles([])
+        self.interactive_points = hv.Points([])
+
+        self.interactive_aperture_radius_widget = (
+            pn.widgets.EditableFloatSlider(
+                name="Aperture Radius (pixels)",
+                start=1,
+                end=40,
+                value=5.33,
+                step=0.01,
+            )
+        )
+
+        self.interactive_aperture_radius_widget.link(
+            self, value="interactive_aperture_radius"
         )
 
     @param.depends("point_selector.point")
@@ -418,7 +523,7 @@ class GalaxyTab(param.Parameterized):
             self.multi_choice_bins_widget.value = self.multi_choice_bins
 
     @param.depends(
-        "resolved_galaxy",
+        # "resolved_galaxy",
         "which_map",
         "which_run_resolved",
         "which_sed_fitter",
@@ -426,6 +531,7 @@ class GalaxyTab(param.Parameterized):
         "upscale_select",
         "type_select",
     )
+    @check_dependencies()
     def plot_bagpipes_results(
         self, parameters=["stellar_mass", "sfr"], max_on_row=3
     ):
@@ -457,25 +563,71 @@ class GalaxyTab(param.Parameterized):
 
         return sed_results
 
+    @param.depends()
+    def plot_bagpipes_table(self):
+        table_pd = self.resolved_galaxy.compose_bagpipes_pandas_table()
+
+        from bokeh.models.widgets.tables import (
+            NumberFormatter,
+            HTMLTemplateFormatter,
+        )
+        # Format floats to 3 significant figures
+        # bokeh_formatters = {
+        # Render columns with tags as HTML
+
+        # Write a custom HTML template which displays upper and lower errors (given the other columns for the 16th and 84th percentiles)
+
+        formatter = HTMLTemplateFormatter(template="<div><%= value %></div>")
+
+        error_formatter = (
+            lambda value,
+            err_l,
+            err_u: f"<div><%= value %><sup>+<%= {err_u} %></sup><sub>-<%= {err_l} %></sub></div>"
+        )
+
+        bokeh_formatters = {}
+
+        # get table column names
+        columns = table_pd.columns
+
+        ignore_cols = []
+        html_cols = []
+        """
+        for col in columns:
+            if col.endswith("err"):
+                ignore_cols.append(col)
+                if col[:-4] not in html_cols:
+                    
+                    html_cols.append(col[:-4])
+        """
+
+        for col in columns[2:]:  # html_cols:
+            bokeh_formatters[col] = formatter
+
+        table = pn.widgets.Tabulator(
+            table_pd,
+            pagination="remote",
+            page_size=10,
+            height=400,
+            theme="bootstrap",
+            layout="fit_data_table",
+            hidden_columns=ignore_cols,
+            show_index=False,
+            formatters=bokeh_formatters,
+            selectable=False,
+        )
+
+        return table
+
+    @param.depends()
     def create_sed_results_tab(self):
         sed_results_grid = pn.Column(sizing_mode="stretch_both")
-
-        bin_map = pn.bind(
-            self.plot_bins,
-            self.param.which_map,
-            "nipy_spectral_r",
-            self.param.scale_alpha,
-            self.param.show_galaxy,
-            self.param.show_kron,
-            self.param.psf_mode,
-            self.param.choose_show_band,
-        )
 
         # Add the update_selected_bins method to be called when the bin map is clicked
         # bin_map = pn.panel(bin_map).add_periodic_callback(self.update_selected_bins, period=100)
 
         top_row = pn.Row(
-            bin_map,
+            self.plot_bins,
             pn.param.ParamMethod(self.plot_sed, loading_indicator=True),
             sizing_mode="stretch_width",
             height=350,
@@ -509,28 +661,35 @@ class GalaxyTab(param.Parameterized):
         )
 
         even_lower = pn.Row(
-            pdf_controls,
-            self.plot_bagpipes_pdf,
+            pn.Column(pdf_controls, self.plot_bagpipes_pdf, max_height=400),
+            self.plot_bagpipes_table,
             # sizing_mode='stretch_both'
             max_height=400,
-            max_width=400,
+            max_width=1000,
         )
 
         sed_results_grid.extend([top_row, mid_row, bot_row, even_lower])
 
         return sed_results_grid
 
+    @param.depends()
     def update_active_tab(self, event):
         self.active_tab = event.new
         if hasattr(self, "app"):
+            print("Updating sidebar")
             self.app.update_sidebar()
+        else:
+            print("No app attribute")
+            print("Warning: No app attribute found. Cannot update sidebar.")
 
+    @param.depends()
     def setup_streams(self):
         self.point_selector = hv.streams.Tap(
             transient=True, source=hv.Image(([]))
         )
         # self.point_selector = hv.streams.PointSelector(
 
+    @param.depends()
     def setup_tabs(self):
         self.cutouts_tab = pn.param.ParamMethod(
             self.create_cutouts_tab, loading_indicator=True, lazy=True
@@ -565,12 +724,13 @@ class GalaxyTab(param.Parameterized):
 
         self.info_tabs.param.watch(self.update_active_tab, "active")
 
+    @param.depends()
     def create_cutouts_tab(self):
         cutout_grid = pn.Column(scroll=True, sizing_mode="stretch_width")
 
         # Cutouts row
         cutouts_row = pn.Row(
-            pn.bind(self.plot_cutouts, self.param.psf_mode, "star_stack"),
+            self.plot_cutouts,
             sizing_mode="stretch_width",
             scroll=True,
         )
@@ -604,7 +764,8 @@ class GalaxyTab(param.Parameterized):
 
         return cutout_grid
 
-    @param.depends("resolved_galaxy", "band_select")
+    @param.depends("band_select")
+    @check_dependencies()
     def do_snr_plot(self):
         fig = self.resolved_galaxy.plot_snr_map(
             band=self.band_select, facecolor=self.facecolor
@@ -614,7 +775,8 @@ class GalaxyTab(param.Parameterized):
             fig, dpi=144, tight=True, format="svg", width=300, height=300
         )
 
-    @param.depends("resolved_galaxy", "other_plot_select")
+    @param.depends("other_plot_select")
+    @check_dependencies()
     def do_other_plot(self):
         try:
             if self.other_plot_select == "Galaxy Region":
@@ -642,16 +804,20 @@ class GalaxyTab(param.Parameterized):
         )
 
     @param.depends(
-        "resolved_galaxy",
+        # "resolved_galaxy",
         "which_map",
         "other_bagpipes_properties",
         "which_run_resolved",
         "norm",
         "total_fit_options",
-        "upscale_select",
         "type_select",
     )
-    def other_bagpipes_results_func(self):
+    @check_dependencies()
+    def other_bagpipes_results_func(self, triggered=None):
+        if triggered is not None:
+            # print function name and trigger
+            print("other_bagpipes_results_func triggered by", triggered)
+
         param_property = self.other_bagpipes_properties
         p_run_name = self.which_run_resolved
         norm_param = self.norm
@@ -734,6 +900,7 @@ class GalaxyTab(param.Parameterized):
         else:
             return pn.pane.Markdown("No Bagpipes results found.")
 
+    @param.depends()
     def create_photometric_properties_tab(self):
         phot_prop_page = pn.Column(
             loading=True,
@@ -750,7 +917,7 @@ class GalaxyTab(param.Parameterized):
             options=plt.colormaps(), value="viridis", width=100
         )
 
-        plot1 = pn.param.ParamMethod(
+        plot1 = pn.param.ParamFunction(
             pn.bind(
                 self.plot_phot_property,
                 drop_down1.param.value,
@@ -768,6 +935,7 @@ class GalaxyTab(param.Parameterized):
 
         return phot_prop_page
 
+    @param.depends()
     def create_interactive_tab(self):
         interactive_plot = self.create_interactive_plot()
         controls = pn.Column(
@@ -800,9 +968,16 @@ class GalaxyTab(param.Parameterized):
             self.photometry_from_shapes
         )
 
-        self.clear_interactive_button.on_click(
-            lambda event: setattr(self, "drawn_shapes", {})
-        )
+        def clear_shapes(event):
+            if event:
+                self.drawn_shapes = {}
+                self.interactive_poly = hv.Polygons([])
+                self.interactive_boxes = hv.Rectangles([])
+                self.interactive_points = hv.Points([])
+
+        self.clear_interactive_button.on_click(clear_shapes)
+
+        self.save_shape_photometry_button.on_click(self.photometry_from_shapes)
 
         self.interactive_sed_fitting_button.on_click(
             self.photometry_from_shapes
@@ -842,16 +1017,27 @@ class GalaxyTab(param.Parameterized):
             image_data, bounds=(0, 0, image_data.shape[1], image_data.shape[0])
         )
 
-        poly = hv.Polygons([])
-        boxes = hv.Rectangles([])
-        points = hv.Points([])
+        poly = self.interactive_poly
+        boxes = self.interactive_boxes
+        points = self.interactive_points
+
         # paths = hv.Path([])
 
+        lower, upper = np.nanpercentile(image_data, [5, 99])
+        if lower <= 0:
+            lower = upper / 100
+
         image.opts(
-            aspect="equal", xaxis=None, yaxis=None, width=500, height=500
+            aspect="equal",
+            xaxis=None,
+            yaxis=None,
+            width=500,
+            height=500,
+            cnorm="log",
+            clim=(lower, upper),
         )
 
-        poly_colors_cmap = cm.get_cmap("nipy_spectral_r")
+        poly_colors_cmap = cm.get_cmap("nipy_spectral")
         # draw 30 colors from the viridis colormap
         poly_colors = [poly_colors_cmap(i) for i in np.linspace(0, 1, 10)]
 
@@ -881,7 +1067,7 @@ class GalaxyTab(param.Parameterized):
             source=boxes, num_objects=10, styles={"fill_color": box_colors}
         )
 
-        points_colors_cmap = cm.get_cmap("inferno")
+        points_colors_cmap = cm.get_cmap("hsv")
         # draw 30 colors from the inferno colormap
         points_colors = [points_colors_cmap(i) for i in np.linspace(0, 1, 10)]
 
@@ -923,67 +1109,241 @@ class GalaxyTab(param.Parameterized):
 
         return self.interactive_plot
 
+    @param.depends("which_interactive_sed_fitter")
+    def interactive_sed_fitting_options(self):
+        if self.which_interactive_sed_fitter == "EAZY-py":
+            # options - min percentage error,
+            # redshift range
+            # template(s)
+
+            # Make a accordion with the options
+            # Each option should be a widget
+            # The widget should be linked to the appropriate parameter
+
+            # The accordion should be returned
+            # The accordion should be added to the interactive tab
+
+            # The accordion should be updated when the which_interactive_sed_fitter changes
+
+            min_percent_error_widget = pn.widgets.FloatInput(
+                name="Min Percent Error", value=10, step=1, start=0, end=100
+            )
+            min_percent_error_widget.link(self, value="min_percent_error")
+
+            redshift_range_widget = pn.widgets.RangeSlider(
+                name="Redshift Range", start=0, end=10, value=(0, 25), step=0.1
+            )
+
+            redshift_range_widget.link(self, value="redshift_range")
+
+            template_widget = pn.widgets.Select(
+                name="Template",
+                options=[
+                    "FSPS",
+                    "FSPS+Larson",
+                    "BC03",
+                    "JADES",
+                    "ARES",
+                ],
+                value="BC03",
+            )
+
+    @param.depends()
     def photometry_from_shapes(self, event, flux_unit=u.ABmag):
-        # Label the drawn shapes on the bokeh plo
+        # Label the drawn shapes on the bokeh plot
 
         if event:
             regions, region_labels = self.convert_shapes_to_regions()
+            regions, region_labels = self.convert_shapes_to_regions()
             num_regions = len(regions)
+
+            # check if same event and if regions are the same
+            if (
+                hasattr(self, "int_event")
+                and self.int_event == event
+                and hasattr(self, "int_regions")
+                and regions == self.int_regions
+            ):
+                print("Regions are the same")
+                return
+
+            self.int_regions = regions
+            self.int_event = event
 
             for reg in region_labels:
                 # label = Label(x=reg['x'], y=reg['y'], text=reg['name'], text_color=reg['color'] if type(reg['color']) == str else 'black')
 
                 text = hv.Text(
-                    x=reg["x"], y=reg["y"], text=reg["name"]
+                    x=reg["x"],
+                    y=reg["y"] - 1.4 * self.interactive_aperture_radius,
+                    text=reg["name"],
                 )  # color=reg['color'] if type(reg['color']) == str else 'black')
                 # Draw the text on the plot without removing the drawn shapes
+                # white text
+                text.opts(color="white")
                 self.interactive_plot.object = (
                     self.interactive_plot.object * text
                 )
 
+                # Add
+
             # Readd the drawn shapes to the plot
+
             for key in self.drawn_shapes:
-                for shape in self.drawn_shapes[key]:
-                    self.interactive_plot.object = (
-                        self.interactive_plot.object * shape
+                if key == "boxes":
+                    color = self.drawn_shapes[key]["fill_color"]
+
+                    color = [i if type(i) == str else "black" for i in color]
+
+                    shape = hv.Rectangles(
+                        self.drawn_shapes[key], vdims=["fill_color"]
+                    ).opts(
+                        alpha=0.3,
+                        color="fill_color",
                     )
+                    self.interactive_boxes = shape
+
+                elif key == "polygons":
+                    # color = self.drawn_shapes[key]['fill_color']
+                    # color = [i if type(i) == str else 'black' for i in color]
+                    # print(self.drawn_shapes[key])
+                    xs = self.drawn_shapes[key]["xs"]
+                    ys = self.drawn_shapes[key]["ys"]
+                    colors = self.drawn_shapes[key]["fill_color"]
+                    list_of_polys = []
+                    for i in range(len(xs)):
+                        poly = {
+                            "x": xs[i],
+                            "y": ys[i],
+                            "fill_color": colors[i],
+                        }
+                        list_of_polys.append(poly)
+
+                    shape = hv.Polygons(
+                        list_of_polys, vdims=["fill_color"]
+                    ).opts(
+                        alpha=0.3,
+                        color="fill_color",
+                    )
+                    self.interactive_poly = shape
+
+                elif key == "points":
+                    # Draw ellipses for the points
+                    for j, (posx, posy, color) in enumerate(
+                        zip(
+                            self.drawn_shapes[key]["x"],
+                            self.drawn_shapes[key]["y"],
+                            self.drawn_shapes[key]["line_color"],
+                        )
+                    ):
+                        if type(color) != str:
+                            color = "black"
+
+                        i = hv.Ellipse(
+                            posx, posy, 2 * self.interactive_aperture_radius
+                        ).opts(color=color, line_width=2)
+
+                        if j == 0:
+                            shape = i
+                        else:
+                            shape *= i
+
+                    self.interactive_points = shape
+
+                self.interactive_plot.object = (
+                    self.interactive_plot.object * shape
+                )
 
             if num_regions == 0:
                 print("No regions drawn")
                 return
 
+            fluxes, flux_errs, flux_unit_arr = [], [], []
+            debug_fig = plt.figure(figsize=(8, 5), constrained_layout=True)
+            # Make two subfigures
+            # One for the SED plot
+            # One for the region cutout plot
+            subfigs = debug_fig.subfigures(
+                1, 2, wspace=0.07, width_ratios=[1.5, 2]
+            )
+
+            plot_ax = subfigs[0].add_subplot(111)
+            plot_ax.set_xticks([])
+            plot_ax.set_yticks([])
+            plot_ax.set_frame_on(False)
+
+            # Add two subaxis to the 2nd subfigure of the main figure
+            # One above the other
+            ax_save_sed = subfigs[1].add_subplot(211)
+            ax_save_pdf = subfigs[1].add_subplot(212)
+
+            ax_save_sed.set_xlabel("Wavelength (microns)", fontsize=12)
+            ax_save_sed.set_ylabel("Flux (AB Mag)")
+            ax_save_sed.set_title("SED Plot")
+            # ax_save_pdf.set_title("PDF Plot")
+            ax_save_pdf.set_xlabel("Redshift (z)", fontsize=12)
+
             newfig = plt.figure(figsize=(8, 6))
             ax = newfig.add_subplot(111)
             ax.set_xlabel("Wavelength (microns)")
 
-            for region in regions:
+            for pos, region in enumerate(regions):
                 self.resolved_galaxy.plot_photometry_from_region(
                     region,
                     facecolor=self.facecolor,
                     ax=ax,
                     fig=newfig,
                     flux_unit=flux_unit,
+                    label=region_labels[pos]["name"],
+                )
+
+                self.resolved_galaxy.plot_photometry_from_region(
+                    region,
+                    facecolor=self.facecolor,
+                    ax=ax_save_sed,
+                    fig=subfigs[1],
+                    flux_unit=flux_unit,
+                    label=region_labels[pos]["name"],
                 )
 
             if flux_unit == u.ABmag:
                 ax.set_ylabel("AB Mag")
+                ax_save_sed.set_ylabel("AB Mag", fontsize=12)
                 # Invert y axis
+
                 ax.invert_yaxis()
+                ax_save_sed.invert_yaxis()
             else:
                 ax.set_ylabel(f"Flux ({flux_unit})")
+                ax_save_sed.set_ylabel(f"Flux ({flux_unit})")
 
             # Fix x axis range
             ax.set_xlim(ax.get_xlim())
             ax.set_ylim(ax.get_ylim())
+            ax_save_sed.set_xlim(ax.get_xlim())
+            ax_save_sed.set_ylim(ax.get_ylim())
 
-            print(event.obj.name)
-            if event.obj.name == "Run SED Fitting":
-                fluxes, flux_errs, flux_unit_arr = [], [], []
+            if event.obj.name == "Measure Photometry":
+                ax.legend(frameon=False)
+
+            if (
+                event.obj.name == "Run SED Fitting"
+                or event.obj.name == "Save regions"
+            ):
                 for region in regions:
                     flux, flux_err = (
                         self.resolved_galaxy.get_photometry_from_region(
-                            region, return_array=True
+                            region,
+                            return_array=True,
+                            save_debug_plot=False,
                         )
+                    )
+
+                    self.resolved_galaxy.get_photometry_from_region(
+                        region,
+                        return_array=False,
+                        save_debug_plot=False,
+                        debug_fig=subfigs[0],
                     )
 
                     fluxes.append(flux)
@@ -1003,12 +1363,14 @@ class GalaxyTab(param.Parameterized):
                     ax_pdf.set_ylabel("Probability Density")
                     # Hide the y-axis labels
                     ax_pdf.yaxis.set_tick_params(labelleft=False)
+                    ax_save_pdf.yaxis.set_tick_params(labelleft=False)
 
                     ez = self.resolved_galaxy.fit_eazy_photometry(
                         run_name="app", fluxes=fluxes, flux_errs=flux_errs
                     )
+                    datas = []
                     for i, region in enumerate(regions):
-                        self.resolved_galaxy.plot_eazy_fit(
+                        data = self.resolved_galaxy.plot_eazy_fit(
                             ez,
                             i,
                             ax_sed=ax,
@@ -1016,7 +1378,24 @@ class GalaxyTab(param.Parameterized):
                             flux_units=flux_unit,
                             ax_pz=ax_pdf,
                             label=True,
+                            color=region_labels[i]["color"]
+                            if type(region_labels[i]["color"]) != int
+                            else "black",
                         )
+                        self.resolved_galaxy.plot_eazy_fit(
+                            ez,
+                            i,
+                            ax_sed=ax_save_sed,
+                            fig=subfigs[1],
+                            flux_units=flux_unit,
+                            ax_pz=ax_save_pdf,
+                            label=True,
+                            color=region_labels[i]["color"]
+                            if type(region_labels[i]["color"]) != int
+                            else "black",
+                        )
+
+                        datas.append(data)
 
                     # Get all lines on the ax_pdf plot, sum them, and set the x-axis limit based on percentiles of the y-axis peaks
                     lines = ax_pdf.get_lines()
@@ -1036,15 +1415,91 @@ class GalaxyTab(param.Parameterized):
 
                     self.interactive_sed_plot_pdf.object = pdf_fig
 
+                    ax_save_sed.legend(frameon=False)
+
                     ax.legend(frameon=False)
+
+                    # debug_fig.savefig(f"{}"
+                    try:
+                        debug_fig.savefig(
+                            f"/nvme/scratch/work/tharvey/EXPANSE/galaxies/diagnostic_plots/region_cutouts.png"
+                        )
+                    except FileNotFoundError:
+                        pass
 
                 elif self.which_interactive_sed_fitter == "Dense Basis":
                     raise NotImplementedError(
                         "Dense Basis SED fitting is not implemented yet."
                     )
 
+            if event.obj.name == "Save regions":
+                if self.which_interactive_sed_fitter == "EAZY-py":
+                    self.resolved_galaxy.save_eazy_outputs(
+                        ez, regions, fluxes, flux_errs, save_txt=True
+                    )
+
             self.interactive_sed_plot.object = newfig
 
+    @param.depends()
+    def convert_regions_to_shapes(self, regions):
+        from regions import (
+            PixCoord,
+            RectanglePixelRegion,
+            PolygonPixelRegion,
+            CirclePixelRegion,
+        )
+
+        # Convert regions to shapes
+        shape_convert_dict = {
+            RectanglePixelRegion: "boxes",
+            PolygonPixelRegion: "polygons",
+            CirclePixelRegion: "points",
+        }
+
+        shapes = {}
+        for region in regions:
+            if type(region) in shape_convert_dict:
+                if shape_convert_dict[type(region)] not in shapes:
+                    shapes[shape_convert_dict[type(region)]] = {
+                        "x0": [],
+                        "y0": [],
+                        "x1": [],
+                        "y1": [],
+                        "xs": [],
+                        "ys": [],
+                    }
+
+                if type(region) == RectanglePixelRegion:
+                    shapes[shape_convert_dict[type(region)]]["x0"].append(
+                        region.center.x - region.width / 2
+                    )
+                    shapes[shape_convert_dict[type(region)]]["y0"].append(
+                        region.center.y - region.height / 2
+                    )
+                    shapes[shape_convert_dict[type(region)]]["x1"].append(
+                        region.center.x + region.width / 2
+                    )
+                    shapes[shape_convert_dict[type(region)]]["y1"].append(
+                        region.center.y + region.height / 2
+                    )
+                elif type(region) == PolygonPixelRegion:
+                    shapes[shape_convert_dict[type(region)]]["xs"].append(
+                        region.vertices.x
+                    )
+                    shapes[shape_convert_dict[type(region)]]["ys"].append(
+                        region.vertices.y
+                    )
+                elif type(region) == CirclePixelRegion:
+                    shapes[shape_convert_dict[type(region)]]["x"].append(
+                        region.center.x
+                    )
+                    shapes[shape_convert_dict[type(region)]]["y"].append(
+                        region.center.y
+                    )
+
+        return shapes
+
+    @param.depends()
     def convert_shapes_to_regions(self):
         from regions import (
             PixCoord,
@@ -1150,13 +1605,13 @@ class GalaxyTab(param.Parameterized):
             ):
                 center = PixCoord(point_x, point_y)
                 # You might want to adjust the radius based on your needs
-                radius = 5.33333  # 0.16 arcsec in pixels
+                radius = self.interactive_aperture_radius
                 regions.append(
                     CirclePixelRegion(center, radius, visual={"color": color})
                 )
                 region_labels.append(
                     {
-                        "name": f"Point {num_regions}",
+                        "name": f"Aperture {num_regions}",
                         "x": point_x,
                         "y": point_y,
                         "color": color,
@@ -1168,6 +1623,7 @@ class GalaxyTab(param.Parameterized):
 
     # @lru_cache(maxsize=None)
 
+    @param.depends()
     def update_sidebar(self):
         sidebar = pn.Column(
             pn.layout.Divider(), "### Settings", name="settings_sidebar"
@@ -1224,9 +1680,11 @@ class GalaxyTab(param.Parameterized):
                 [
                     "#### Interactive Plot Controls",
                     self.interactive_band_widget,
+                    self.interactive_aperture_radius_widget,
                     self.interactive_photometry_button,
                     self.interactive_sed_fitting_dropdown,
                     self.interactive_sed_fitting_button,
+                    self.save_shape_photometry_button,
                     self.clear_interactive_button,
                 ]
             )
@@ -1243,7 +1701,7 @@ class GalaxyTab(param.Parameterized):
         return sidebar
 
     @param.depends(
-        "resolved_galaxy",
+        # "resolved_galaxy",
         "red_channel",
         "green_channel",
         "blue_channel",
@@ -1251,6 +1709,7 @@ class GalaxyTab(param.Parameterized):
         "q",
         "psf_mode",
     )
+    @check_dependencies()
     def plot_rgb(self):
         """
         Plot an RGB image of the galaxy using specified bands and parameters.
@@ -1319,15 +1778,18 @@ class GalaxyTab(param.Parameterized):
         return pn.pane.HoloViews(rgb_img, height=400, width=430)
 
     # @lru_cache(maxsize=None)
+
+    @param.depends(
+        "which_map",
+        "show_galaxy",
+        "show_kron",
+        "scale_alpha",
+        "choose_show_band",
+    )
+    @check_dependencies()
     def plot_bins(
         self,
-        bin_type,
-        cmap,
-        scale_alpha,
-        show_galaxy,
-        show_kron,
-        psf_matched,
-        band,
+        cmap="nipy_spectral_r",
     ):
         """
         Plot the binning map for the galaxy.
@@ -1344,6 +1806,16 @@ class GalaxyTab(param.Parameterized):
         Returns:
             pn.pane.HoloViews: A HoloViews pane containing the binning map.
         """
+
+        print("bins triggered")
+
+        bin_type = self.which_map
+        scale_alpha = self.scale_alpha
+        show_galaxy = self.show_galaxy
+        show_kron = self.show_kron
+        psf_matched = self.psf_mode
+        band = self.choose_show_band
+
         array = getattr(self.resolved_galaxy, f"{bin_type}_map")
         if array is None:
             return None
@@ -1366,6 +1838,7 @@ class GalaxyTab(param.Parameterized):
             yaxis=None,
             clabel=f"{bin_type} Bin",
             alpha=scale_alpha,
+            shared_axes=False,
             # tools=['tap'],
         )
 
@@ -1374,7 +1847,17 @@ class GalaxyTab(param.Parameterized):
         opts = opts[~np.isnan(opts)].astype(int)
         # Update options for the multi-choice widget
         if bin_type == "pixedfit":
-            self.multi_choice_bins_widget.options = ["RESOLVED"] + list(opts)
+            new_opts = ["RESOLVED"] + list(opts)
+            update = any(
+                [
+                    i not in self.multi_choice_bins_widget.options
+                    for i in new_opts
+                ]
+            )
+            if update:
+                print("Updating options")
+                print(new_opts, self.multi_choice_bins_widget.options)
+                self.multi_choice_bins_widget.options = new_opts
 
         if show_kron:
             center = self.resolved_galaxy.cutout_size / 2
@@ -1412,6 +1895,7 @@ class GalaxyTab(param.Parameterized):
                 cmap="gray",
                 cnorm="log",
                 clim=(lower, upper),
+                shared_axes=False,
             )
             hvplot = new_hvplot * hvplot
 
@@ -1426,7 +1910,9 @@ class GalaxyTab(param.Parameterized):
         return bin_map
 
     # @lru_cache(maxsize=None)
-    def plot_cutouts(self, psf_matched_param, psf_type_param):
+    @param.depends("psf_mode")
+    @check_dependencies()
+    def plot_cutouts(self, psf_type="star_stack"):
         """
         Plot cutouts of the galaxy in different bands.
 
@@ -1437,11 +1923,11 @@ class GalaxyTab(param.Parameterized):
         Returns:
             pn.pane.Matplotlib: A Matplotlib pane containing the cutout plots.
         """
-        psf_matched = psf_matched_param == "PSF Matched"
+
         fig = self.resolved_galaxy.plot_cutouts(
             facecolor=self.facecolor,
-            psf_matched=psf_matched,
-            psf_type=psf_type_param,
+            psf_matched=self.psf_mode == "PSF Matched",
+            psf_type=psf_type,
         )
         plt.close(fig)
         return pn.pane.Matplotlib(
@@ -1452,101 +1938,6 @@ class GalaxyTab(param.Parameterized):
             format="svg",
             sizing_mode="scale_width",
         )
-
-    # @lru_cache(maxsize=None)
-    def plot_phot_property(self, property, cmap, **kwargs):
-        """
-        Plot a photometric property map for the galaxy.
-
-        Args:
-            property (str): The photometric property to plot.
-            cmap (str): Colormap to use for the plot.
-            **kwargs: Additional keyword arguments for the property calculation.
-
-        Returns:
-            pn.pane.Matplotlib: A Matplotlib pane containing the property map.
-        """
-        options_direct = {
-            "Beta": "beta_phot",
-            "mUV": "mUV_phot",
-            "MUV": "MUV_phot",
-            "Lobs_UV": "LUV_phot",
-            "AUV": "AUV_from_beta_phot",
-            "SFR_UV": "SFR_UV_phot",
-            "fesc": "fesc_from_beta_phot",
-            "EW_rest_optical": "EW_rest_optical",
-            "line_flux_rest_optical": "line_flux_rest_optical",
-            "xi_ion": "xi_ion",
-        }
-
-        default_options = {"SFR_UV": {"density": True, "logmap": True}}
-        if property in default_options:
-            kwargs.update(default_options[property])
-
-        if options_direct[property] in kwargs:
-            kwargs.update(kwargs[options_direct[property]])
-
-        fig = self.resolved_galaxy.galfind_phot_property_map(
-            options_direct[property],
-            cmap=cmap,
-            facecolor=self.facecolor,
-            **kwargs,
-        )
-        plt.close(fig)
-
-        return pn.pane.Matplotlib(
-            fig,
-            dpi=144,
-            tight=True,
-            format="svg",
-            sizing_mode="scale_width",
-            min_width=200,
-        )
-
-    # NOT USED
-    def handle_map_click(self, x, y, mode):
-        """
-        Handle clicks on the bin map and update relevant plots.
-
-        Args:
-            x (float): X-coordinate of the click.
-            y (float): Y-coordinate of the click.
-            mode (str): The type of plot to update ('sed', 'sfh', 'corner', or 'pdf').
-
-        Returns:
-            pn.pane.Matplotlib or None: Updated plot based on the click, or None if click is invalid.
-        """
-        use = True
-        if x is None or y is None:
-            use = False
-        if use:
-            if not (
-                0 < x < self.resolved_galaxy.cutout_size
-                and 0 < y < self.resolved_galaxy.cutout_size
-            ):
-                use = False
-
-        map = self.resolved_galaxy.pixedfit_map
-        if use:
-            rbin = map[int(np.ceil(y)), int(np.ceil(x))]
-            if rbin not in self.multi_choice_bins.value:
-                self.multi_choice_bins.value = self.multi_choice_bins.value + [
-                    rbin
-                ]
-
-        multi_choice_bins_param_safe = [
-            int(i) if i != "RESOLVED" and i != np.nan else i
-            for i in self.multi_choice_bins.value
-        ]
-
-        if mode == "sed":
-            return self.plot_sed(multi_choice_bins_param_safe)
-        elif mode == "sfh":
-            return self.plot_sfh(multi_choice_bins_param_safe)
-        elif mode == "corner":
-            return self.plot_corner(multi_choice_bins_param_safe)
-        elif mode == "pdf":
-            return self.plot_bagpipes_pdf(multi_choice_bins_param_safe)
 
     def possible_runs_select(self, sed_fitting_tool):
         """
@@ -1596,7 +1987,7 @@ class GalaxyTab(param.Parameterized):
         )
 
     @param.depends(
-        "resolved_galaxy",
+        # "resolved_galaxy",
         "which_map",
         "which_sed_fitter",
         "which_run_resolved",
@@ -1605,8 +1996,14 @@ class GalaxyTab(param.Parameterized):
         "total_fit_options",
         "pdf_param_property",
     )
+    @check_dependencies()
     def plot_bagpipes_pdf(self, cmap="nipy_spectral_r"):
         if self.which_sed_fitter == "bagpipes":
+            multi_choice_bins_param_safe = [
+                int(i) if i != "RESOLVED" and i != np.nan else i
+                for i in self.multi_choice_bins
+            ]
+
             if (
                 self.which_run_resolved
                 and self.which_run_resolved
@@ -1615,21 +2012,18 @@ class GalaxyTab(param.Parameterized):
                 if self.which_map == "pixedfit":
                     map = self.resolved_galaxy.pixedfit_map
 
+                norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
+
                 cmap = cm.get_cmap(cmap)
                 colors_bins = [
-                    cmap(
-                        Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(
-                            rbin
-                        )
-                    )
-                    for pos, rbin in enumerate(self.multi_choice_bins_param)
+                    cmap(norm(rbin)) if rbin != "RESOLVED" else "black"
+                    for pos, rbin in enumerate(multi_choice_bins_param_safe)
                 ]
-
                 fig, _ = (
                     self.resolved_galaxy.plot_bagpipes_component_comparison(
                         parameter=self.pdf_param_property,
                         run_name=self.which_run_resolved,
-                        bins_to_show=self.multi_choice_bins_param,
+                        bins_to_show=multi_choice_bins_param_safe,
                         save=False,
                         run_dir="pipes/",
                         facecolor=self.facecolor,
@@ -1645,7 +2039,7 @@ class GalaxyTab(param.Parameterized):
             if (
                 self.which_run_aperture
                 and self.which_run_aperture
-                in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+                in self.resolved_galaxy.sed_fitting_table["bagpipes"].keys()
             ):
                 colors_total = [
                     self.TOTAL_FIT_COLORS[rbin]
@@ -1662,6 +2056,7 @@ class GalaxyTab(param.Parameterized):
                         facecolor=self.facecolor,
                         fig=fig,
                         axes=ax,
+                        colors=colors_total,
                     )
                 )
 
@@ -1681,7 +2076,7 @@ class GalaxyTab(param.Parameterized):
             )
 
     @param.depends(
-        "resolved_galaxy",
+        # "resolved_galaxy",
         "which_map",
         "which_sed_fitter",
         "which_flux_unit",
@@ -1697,7 +2092,37 @@ class GalaxyTab(param.Parameterized):
         "sed_y_min",
         "sed_y_max",
     )
+    @check_dependencies()
     def plot_sed(self):
+        """
+        import inspect
+
+        current_function =  inspect.stack()[0][3]
+
+
+        print('SED triggered')
+        # print all the parameters
+        # Get list of triggers
+        dependencies = [o.name for o in self.param.method_dependencies(current_function)]
+
+        print(f'Current function: {current_function}, Dependencies: {dependencies}')
+
+        args = [copy.deepcopy(getattr(self, dep)) for dep in dependencies]
+
+
+        if getattr(self, f'{current_function}_previous_args', None) == None:
+            setattr(self, f'{current_function}_previous_args', args)
+            print('First time running')
+        else:
+            # Check if any of the arguments have changed
+            if any([args[i] != getattr(self, f'{current_function}_previous_args')[i] for i in range(len(args))]):
+                print('Arguments have changed')
+                setattr(self, f'{current_function}_previous_args', args)
+            else:
+                print('Arguments have not changed')
+                return self.sed_plot
+        """
+
         multi_choice_bins_param_safe = [
             int(i) if i != "RESOLVED" and i != np.nan else i
             for i in self.multi_choice_bins
@@ -1782,6 +2207,7 @@ class GalaxyTab(param.Parameterized):
 
             marker = list_of_markers[bin_pos % len(list_of_markers)]
 
+            max_flux = 0 * u.uJy
             for pos, band in enumerate(self.resolved_galaxy.bands):
                 wav = wavs[band]
                 flux = table_row[band]
@@ -1823,6 +2249,13 @@ class GalaxyTab(param.Parameterized):
                 lab = int(rbin) if isinstance(rbin, float) else rbin
                 lab = lab if pos == 0 else ""
 
+                if flux > max_flux.to(
+                    y_unit, equivalencies=u.spectral_density(wav)
+                ):
+                    max_flux = flux.to(
+                        y_unit, equivalencies=u.spectral_density(wav)
+                    )
+
                 ax.errorbar(
                     wav.to(x_unit).value,
                     flux.to(
@@ -1835,6 +2268,9 @@ class GalaxyTab(param.Parameterized):
                     label=lab,
                     markeredgecolor="black" if show_sed_photometry else color,
                 )
+
+        if y_unit != u.ABmag:
+            ax.set_ylim(None, max_flux.value * 1.5)
 
         if self.which_sed_fitter == "bagpipes":
             if self.which_run_resolved:
@@ -1870,9 +2306,9 @@ class GalaxyTab(param.Parameterized):
             rf"$\rm{{Flux \ Density}}$ ({y_unit:latex})", fontsize="large"
         )
 
-        if len(ax.lines) > 0:
-            ax.set_xlim(ax.get_xlim())
-            ax.set_ylim(ax.get_ylim())
+        # if len(ax.lines) > 0:
+        #    ax.set_xlim(ax.get_xlim())
+        #    ax.set_ylim(ax.get_ylim())
 
         if self.sed_log_x:
             ax.set_xscale("log")
@@ -1886,13 +2322,17 @@ class GalaxyTab(param.Parameterized):
 
         ax.legend(loc="upper left", frameon=False, fontsize="small")
 
-        plt.close(fig)
-        return pn.pane.Matplotlib(
+        self.sed_plot = pn.pane.Matplotlib(
             fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both"
         )
 
+        # self.key_sed_plot_params = {'x_unit': copy.copy(x_unit), 'y_unit': copy.copy(y_unit), 'show_sed_photometry': copy.copy(show_sed_photometry)},
+
+        # plt.close(fig)
+        return self.sed_plot
+
     @param.depends(
-        "resolved_galaxy",
+        # "resolved_galaxy",
         "which_map",
         "which_sed_fitter",
         "multi_choice_bins",
@@ -1977,7 +2417,6 @@ class GalaxyTab(param.Parameterized):
             )
 
     @param.depends(
-        "resolved_galaxy",
         "which_map",
         "which_sed_fitter",
         "multi_choice_bins",
@@ -2013,7 +2452,7 @@ class GalaxyTab(param.Parameterized):
             ]
 
             fig, ax = plt.subplots(
-                figsize=(8, 6),
+                figsize=(6, 3),
                 constrained_layout=True,
                 facecolor=self.facecolor,
             )
@@ -2051,10 +2490,13 @@ class GalaxyTab(param.Parameterized):
                     "No Bagpipes results found for SFH plot."
                 )
 
-            ax.set_xlabel("Lookback Time (Gyr)")
-            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)")
+            ax.set_xlabel("Lookback Time (Gyr)", fontsize="large")
+            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)", fontsize="large")
+            # set tick label size
+            ax.tick_params(axis="both", which="major", labelsize="medium")
             ax.set_yscale("log")
-            ax.legend(loc="upper left", fontsize="small")
+            ax.set_ylim(0.1, None)
+            ax.legend(loc="upper right", fontsize="medium")
 
             plt.close(fig)
             return pn.pane.Matplotlib(
@@ -2069,6 +2511,7 @@ class GalaxyTab(param.Parameterized):
                 f"SFH plotting not implemented for {self.which_sed_fitter}."
             )
 
+    @param.depends()
     def create_synthesizer_tab(self):
         synthesizer_page = pn.Column()
 
@@ -2121,6 +2564,7 @@ class GalaxyTab(param.Parameterized):
 
         return synthesizer_page
 
+    @param.depends()
     def plot_map_with_controls(self, map_array, label="", unit=""):
         range_slider = pn.widgets.RangeSlider(
             start=np.nanmin(map_array),
@@ -2180,6 +2624,7 @@ class GalaxyTab(param.Parameterized):
 
         return pn.Column(plot_pane, accordion)
 
+    @param.depends()
     def plot_mock_spectra(self, components):
         fig, ax = plt.subplots(figsize=(8, 4.5), facecolor="white")
 
@@ -2293,8 +2738,8 @@ class ResolvedSEDApp(param.Parameterized):
         )
 
     def update_active_galaxy_tab(self, event):
-        self.active_galaxy_tab = event.new
         self.update_sidebar()
+        self.active_galaxy_tab = event.new
 
     def update_sidebar(self):
         if self.galaxy_tabs:
@@ -2328,7 +2773,7 @@ def resolved_sed_interface():
 
 # CLI command remains largely unchanged
 @click.command()
-@click.option("--port", default=5005, help="Port to run the server on.")
+@click.option("--port", default=5006, help="Port to run the server on.")
 @click.option(
     "--gal_dir", default="internal", help="Directory containing galaxy files."
 )
