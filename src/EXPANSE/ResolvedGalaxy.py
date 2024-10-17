@@ -956,6 +956,8 @@ class ResolvedGalaxy:
 
                 h5path = f"{h5_folder}{h5_name}"
 
+        # Check if file is locked by another process
+        import 
         with h5.File(h5path, "r") as hfile:
             # Load meta data
             galaxy_id = hfile["meta"]["galaxy_id"][()].decode("utf-8")
@@ -5160,6 +5162,20 @@ class ResolvedGalaxy:
                     redshift = float(table["redshift_50"][0])
                 elif "input_redshift" in table.colnames:
                     redshift = float(table["input_redshift"][0])
+        try:
+            from mpi4py import MPI
+
+            rank = MPI.COMM_WORLD.Get_rank()
+            size = MPI.COMM_WORLD.Get_size()
+            from mpi4py.futures import MPIPoolExecutor
+
+            if size > 1:
+                print("Running with mpirun/mpiexec detected.")
+                save_out = False  # Avoids locking issues
+
+        except ImportError:
+            rank = 0
+            size = 1
 
         redshift_sigma = meta.get("redshift_sigma", 0)
         min_redshift_sigma = meta.get("min_redshift_sigma", 0)
@@ -5287,13 +5303,14 @@ class ResolvedGalaxy:
         import hashlib
 
         out_subdir_encoded = hashlib.md5(out_subdir.encode()).hexdigest()
-
+        
         existing_files = []
         for i in [out_subdir, out_subdir_encoded]:
             for j in ["posterior"]:
                 path = f"{run_dir}/{j}/{i}"
-                os.makedirs(path, exist_ok=True)
-                os.chmod(path, 0o777)
+                if rank == 0:
+                    os.makedirs(path, exist_ok=True)
+                    os.chmod(path, 0o777)
                 existing_files += glob.glob(f"{path}/*")
 
         # os.makedirs(f"{run_dir}/cats/{out_subdir_encoded}", exist_ok=True)
@@ -5310,23 +5327,25 @@ class ResolvedGalaxy:
 
         # existing_files = glob.glob(f'{path_post}/*') + glob.glob(f'{path_plots}/*') + glob.glob(f'{path_sed}/*') + glob.glob(f'{path_fits}/*')
         # Copy any .h5 in out_subdir_encoded to out_subdir
-        for file in existing_files:
-            if out_subdir_encoded in file:
-                new_file = file.replace(out_subdir_encoded, out_subdir)
-                # If encoded file path, check if the new file exists and if not, rename
-                if not os.path.exists(new_file):
-                    os.rename(file, new_file)
-                else:
-                    # If it does exist, remove the file if we are overwriting
-                    if overwrite:
-                        os.remove(new_file)
+        if rank == 0:
+            for file in existing_files:
+                if out_subdir_encoded in file:
+                    new_file = file.replace(out_subdir_encoded, out_subdir)
+                    # If encoded file path, check if the new file exists and if not, rename
+                    if not os.path.exists(new_file):
                         os.rename(file, new_file)
+                    else:
+                        # If it does exist, remove the file if we are overwriting
+                        if overwrite:
+                            os.remove(new_file)
+                            os.rename(file, new_file)
 
         exist_already = False
         if overwrite:
-            for file in existing_files:
-                print(f"Removing {file}")
-                os.remove(file)
+            if rank == 0:
+                for file in existing_files:
+                    print(f"Removing {file}")
+                    os.remove(file)
         else:  # Check if already run
             mask = np.zeros(len(ids))
             for pos, gal_id in enumerate(ids):
@@ -5350,17 +5369,19 @@ class ResolvedGalaxy:
                 )
 
         if np.any(mask == 1):
-            # Rename the out_subdir to out_subdir_encoded
-            for i in ["posterior"]:
-                path = f"{run_dir}/{i}/{out_subdir}"
-                new_path = f"{run_dir}/{i}/{out_subdir_encoded}"
-                os.rename(path, new_path)
-            # Move catalogue
+            if rank == 0:
+                # Rename the out_subdir to out_subdir_encoded
+                for i in ["posterior"]:
+                    path = f"{run_dir}/{i}/{out_subdir}"
+                    new_path = f"{run_dir}/{i}/{out_subdir_encoded}"
+                    os.rename(path, new_path)
+                # Move catalogue
 
             path = f"{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits"
             nrun_name = f"{run_dir}/cats/{out_subdir_encoded}.fits"
-            if os.path.exists(path) and not os.path.exists(nrun_name):
-                os.rename(path, nrun_name)
+            if rank == 0:
+                if os.path.exists(path) and not os.path.exists(nrun_name):
+                    os.rename(path, nrun_name)
 
         if not exist_already:
             fit_cat = pipes.fit_catalogue(
@@ -5388,37 +5409,38 @@ class ResolvedGalaxy:
                 sampler=sampler,
                 use_mpi=use_mpi,
             )
-
+        
+        if rank == 0:
         # Move files to the correct location
-        for i in ["posterior", "plots", "pdfs", "seds", "sfr"]:
-            new_path = f"{run_dir}/{i}/{out_subdir}"
-            current_path = f"{run_dir}/{i}/{out_subdir_encoded}"
-            # If the current path is empty or doesn't exist, continue
-            if (
-                not os.path.exists(current_path)
-                or len(glob.glob(f"{current_path}/*")) == 0
-            ):
-                continue
-            # Make parent directory
-            os.makedirs(os.path.dirname(new_path), exist_ok=True)
-            if os.path.exists(new_path):
-                # Just move the files
-                for file in glob.glob(f"{current_path}/*"):
-                    new_file = file.replace(current_path, new_path)
-                    os.rename(file, new_file)
-                # Remove the empty directory
-                os.rmdir(current_path)
-            else:
-                os.rename(current_path, new_path)
+            for i in ["posterior", "plots", "pdfs", "seds", "sfr"]:
+                new_path = f"{run_dir}/{i}/{out_subdir}"
+                current_path = f"{run_dir}/{i}/{out_subdir_encoded}"
+                # If the current path is empty or doesn't exist, continue
+                if (
+                    not os.path.exists(current_path)
+                    or len(glob.glob(f"{current_path}/*")) == 0
+                ):
+                    continue
+                # Make parent directory
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                if os.path.exists(new_path):
+                    # Just move the files
+                    for file in glob.glob(f"{current_path}/*"):
+                        new_file = file.replace(current_path, new_path)
+                        os.rename(file, new_file)
+                    # Remove the empty directory
+                    os.rmdir(current_path)
+                else:
+                    os.rename(current_path, new_path)
 
-        # Move catalogue
-        path = f"{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits"
-        os.makedirs(f"{run_dir}/cats/{run_name}/{self.survey}", exist_ok=True)
-        old_name = f"{run_dir}/cats/{out_subdir_encoded}.fits"
-        # os.makedirs(f'{run_dir}/cats/{out_subdir_encoded}', exist_ok=True)
-        # Check if all folders in path exist
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        os.rename(old_name, path)
+            # Move catalogue
+            path = f"{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits"
+            os.makedirs(f"{run_dir}/cats/{run_name}/{self.survey}", exist_ok=True)
+            old_name = f"{run_dir}/cats/{out_subdir_encoded}.fits"
+            # os.makedirs(f'{run_dir}/cats/{out_subdir_encoded}', exist_ok=True)
+            # Check if all folders in path exist
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.rename(old_name, path)
 
         """
         json_file = json.dumps(fit_instructions)
@@ -5426,7 +5448,7 @@ class ResolvedGalaxy:
         f.write(json_file)
         f.close()
         """
-        if not only_run:
+        if not only_run and rank == 0:
             self.load_bagpipes_results(run_name)
 
     def load_bagpipes_results(self, run_name, run_dir="pipes/"):
@@ -10478,7 +10500,7 @@ def run_bagpipes_wrapper(
             only_run=~update_h5,
         )
 
-        if resolved_dict["meta"]["fit_photometry"] in ["bin", "all"]:
+        if resolved_dict["meta"]["fit_photometry"] in ["bin", "all"] and update_h5:
             print(f"Adding resolved properties to .h5 for {galaxy.galaxy_id}")
             # Save the resolved SED
             galaxy.get_resolved_bagpipes_sed(resolved_dict["meta"]["run_name"])

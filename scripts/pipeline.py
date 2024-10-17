@@ -250,6 +250,7 @@ if __name__ == "__main__":
                     h5_folder=h5_folder,
                     alert=True,
                     use_mpi=True,
+                    mpi_serial = True,
                     update_h5=False,
                 )
 
