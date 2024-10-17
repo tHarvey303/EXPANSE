@@ -357,7 +357,7 @@ class ResolvedGalaxy:
                 self.get_star_stack_psf()
 
             # print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
-            print(self.galaxy_id)
+            # print(self.galaxy_id)
             print("Convolving images with PSF")
             self.convolve_with_psf(psf_type=psf_type, init_run=True)
 
@@ -1049,13 +1049,17 @@ class ResolvedGalaxy:
                     hfile["total_photometry"].get("total_photometry")
                     is not None
                 ):
-                    print(hfile["total_photometry"]["total_photometry"][()])
-                    total_photometry = ast.literal_eval(
-                        hfile["total_photometry"]["total_photometry"][()]
-                        .decode("utf-8")
-                        .replace("<Quantity", "")
-                        .replace(">", "")
-                    )
+                    try:
+                        total_photometry = ast.literal_eval(
+                            hfile["total_photometry"]["total_photometry"][()]
+                            .decode("utf-8")
+                            .replace("<Quantity", "")
+                            .replace(">", "")
+                        )
+                    except ValueError:
+                        print(
+                            f"Warning! Failed to load total photometry for {galaxy_id}"
+                        )
 
             # Load paths and exts
             im_paths = ast.literal_eval(
@@ -1179,8 +1183,6 @@ class ResolvedGalaxy:
                             )
             # else:
             #    print("No binned photometry table found")
-
-            print(possible_phot_keys)
 
             possible_sed_keys = []
             sed_fitting_table = {}
@@ -3895,7 +3897,7 @@ class ResolvedGalaxy:
         galaxy = galaxy[0]
 
         cutout_paths = galaxy.cutout_paths
-        print(cutout_paths)
+
         bands = (
             galaxy.phot.instrument.band_names
         )  # should be bands just for galaxy!
@@ -4283,7 +4285,7 @@ class ResolvedGalaxy:
 
         # Loop over each pixel in the galaxy region and assign a bin number
         bin_number = 1
-        print(np.shape(galaxy_region))
+
         for i in range(np.shape(galaxy_region)[0]):
             for j in range(np.shape(galaxy_region)[1]):
                 if galaxy_region[i, j] == 1:
@@ -4485,7 +4487,7 @@ class ResolvedGalaxy:
         else:
             self.photometry_table[psf_type][binmap_type] = table
 
-        print(table)
+        # print(table)
         # Write table to our existing h5 file
         write_table_hdf5(
             table,
@@ -5219,8 +5221,8 @@ class ResolvedGalaxy:
                     else:
                         print(f"Run {run_name} already exists")
                         return
-        print(psf_type, binmap_type)
-        print(self.photometry_table.keys())
+        # print(psf_type, binmap_type)
+        # print(self.photometry_table.keys())
         flux_table = self.photometry_table[psf_type][binmap_type]
         if fit_photometry == "all":
             mask = np.ones(len(flux_table), dtype=bool)
@@ -5290,7 +5292,7 @@ class ResolvedGalaxy:
                 os.chmod(path, 0o777)
                 existing_files += glob.glob(f"{path}/*")
 
-        os.makedirs(f"{run_dir}/cats/{out_subdir_encoded}", exist_ok=True)
+        # os.makedirs(f"{run_dir}/cats/{out_subdir_encoded}", exist_ok=True)
 
         existing_filenames = [
             os.path.basename(file) for file in existing_files
@@ -5328,9 +5330,20 @@ class ResolvedGalaxy:
                     print(f"{gal_id}.h5 already exists")
                     mask[pos] = 1
 
-            if np.all(mask == 1):
+            # Check if catalogue already exists
+            path = f"{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits"
+            if os.path.exists(path):
+                cat_exists = True
+            else:
+                cat_exists = False
+
+            if np.all(mask == 1) and cat_exists:
                 print("All files already exist")
                 exist_already = True
+            elif np.all(mask == 1) and not cat_exists:
+                print(
+                    "All files exist except catalogue, rerunning to build catalogue."
+                )
 
         if np.any(mask == 1):
             # Rename the out_subdir to out_subdir_encoded
@@ -5373,9 +5386,15 @@ class ResolvedGalaxy:
             )
 
         # Move files to the correct location
-        for i in ["posterior"]:
+        for i in ["posterior", "plots", "pdfs", "seds", "sfr"]:
             new_path = f"{run_dir}/{i}/{out_subdir}"
             current_path = f"{run_dir}/{i}/{out_subdir_encoded}"
+            # If the current path is empty or doesn't exist, continue
+            if (
+                not os.path.exists(current_path)
+                or len(glob.glob(f"{current_path}/*")) == 0
+            ):
+                continue
             # Make parent directory
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
             if os.path.exists(new_path):
@@ -5383,14 +5402,18 @@ class ResolvedGalaxy:
                 for file in glob.glob(f"{current_path}/*"):
                     new_file = file.replace(current_path, new_path)
                     os.rename(file, new_file)
+                # Remove the empty directory
+                os.rmdir(current_path)
             else:
                 os.rename(current_path, new_path)
+
         # Move catalogue
         path = f"{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits"
         os.makedirs(f"{run_dir}/cats/{run_name}/{self.survey}", exist_ok=True)
         old_name = f"{run_dir}/cats/{out_subdir_encoded}.fits"
         # os.makedirs(f'{run_dir}/cats/{out_subdir_encoded}', exist_ok=True)
-
+        # Check if all folders in path exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         os.rename(old_name, path)
 
         """
@@ -10453,7 +10476,7 @@ def run_bagpipes_wrapper(
             overwrite_internal=overwrite_internal,
             mpi_serial=mpi_serial,
             use_mpi=use_mpi,
-            save_internal=update_h5,
+            only_run=~update_h5,
         )
 
         if resolved_dict["meta"]["fit_photometry"] in ["bin", "all"]:

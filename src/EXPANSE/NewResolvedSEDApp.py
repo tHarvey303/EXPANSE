@@ -19,10 +19,10 @@ from bokeh.models import PrintfTickFormatter, Label
 import matplotlib.cm as cm
 from holoviews import opts, streams
 from matplotlib.colors import Normalize
-
-hv.extension("bokeh", logo=False)
-pn.extension("mathjax")
-pn.extension("tabulator")
+import param
+import functools
+import inspect
+import copy
 
 MAX_SIZE_MB = 150
 ACCENT = "goldenrod"
@@ -32,8 +32,6 @@ galaxies_dir = os.path.join(
     ),
     "galaxies",
 )
-
-import param
 
 
 def custom_depends(*dependencies, watch=False):
@@ -51,11 +49,6 @@ def custom_depends(*dependencies, watch=False):
         return wrapper
 
     return decorator
-
-
-import functools
-import inspect
-import copy
 
 
 def check_dependencies(cache_attr="_cache"):
@@ -2786,6 +2779,11 @@ def expanse_viewer_class(
     global initial_galaxy
     global galaxies_dir
     global initial_tab
+
+    hv.extension("bokeh", logo=False)
+    pn.extension("mathjax")
+    pn.extension("tabulator")
+
     initial_galaxy = copy.copy(galaxy)
     initial_tab = copy.copy(tab)
 

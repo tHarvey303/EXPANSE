@@ -31,6 +31,7 @@ from EXPANSE import (
 )
 from EXPANSE.bagpipes.pipes_models import *
 
+save_out = True  # Set to False if you don't want to save the output to h5
 
 try:
     from mpi4py import MPI
@@ -41,6 +42,7 @@ try:
 
     if size > 1:
         print("Running with mpirun/mpiexec detected.")
+        save_out = False  # Avoids locking issues
 
 except ImportError:
     rank = 0
@@ -67,9 +69,9 @@ resolved_galaxy_dir = os.path.join(
 )
 
 
-initial_load = True
+initial_load = False
 filter_single_bin = True
-n_jobs = 2
+n_jobs = 8
 # Set to True if you want to load the data from the catalogue
 just_bagpipes_parallel = False
 
@@ -110,8 +112,9 @@ if __name__ == "__main__":
             already_psf_matched=True,
             cutout_size=cutout_size,
             h5_folder=h5_folder,
+            save_out=save_out,
         )
-        # Do again to load from h5
+        # Do again to load from h5 - helps with consistency
         galaxies = ResolvedGalaxy.init(
             list(ids),
             "JOF_psfmatched",
@@ -119,15 +122,7 @@ if __name__ == "__main__":
             already_psf_matched=True,
             cutout_size=cutout_size,
             h5_folder=h5_folder,
-        )
-        # Do again to load from h5
-        galaxies = ResolvedGalaxy.init(
-            list(ids),
-            "JOF_psfmatched",
-            "v11",
-            already_psf_matched=True,
-            cutout_size=cutout_size,
-            h5_folder=h5_folder,
+            save_out=save_out,
         )
 
     num_of_bins = 0

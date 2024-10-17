@@ -6,7 +6,8 @@ from panel.layout.gridstack import GridStack
 import panel as pn
 import holoviews as hv
 import xarray as xr
-import hvplot.xarray
+
+# import hvplot.xarray
 import click
 import h5py as h5
 import copy
@@ -26,7 +27,6 @@ from bokeh.models import PrintfTickFormatter
 # package imports
 from .ResolvedGalaxy import MockResolvedGalaxy, ResolvedGalaxy
 
-sys.setrecursionlimit(100000)
 # change bokeh logging level
 import logging
 import resource
@@ -37,10 +37,7 @@ import resource
 import warnings
 
 facecolor = "#f7f7f7"
-
-
 MAX_SIZE_MB = 150
-
 TOTAL_FIT_COLORS = {
     "TOTAL_BIN": "springgreen",
     "MAG_AUTO": "blue",
@@ -50,14 +47,26 @@ TOTAL_FIT_COLORS = {
     "MAG_BEST": "cyan",
     "RESOLVED": "red",
 }
+options_direct = {
+    "Beta": "beta_phot",
+    "mUV": "mUV_phot",
+    "MUV": "MUV_phot",
+    "Lobs_UV": "LUV_phot",
+    "AUV": "AUV_from_beta_phot",
+    "SFR_UV": "SFR_UV_phot",
+    "fesc": "fesc_from_beta_phot",
+    "EW_rest_optical": "EW_rest_optical",
+    "line_flux_rest_optical": "line_flux_rest_optical",
+    "xi_ion": "xi_ion",
+}
 
+sys.setrecursionlimit(100000)
 warnings.filterwarnings("ignore", category=UserWarning)
-
 resource.setrlimit(resource.RLIMIT_STACK, [0x10000000, resource.RLIM_INFINITY])
-
 sys.path.append("/usr/local/texlive/")
 
 file_path = os.path.abspath(__file__)
+
 if "nvme" in file_path:
     computer = "morgan"
 elif "Users" in file_path:
@@ -65,30 +74,13 @@ elif "Users" in file_path:
     mpl.use("macOsX")
     mpl.rcParams["text.usetex"] = True
 
-pn.extension(sizing_mode="stretch_width", design="material")
-pn.extension("gridstack")
-pn.extension(notifications=True)
-try:
-    import plotly
-
-    pn.extension("plotly")
-except ImportError:
-    pass
-
-
-stream = hv.streams.Tap(transient=True)
-
 # sns.set_context("paper")
 # plt.style.use('paper.mplstyle')
-
 # panel serve ResolvedSEDApp.py --autoreload --port 5003
-
 ACCENT = "goldenrod"
-
 plotpipes_dir = "pipes_scripts/"
 run_dir = "pipes/"
 galaxies_dir = "galaxies/"
-
 # Get code directory
 code_dir = os.path.dirname(os.path.abspath(__file__))
 # Get grandparent directory
@@ -1252,20 +1244,6 @@ def do_snr_plot(band):
     )
 
 
-options_direct = {
-    "Beta": "beta_phot",
-    "mUV": "mUV_phot",
-    "MUV": "MUV_phot",
-    "Lobs_UV": "LUV_phot",
-    "AUV": "AUV_from_beta_phot",
-    "SFR_UV": "SFR_UV_phot",
-    "fesc": "fesc_from_beta_phot",
-    "EW_rest_optical": "EW_rest_optical",
-    "line_flux_rest_optical": "line_flux_rest_optical",
-    "xi_ion": "xi_ion",
-}
-
-
 @cached_function
 def plot_phot_property(
     property,
@@ -1481,7 +1459,7 @@ def fitsmap(
             size=50, name="Starting fitsmap server...", value=True
         )
         print("Starting fitsmap server...")
-        command = f"cd {fitsmap_dir}/{resolved_galaxy.field}_{resolved_galaxy.survey}; fitsmap serve"
+        command = f"cd {fitsmap_dir}/{resolved_galaxy.field}_{resolved_galaxy.survey} fitsmap serve"
         subprocess.Popen(command, shell=True)
 
     ra = resolved_galaxy.sky_coord.ra.deg
@@ -2322,11 +2300,25 @@ def cli():
 def expanse_viewer(
     port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", test_mode=False
 ):
+    global stream
     global initial_galaxy
     global galaxies_dir
     global initial_tab
+
+    pn.extension(sizing_mode="stretch_width", design="material")
+    pn.extension("gridstack")
+    pn.extension(notifications=True)
+    print("after extension")
+    try:
+        import plotly
+
+        pn.extension("plotly")
+    except ImportError:
+        pass
+
     initial_galaxy = copy.copy(galaxy)
     initial_tab = copy.copy(tab)
+    stream = hv.streams.Tap(transient=True)
 
     if test_mode:
         for key in logging.Logger.manager.loggerDict:
