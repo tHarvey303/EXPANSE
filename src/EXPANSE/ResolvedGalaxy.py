@@ -957,7 +957,6 @@ class ResolvedGalaxy:
                 h5path = f"{h5_folder}{h5_name}"
 
         # Check if file is locked by another process
-        import 
         with h5.File(h5path, "r") as hfile:
             # Load meta data
             galaxy_id = hfile["meta"]["galaxy_id"][()].decode("utf-8")
@@ -1840,444 +1839,448 @@ class ResolvedGalaxy:
             append = ""
         new_h5_path = self.h5_path.replace(".h5", f"{append}.h5")
 
-        with h5.File(new_h5_path, "w") as hfile:
-            # print('append is', append)
+        try:
+            with h5.File(new_h5_path, "w") as hfile:
+                # print('append is', append)
 
-            groups = [
-                "meta",
-                "paths",
-                "raw_data",
-                "aperture_photometry",
-                "auto_photometry",
-                "headers",
-                "bin_maps",
-                "bin_fluxes",
-                "bin_flux_err",
-            ]
-            for group in groups:
-                hfile.create_group(group)
+                groups = [
+                    "meta",
+                    "paths",
+                    "raw_data",
+                    "aperture_photometry",
+                    "auto_photometry",
+                    "headers",
+                    "bin_maps",
+                    "bin_fluxes",
+                    "bin_flux_err",
+                ]
+                for group in groups:
+                    hfile.create_group(group)
 
-            hfile["meta"].create_dataset(
-                "galaxy_id", data=str(self.galaxy_id), dtype=str_dt
-            )
-            hfile["meta"].create_dataset(
-                "survey", data=self.survey, dtype=str_dt
-            )
-            hfile["meta"].create_dataset("redshift", data=self.redshift)
-            if self.sky_coord is not None:
                 hfile["meta"].create_dataset(
-                    "sky_coord",
-                    data=self.sky_coord.to_string(
-                        style="decimal", precision=8
+                    "galaxy_id", data=str(self.galaxy_id), dtype=str_dt
+                )
+                hfile["meta"].create_dataset(
+                    "survey", data=self.survey, dtype=str_dt
+                )
+                hfile["meta"].create_dataset("redshift", data=self.redshift)
+                if self.sky_coord is not None:
+                    hfile["meta"].create_dataset(
+                        "sky_coord",
+                        data=self.sky_coord.to_string(
+                            style="decimal", precision=8
+                        ),
+                        dtype=str_dt,
+                    )
+                hfile["meta"].create_dataset(
+                    "bands", data=str(list(self.bands)), dtype=str_dt
+                )
+                hfile["meta"].create_dataset("cutout_size", data=self.cutout_size)
+                hfile["meta"].create_dataset(
+                    "zps", data=str(self.im_zps), dtype=str_dt
+                )
+                hfile["meta"].create_dataset(
+                    "pixel_scales",
+                    data=str(
+                        {
+                            band: str(scale)
+                            for band, scale in self.im_pixel_scales.items()
+                        }
                     ),
                     dtype=str_dt,
                 )
-            hfile["meta"].create_dataset(
-                "bands", data=str(list(self.bands)), dtype=str_dt
-            )
-            hfile["meta"].create_dataset("cutout_size", data=self.cutout_size)
-            hfile["meta"].create_dataset(
-                "zps", data=str(self.im_zps), dtype=str_dt
-            )
-            hfile["meta"].create_dataset(
-                "pixel_scales",
-                data=str(
-                    {
-                        band: str(scale)
-                        for band, scale in self.im_pixel_scales.items()
-                    }
-                ),
-                dtype=str_dt,
-            )
-            hfile["meta"].create_dataset(
-                "phot_pix_unit",
-                data=str(
-                    {
-                        band: str(pix_unit)
-                        for band, pix_unit in self.phot_pix_unit.items()
-                    }
-                ),
-                dtype=str_dt,
-            )
-            hfile["meta"].create_dataset(
-                "dont_psf_match_bands",
-                data=str(self.dont_psf_match_bands),
-                dtype=str_dt,
-            )
-            hfile["meta"].create_dataset(
-                "already_psf_matched",
-                data=str(self.already_psf_matched),
-                dtype=str_dt,
-            )
-            hfile["meta"].create_dataset(
-                "detection_band", data=self.detection_band, dtype=str_dt
-            )
-            hfile["meta"].create_dataset(
-                "galfind_version", data=self.galfind_version, dtype=str_dt
-            )
-            if self.meta_properties is not None:
-                hfile["meta"].create_group("meta_properties")
-                for prop in self.meta_properties.keys():
-                    hfile["meta"]["meta_properties"].create_dataset(
-                        prop,
-                        data=str(self.meta_properties[prop]),
+                hfile["meta"].create_dataset(
+                    "phot_pix_unit",
+                    data=str(
+                        {
+                            band: str(pix_unit)
+                            for band, pix_unit in self.phot_pix_unit.items()
+                        }
+                    ),
+                    dtype=str_dt,
+                )
+                hfile["meta"].create_dataset(
+                    "dont_psf_match_bands",
+                    data=str(self.dont_psf_match_bands),
+                    dtype=str_dt,
+                )
+                hfile["meta"].create_dataset(
+                    "already_psf_matched",
+                    data=str(self.already_psf_matched),
+                    dtype=str_dt,
+                )
+                hfile["meta"].create_dataset(
+                    "detection_band", data=self.detection_band, dtype=str_dt
+                )
+                hfile["meta"].create_dataset(
+                    "galfind_version", data=self.galfind_version, dtype=str_dt
+                )
+                if self.meta_properties is not None:
+                    hfile["meta"].create_group("meta_properties")
+                    for prop in self.meta_properties.keys():
+                        hfile["meta"]["meta_properties"].create_dataset(
+                            prop,
+                            data=str(self.meta_properties[prop]),
+                            dtype=str_dt,
+                        )
+
+                if self.auto_photometry is not None:
+                    hfile["auto_photometry"].create_dataset(
+                        "auto_photometry",
+                        data=str(self.auto_photometry),
                         dtype=str_dt,
                     )
-
-            if self.auto_photometry is not None:
-                hfile["auto_photometry"].create_dataset(
-                    "auto_photometry",
-                    data=str(self.auto_photometry),
-                    dtype=str_dt,
-                )
-            if self.total_photometry is not None:
-                hfile.create_group("total_photometry")
-                hfile["total_photometry"].create_dataset(
-                    "total_photometry",
-                    data=str(self.total_photometry),
-                    dtype=str_dt,
-                )
-            # Save paths and exts
-            keys_to_check = [
-                "im_paths",
-                "seg_paths",
-                "rms_err_paths",
-                "im_exts",
-                "rms_err_exts",
-            ]
-
-            hfile["paths"].create_dataset(
-                "im_paths", data=str(self.im_paths), dtype=str_dt
-            )
-            hfile["paths"].create_dataset(
-                "seg_paths", data=str(self.seg_paths), dtype=str_dt
-            )
-            hfile["paths"].create_dataset(
-                "rms_err_paths", data=str(self.rms_err_paths), dtype=str_dt
-            )
-            hfile["paths"].create_dataset(
-                "im_exts", data=str(self.im_exts), dtype=str_dt
-            )
-            hfile["paths"].create_dataset(
-                "rms_err_exts", data=str(self.rms_err_exts), dtype=str_dt
-            )
-
-            for aper in self.aperture_dict.keys():
-                hfile["aperture_photometry"].create_group(aper)
-                for key in self.aperture_dict[aper].keys():
-                    data = self.aperture_dict[aper][key]
-                    hfile["aperture_photometry"][aper].create_dataset(
-                        f"{key}", data=data
+                if self.total_photometry is not None:
+                    hfile.create_group("total_photometry")
+                    hfile["total_photometry"].create_dataset(
+                        "total_photometry",
+                        data=str(self.total_photometry),
+                        dtype=str_dt,
                     )
+                # Save paths and exts
+                keys_to_check = [
+                    "im_paths",
+                    "seg_paths",
+                    "rms_err_paths",
+                    "im_exts",
+                    "rms_err_exts",
+                ]
 
-            # Save raw data
-            for band in self.bands:
-                hfile["raw_data"].create_dataset(
-                    f"phot_{band}",
-                    data=self.phot_imgs[band],
-                    compression="gzip",
+                hfile["paths"].create_dataset(
+                    "im_paths", data=str(self.im_paths), dtype=str_dt
                 )
-                hfile["raw_data"].create_dataset(
-                    f"rms_err_{band}",
-                    data=self.rms_err_imgs[band],
-                    compression="gzip",
+                hfile["paths"].create_dataset(
+                    "seg_paths", data=str(self.seg_paths), dtype=str_dt
                 )
-                hfile["raw_data"].create_dataset(
-                    f"seg_{band}",
-                    data=self.seg_imgs[band],
-                    compression="gzip",
+                hfile["paths"].create_dataset(
+                    "rms_err_paths", data=str(self.rms_err_paths), dtype=str_dt
+                )
+                hfile["paths"].create_dataset(
+                    "im_exts", data=str(self.im_exts), dtype=str_dt
+                )
+                hfile["paths"].create_dataset(
+                    "rms_err_exts", data=str(self.rms_err_exts), dtype=str_dt
                 )
 
-            if self.unmatched_data is not None:
-                hfile.create_group("unmatched_data")
+                for aper in self.aperture_dict.keys():
+                    hfile["aperture_photometry"].create_group(aper)
+                    for key in self.aperture_dict[aper].keys():
+                        data = self.aperture_dict[aper][key]
+                        hfile["aperture_photometry"][aper].create_dataset(
+                            f"{key}", data=data
+                        )
+
+                # Save raw data
                 for band in self.bands:
-                    hfile["unmatched_data"].create_dataset(
+                    hfile["raw_data"].create_dataset(
                         f"phot_{band}",
-                        data=self.unmatched_data[band],
+                        data=self.phot_imgs[band],
                         compression="gzip",
                     )
-                    hfile["unmatched_data"].create_dataset(
+                    hfile["raw_data"].create_dataset(
                         f"rms_err_{band}",
-                        data=self.unmatched_rms_err[band],
+                        data=self.rms_err_imgs[band],
                         compression="gzip",
                     )
-                    hfile["unmatched_data"].create_dataset(
+                    hfile["raw_data"].create_dataset(
                         f"seg_{band}",
-                        data=self.unmatched_seg[band],
+                        data=self.seg_imgs[band],
                         compression="gzip",
                     )
 
-            if self.det_data is not None:
-                hfile.create_group("det_data")
-                hfile["det_data"].create_dataset(
-                    "phot",
-                    data=self.det_data["phot"],
-                    compression="gzip",
-                )
-                hfile["det_data"].create_dataset(
-                    "rms_err",
-                    data=self.det_data["rms_err"],
-                    compression="gzip",
-                )
-                hfile["det_data"].create_dataset(
-                    "seg",
-                    data=self.det_data["seg"],
-                    compression="gzip",
-                )
+                if self.unmatched_data is not None:
+                    hfile.create_group("unmatched_data")
+                    for band in self.bands:
+                        hfile["unmatched_data"].create_dataset(
+                            f"phot_{band}",
+                            data=self.unmatched_data[band],
+                            compression="gzip",
+                        )
+                        hfile["unmatched_data"].create_dataset(
+                            f"rms_err_{band}",
+                            data=self.unmatched_rms_err[band],
+                            compression="gzip",
+                        )
+                        hfile["unmatched_data"].create_dataset(
+                            f"seg_{band}",
+                            data=self.unmatched_seg[band],
+                            compression="gzip",
+                        )
 
-            # Save headers
-            for band in self.bands:
-                if self.phot_img_headers.get(band, None) is not None:
-                    hfile["headers"].create_dataset(
-                        f"{band}",
-                        data=str(self.phot_img_headers[band]),
-                        dtype=str_dt,
+                if self.det_data is not None:
+                    hfile.create_group("det_data")
+                    hfile["det_data"].create_dataset(
+                        "phot",
+                        data=self.det_data["phot"],
+                        compression="gzip",
+                    )
+                    hfile["det_data"].create_dataset(
+                        "rms_err",
+                        data=self.det_data["rms_err"],
+                        compression="gzip",
+                    )
+                    hfile["det_data"].create_dataset(
+                        "seg",
+                        data=self.det_data["seg"],
+                        compression="gzip",
                     )
 
-            if self.psf_matched_data is not None:
-                hfile.create_group("psf_matched_data")
-                for psf_type in self.psf_matched_data.keys():
-                    hfile["psf_matched_data"].create_group(psf_type)
-                    for band in self.bands:
-                        # print(band)
-                        # print(self.psf_matched_data[psf_type])
-                        hfile["psf_matched_data"][psf_type].create_dataset(
-                            band,
-                            data=self.psf_matched_data[psf_type][band],
-                            compression="gzip",
+                # Save headers
+                for band in self.bands:
+                    if self.phot_img_headers.get(band, None) is not None:
+                        hfile["headers"].create_dataset(
+                            f"{band}",
+                            data=str(self.phot_img_headers[band]),
+                            dtype=str_dt,
                         )
 
-            if self.psf_matched_rms_err is not None:
-                hfile.create_group("psf_matched_rms_err")
-                for psf_type in self.psf_matched_rms_err.keys():
-                    hfile["psf_matched_rms_err"].create_group(psf_type)
-                    for band in self.bands:
-                        hfile["psf_matched_rms_err"][psf_type].create_dataset(
-                            band,
-                            data=self.psf_matched_rms_err[psf_type][band],
-                            compression="gzip",
-                        )
-
-            # or here
-            # Save galaxy region
-
-            # Save binned maps
-            for map in self.maps:
-                hfile["bin_maps"].create_dataset(
-                    map, data=getattr(self, f"{map}_map"), compression="gzip"
-                )
-
-            if self.binned_flux_map is not None:
-                hfile["bin_fluxes"].create_dataset(
-                    "pixedfit", data=self.binned_flux_map, compression="gzip"
-                )
-            if self.binned_flux_err_map is not None:
-                hfile["bin_flux_err"].create_dataset(
-                    "pixedfit",
-                    data=self.binned_flux_err_map,
-                    compression="gzip",
-                )
-            if self.rms_background is not None:
-                hfile.create_dataset(
-                    "meta/rms_background",
-                    data=str(self.rms_background),
-                    compression="gzip",
-                )
-
-            # Small memory leak here - 0.2 MB per save
-
-            # Save PSFs
-            if self.psfs is not None and self.psfs != {}:
-                hfile.create_group("psfs")
-                for psf_type in self.psfs.keys():
-                    hfile["psfs"].create_group(psf_type)
-                    for band in self.bands:
-                        if self.psfs[psf_type].get(band) is not None:
-                            hfile["psfs"][psf_type].create_dataset(
+                if self.psf_matched_data is not None:
+                    hfile.create_group("psf_matched_data")
+                    for psf_type in self.psf_matched_data.keys():
+                        hfile["psf_matched_data"].create_group(psf_type)
+                        for band in self.bands:
+                            # print(band)
+                            # print(self.psf_matched_data[psf_type])
+                            hfile["psf_matched_data"][psf_type].create_dataset(
                                 band,
-                                data=self.psfs[psf_type][band],
+                                data=self.psf_matched_data[psf_type][band],
                                 compression="gzip",
                             )
 
-            if self.psfs_meta is not None and self.psfs_meta != {}:
-                hfile.create_group("psfs_meta")
-                for psf_type in self.psfs_meta.keys():
-                    hfile["psfs_meta"].create_group(psf_type)
-                    for band in self.bands:
-                        if self.psfs_meta[psf_type].get(band) is not None:
-                            data = str(self.psfs_meta[psf_type][band])
-                            hfile["psfs_meta"][psf_type].create_dataset(
+                if self.psf_matched_rms_err is not None:
+                    hfile.create_group("psf_matched_rms_err")
+                    for psf_type in self.psf_matched_rms_err.keys():
+                        hfile["psf_matched_rms_err"].create_group(psf_type)
+                        for band in self.bands:
+                            hfile["psf_matched_rms_err"][psf_type].create_dataset(
                                 band,
-                                data=data,
-                                dtype=str_dt,
-                            )
-
-            # Add psf_Kernels
-            if self.psf_kernels is not None and self.psf_kernels != {}:
-                hfile.create_group("psf_kernels")
-                for psf_type in self.psf_kernels.keys():
-                    hfile["psf_kernels"].create_group(psf_type)
-                    for band in self.bands:
-                        if self.psf_kernels[psf_type].get(band) is not None:
-                            hfile["psf_kernels"][psf_type].create_dataset(
-                                band,
-                                data=self.psf_kernels[psf_type][band],
+                                data=self.psf_matched_rms_err[psf_type][band],
                                 compression="gzip",
                             )
 
-            # Add galaxy region
-            if self.gal_region is not None:
-                hfile.create_group("galaxy_region")
-                for binmap_type in self.gal_region.keys():
-                    hfile["galaxy_region"].create_dataset(
-                        binmap_type,
-                        data=self.gal_region[binmap_type],
+                # or here
+                # Save galaxy region
+
+                # Save binned maps
+                for map in self.maps:
+                    hfile["bin_maps"].create_dataset(
+                        map, data=getattr(self, f"{map}_map"), compression="gzip"
+                    )
+
+                if self.binned_flux_map is not None:
+                    hfile["bin_fluxes"].create_dataset(
+                        "pixedfit", data=self.binned_flux_map, compression="gzip"
+                    )
+                if self.binned_flux_err_map is not None:
+                    hfile["bin_flux_err"].create_dataset(
+                        "pixedfit",
+                        data=self.binned_flux_err_map,
                         compression="gzip",
                     )
-            # Add flux_map
-            if self.flux_map is not None:
-                hfile.create_group("flux_map")
-                for binmap_type in self.flux_map.keys():
-                    hfile["flux_map"].create_dataset(
-                        binmap_type,
-                        data=self.flux_map[binmap_type],
+                if self.rms_background is not None:
+                    hfile.create_dataset(
+                        "meta/rms_background",
+                        data=str(self.rms_background),
                         compression="gzip",
                     )
 
-            for pos, property in enumerate(self.photometry_property_names):
-                if pos == 0:
-                    hfile.create_group("photometry_properties")
-                hfile["photometry_properties"].create_dataset(
-                    property, data=getattr(self, property)
-                )
-                # Add meta data
-                for key in getattr(self, f"{property}_meta").keys():
-                    hfile["photometry_properties"][property].attrs[key] = (
-                        getattr(self, f"{property}_meta")[key]
-                    )
+                # Small memory leak here - 0.2 MB per save
 
-            # Add resolved mass
-            if self.resolved_mass is not None:
-                hfile.create_group("resolved_mass")
-                for key in self.resolved_mass.keys():
-                    hfile["resolved_mass"].create_dataset(
-                        key, data=self.resolved_mass[key]
-                    )
-
-            # Add resolved SFH
-            if self.resolved_sfh is not None:
-                hfile.create_group("resolved_sfh")
-                for key in self.resolved_sfh.keys():
-                    hfile["resolved_sfh"].create_dataset(
-                        key, data=self.resolved_sfh[key], compression="gzip"
-                    )
-
-            # Add resolved SED
-            if self.resolved_sed is not None:
-                hfile.create_group("resolved_sed")
-                for key in self.resolved_sed.keys():
-                    hfile["resolved_sed"].create_dataset(
-                        key, data=self.resolved_sed[key], compression="gzip"
-                    )
-
-            # Add MockGalaxy properties
-            if type(self) is MockResolvedGalaxy:
-                # Copy over the mock galaxy properties if they exist
-                hfile.create_group("mock_galaxy")
-
-                if self.noise_images is not None:
-                    hfile["mock_galaxy"].create_group("noise_images")
-                    for key in self.noise_images.keys():
-                        hfile["mock_galaxy"]["noise_images"].create_dataset(
-                            key,
-                            data=self.noise_images[key],
-                            compression="gzip",
-                        )
-                if self.property_images is not None:
-                    hfile["mock_galaxy"].create_group("property_images")
-                    for key in self.property_images.keys():
-                        hfile["mock_galaxy"]["property_images"].create_dataset(
-                            key,
-                            data=self.property_images[key],
-                            compression="gzip",
-                        )
-                if self.seds is not None:
-                    hfile["mock_galaxy"].create_group("seds")
-                    for key in self.seds.keys():
-                        if type(self.seds[key]) is np.ndarray:
-                            hfile["mock_galaxy"]["seds"].create_dataset(
-                                key, data=self.seds[key], compression="gzip"
-                            )
-                        else:
-                            hfile["mock_galaxy"]["seds"].create_group(key)
-                            for key2 in self.seds[key].keys():
-                                hfile["mock_galaxy"]["seds"][
-                                    key
-                                ].create_dataset(
-                                    key2,
-                                    data=self.seds[key][key2],
+                # Save PSFs
+                if self.psfs is not None and self.psfs != {}:
+                    hfile.create_group("psfs")
+                    for psf_type in self.psfs.keys():
+                        hfile["psfs"].create_group(psf_type)
+                        for band in self.bands:
+                            if self.psfs[psf_type].get(band) is not None:
+                                hfile["psfs"][psf_type].create_dataset(
+                                    band,
+                                    data=self.psfs[psf_type][band],
                                     compression="gzip",
                                 )
 
-                if self.sfh is not None:
-                    hfile["mock_galaxy"].create_group("sfh")
-                    for key in self.sfh.keys():
-                        if type(self.sfh[key]) is np.ndarray:
-                            hfile["mock_galaxy"]["sfh"].create_dataset(
-                                key, data=self.sfh[key], compression="gzip"
-                            )
-                        else:
-                            hfile["mock_galaxy"]["sfh"].create_group(key)
-                            for key2 in self.sfh[key].keys():
-                                hfile["mock_galaxy"]["sfh"][
-                                    key
-                                ].create_dataset(
-                                    key2,
-                                    data=self.sfh[key][key2],
+                if self.psfs_meta is not None and self.psfs_meta != {}:
+                    hfile.create_group("psfs_meta")
+                    for psf_type in self.psfs_meta.keys():
+                        hfile["psfs_meta"].create_group(psf_type)
+                        for band in self.bands:
+                            if self.psfs_meta[psf_type].get(band) is not None:
+                                data = str(self.psfs_meta[psf_type][band])
+                                hfile["psfs_meta"][psf_type].create_dataset(
+                                    band,
+                                    data=data,
+                                    dtype=str_dt,
+                                )
+
+                # Add psf_Kernels
+                if self.psf_kernels is not None and self.psf_kernels != {}:
+                    hfile.create_group("psf_kernels")
+                    for psf_type in self.psf_kernels.keys():
+                        hfile["psf_kernels"].create_group(psf_type)
+                        for band in self.bands:
+                            if self.psf_kernels[psf_type].get(band) is not None:
+                                hfile["psf_kernels"][psf_type].create_dataset(
+                                    band,
+                                    data=self.psf_kernels[psf_type][band],
                                     compression="gzip",
                                 )
 
-        # Write photometry table(s)
-        if self.photometry_table is not None:
-            for psf_type in self.photometry_table.keys():
-                for binmap_type in self.photometry_table[psf_type].keys():
-                    write_table_hdf5(
-                        self.photometry_table[psf_type][binmap_type],
-                        new_h5_path,
-                        f"binned_photometry_table/{psf_type}/{binmap_type}",
-                        serialize_meta=True,
-                        overwrite=True,
-                        append=True,
-                    )
-        # Write sed fitting table(s)
-        if self.sed_fitting_table is not None:
-            for tool in self.sed_fitting_table.keys():
-                for run in self.sed_fitting_table[tool].keys():
-                    write_table_hdf5(
-                        self.sed_fitting_table[tool][run],
-                        new_h5_path,
-                        f"sed_fitting_table/{tool}/{run}",
-                        serialize_meta=True,
-                        overwrite=True,
-                        append=True,
-                    )
+                # Add galaxy region
+                if self.gal_region is not None:
+                    hfile.create_group("galaxy_region")
+                    for binmap_type in self.gal_region.keys():
+                        hfile["galaxy_region"].create_dataset(
+                            binmap_type,
+                            data=self.gal_region[binmap_type],
+                            compression="gzip",
+                        )
+                # Add flux_map
+                if self.flux_map is not None:
+                    hfile.create_group("flux_map")
+                    for binmap_type in self.flux_map.keys():
+                        hfile["flux_map"].create_dataset(
+                            binmap_type,
+                            data=self.flux_map[binmap_type],
+                            compression="gzip",
+                        )
 
-        # Add anything else from the old file to the new file
-        if os.path.exists(self.h5_path) and append != "":
-            old_hfile = h5.File(self.h5_path, "r")
-            # print("Removing temp", self.h5_path)
-            hfile = h5.File(self.h5_path.replace(".h5", f"{append}.h5"), "a")
-            for key in old_hfile.keys():
-                if key not in hfile.keys():
-                    print("Copying", key)
-                    old_hfile.copy(key, hfile)
+                for pos, property in enumerate(self.photometry_property_names):
+                    if pos == 0:
+                        hfile.create_group("photometry_properties")
+                    hfile["photometry_properties"].create_dataset(
+                        property, data=getattr(self, property)
+                    )
+                    # Add meta data
+                    for key in getattr(self, f"{property}_meta").keys():
+                        hfile["photometry_properties"][property].attrs[key] = (
+                            getattr(self, f"{property}_meta")[key]
+                        )
 
-            old_hfile.close()
-            hfile.close()
+                # Add resolved mass
+                if self.resolved_mass is not None:
+                    hfile.create_group("resolved_mass")
+                    for key in self.resolved_mass.keys():
+                        hfile["resolved_mass"].create_dataset(
+                            key, data=self.resolved_mass[key]
+                        )
+
+                # Add resolved SFH
+                if self.resolved_sfh is not None:
+                    hfile.create_group("resolved_sfh")
+                    for key in self.resolved_sfh.keys():
+                        hfile["resolved_sfh"].create_dataset(
+                            key, data=self.resolved_sfh[key], compression="gzip"
+                        )
+
+                # Add resolved SED
+                if self.resolved_sed is not None:
+                    hfile.create_group("resolved_sed")
+                    for key in self.resolved_sed.keys():
+                        hfile["resolved_sed"].create_dataset(
+                            key, data=self.resolved_sed[key], compression="gzip"
+                        )
+
+                # Add MockGalaxy properties
+                if type(self) is MockResolvedGalaxy:
+                    # Copy over the mock galaxy properties if they exist
+                    hfile.create_group("mock_galaxy")
+
+                    if self.noise_images is not None:
+                        hfile["mock_galaxy"].create_group("noise_images")
+                        for key in self.noise_images.keys():
+                            hfile["mock_galaxy"]["noise_images"].create_dataset(
+                                key,
+                                data=self.noise_images[key],
+                                compression="gzip",
+                            )
+                    if self.property_images is not None:
+                        hfile["mock_galaxy"].create_group("property_images")
+                        for key in self.property_images.keys():
+                            hfile["mock_galaxy"]["property_images"].create_dataset(
+                                key,
+                                data=self.property_images[key],
+                                compression="gzip",
+                            )
+                    if self.seds is not None:
+                        hfile["mock_galaxy"].create_group("seds")
+                        for key in self.seds.keys():
+                            if type(self.seds[key]) is np.ndarray:
+                                hfile["mock_galaxy"]["seds"].create_dataset(
+                                    key, data=self.seds[key], compression="gzip"
+                                )
+                            else:
+                                hfile["mock_galaxy"]["seds"].create_group(key)
+                                for key2 in self.seds[key].keys():
+                                    hfile["mock_galaxy"]["seds"][
+                                        key
+                                    ].create_dataset(
+                                        key2,
+                                        data=self.seds[key][key2],
+                                        compression="gzip",
+                                    )
+
+                    if self.sfh is not None:
+                        hfile["mock_galaxy"].create_group("sfh")
+                        for key in self.sfh.keys():
+                            if type(self.sfh[key]) is np.ndarray:
+                                hfile["mock_galaxy"]["sfh"].create_dataset(
+                                    key, data=self.sfh[key], compression="gzip"
+                                )
+                            else:
+                                hfile["mock_galaxy"]["sfh"].create_group(key)
+                                for key2 in self.sfh[key].keys():
+                                    hfile["mock_galaxy"]["sfh"][
+                                        key
+                                    ].create_dataset(
+                                        key2,
+                                        data=self.sfh[key][key2],
+                                        compression="gzip",
+                                    )
+
+                # Write photometry table(s)
+                if self.photometry_table is not None:
+                    for psf_type in self.photometry_table.keys():
+                        for binmap_type in self.photometry_table[psf_type].keys():
+                            write_table_hdf5(
+                                self.photometry_table[psf_type][binmap_type],
+                                new_h5_path,
+                                f"binned_photometry_table/{psf_type}/{binmap_type}",
+                                serialize_meta=True,
+                                overwrite=True,
+                                append=True,
+                            )
+                # Write sed fitting table(s)
+                if self.sed_fitting_table is not None:
+                    for tool in self.sed_fitting_table.keys():
+                        for run in self.sed_fitting_table[tool].keys():
+                            write_table_hdf5(
+                                self.sed_fitting_table[tool][run],
+                                new_h5_path,
+                                f"sed_fitting_table/{tool}/{run}",
+                                serialize_meta=True,
+                                overwrite=True,
+                                append=True,
+                            )
+
+                # Add anything else from the old file to the new file
+                exists = False
+                if os.path.exists(self.h5_path) and append != "":
+                    exists = True
+                    with h5.File(self.h5_path, "r") as old_hfile:
+                        # print("Removing temp", self.h5_path)
+                        for key in old_hfile.keys():
+                            if key not in hfile.keys():
+                                print("Copying", key)
+                                old_hfile.copy(key, hfile)
+        except ValueError as e:
+            print(f'Blocking Error: {e}')
+            return False
+        
+        if exists:
             os.remove(self.h5_path)
             os.rename(
-                self.h5_path.replace(".h5", f"{append}.h5"), self.h5_path
-            )
+                    self.h5_path.replace(".h5", f"{append}.h5"), self.h5_path
+                )
 
     def convolve_with_psf(self, psf_type="webbpsf", init_run=False):
         """Convolve the images with the PSF
@@ -5118,6 +5121,7 @@ class ResolvedGalaxy:
         use_mpi=True,
         only_run=False,  # Only run the bagpipes fit, don't do any other processing - good for MPI
         time_calls=False,
+        return_run_args=False,
     ):
         # meta - run_name, use_bpass, redshift (override)
         assert (
@@ -5383,6 +5387,15 @@ class ResolvedGalaxy:
                 if os.path.exists(path) and not os.path.exists(nrun_name):
                     os.rename(path, nrun_name)
 
+        if return_run_args:
+            return {'ids':ids,
+                   'fit_instructions':fit_instructions,
+                   'galaxy_id':self.galaxy_id,
+                   'phot':[self.provide_bagpipes_phot(i) for i in ids]
+                   'cat_filt_list':nircam_filts,
+                   'redshifts':
+                   'redshift_sigma':redshift_sigma,
+            }
         if not exist_already:
             fit_cat = pipes.fit_catalogue(
                 ids,
@@ -5402,7 +5415,8 @@ class ResolvedGalaxy:
             print("Beginning fit")
             print(fit_instructions)
             # Run this with MPI
-
+            if mpi_serial and size > 1:
+                print('Running with MPI, one galaxy per core. ')
             fit_cat.fit(
                 verbose=False,
                 mpi_serial=mpi_serial,
@@ -10452,6 +10466,37 @@ class MultipleResolvedGalaxy:
                 rfunction = function
             rfunction(*args, **kwargs)
 
+
+    def run_bagpipes_multiple(bagpipes_config,
+        filt_dir=bagpipes_filter_dir,
+        fit_photometry="all",
+        run_dir="pipes/"):
+        '''
+         Convenience function to run a set of run_dicts in parallel, and save results into one catalogue.
+        Can differ in terms of photo-z, priors etc but should be the same overall model 
+        Better for mpirun.
+
+        Steps:
+            Get list of IDs from each galaxy that will be fit. 
+            Call get_bagpipes_phot for each and store it. 
+            Store each input argument for bagpipes in a file (and generate new unique IDs)
+            Trigger own seperate mpirun bash script to load in all arguments and IDs, without class overhead. 
+            Will need to provide its own singular function to provide photometry given an ID.
+            After run, move things back to where they need to be and seperate catalogue out again.
+        
+        '''
+
+        configs = [galaxy.run_bagpipes(bagpipe_config, 
+                                        filt_dir = filt_dir, 
+                                        fit_photometry = fit_photometry, 
+                                        run_dir = run_dir,
+                                        return_run_args = True)
+                                        for galaxy in self]
+
+        # Dump configs to json 
+
+        
+        
 
 def run_bagpipes_wrapper(
     galaxy_id,
