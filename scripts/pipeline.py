@@ -39,6 +39,9 @@ try:
     size = MPI.COMM_WORLD.Get_size()
     from mpi4py.futures import MPIPoolExecutor
 
+    if size > 1:
+        print("Running with mpirun/mpiexec detected.")
+
 except ImportError:
     rank = 0
     size = 1
@@ -99,7 +102,16 @@ if __name__ == "__main__":
 
     cat = None
 
-    if not just_bagpipes_parallel:
+    if not just_bagpipes_parallel and n_jobs > 1:
+        galaxies = ResolvedGalaxy.init(
+            list(ids),
+            "JOF_psfmatched",
+            "v11",
+            already_psf_matched=True,
+            cutout_size=cutout_size,
+            h5_folder=h5_folder,
+        )
+        # Do again to load from h5
         galaxies = ResolvedGalaxy.init(
             list(ids),
             "JOF_psfmatched",
@@ -224,19 +236,28 @@ if __name__ == "__main__":
         dpl_dicts,
         lognorm_dicts,
     ]:
-        size = 1
-        if size >= 2:
-            # This option for running by with mpirun/mpiexec
-            n_jobs = 6
+        if size > 1:
+            for galaxy_id, resolved_dict in zip(ids, run_dicts):
+                # This option for running by with mpirun/mpiexec
+                run_bagpipes_wrapper(
+                    galaxy_id,
+                    resolved_dict,
+                    cutout_size=cutout_size,
+                    h5_folder=h5_folder,
+                    alert=True,
+                    use_mpi=True,
+                    update_h5=False,
+                )
+
         else:
             if computer == "morgan":
                 n_jobs = n_jobs
                 backend = "loky"
             elif computer == "singularity":
                 n_jobs = np.min([len(ids) + 1, n_jobs])
-                # backend = "multiprocessing"
+                backend = "multiprocessing"
                 # backend = "threading"
-                backend = "loky"
+                # backend = "loky"
 
         if n_jobs == 1:
             print("Running in serial.")

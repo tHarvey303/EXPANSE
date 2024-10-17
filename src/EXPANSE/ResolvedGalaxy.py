@@ -117,7 +117,7 @@ elif computer == "morgan":
     bagpipes_filter_dir = bagpipes_dir + "inputs/filters/"
 elif computer == "singularity":
     print("Running in container.")
-    bagpipes_filter_dir = "filters/"
+    bagpipes_filter_dir = "/mnt/filters/"
 elif computer == "unknown":
     print("Unknown computer.")
     bagpipes_filter_dir = "filters/"
@@ -382,6 +382,7 @@ class ResolvedGalaxy:
         h5_folder=resolved_galaxy_dir,
         dont_psf_match_bands=[],
         already_psf_matched=False,
+        save_out=True,
     ):
         """Initialise a galaxy object from either a .h5 file or GALFIND catalogue
 
@@ -412,6 +413,8 @@ class ResolvedGalaxy:
             The bands to not PSF match. Default is [].
         already_psf_matched : bool, optional
             Whether the bands are already PSF matched. Default is False.
+        save_out: bool, optional
+            Whether to auto rewrite the .h5
 
 
         """
@@ -420,7 +423,9 @@ class ResolvedGalaxy:
             galaxy_name = f"{survey}_{galaxy_id}"
             if os.path.exists(f"{h5_folder}/{galaxy_name}.h5"):
                 print("Loading from .h5")
-                return cls.init_from_h5(galaxy_name, h5_folder=h5_folder)
+                return cls.init_from_h5(
+                    galaxy_name, h5_folder=h5_folder, save_out=save_out
+                )
             else:
                 print("Loading from GALFIND")
                 return cls.init_from_galfind(
@@ -10411,6 +10416,7 @@ def run_bagpipes_wrapper(
     alert=False,
     mpi_serial=False,
     use_mpi=False,
+    update_h5=True,
 ):
     # print('Doing', galaxy_id, resolved_dict['meta']['run_name'], overwrite, overwrite_internal)
     # return
@@ -10428,6 +10434,7 @@ def run_bagpipes_wrapper(
                 mock_version=version,
                 cutout_size=cutout_size,
                 h5_folder=h5_folder,
+                save_out=update_h5,
             )
         else:
             galaxy = ResolvedGalaxy.init(
@@ -10436,6 +10443,7 @@ def run_bagpipes_wrapper(
                 version=version,
                 cutout_size=cutout_size,
                 h5_folder=h5_folder,
+                save_out=update_h5,
             )
 
         # Run bagpipes
@@ -10445,6 +10453,7 @@ def run_bagpipes_wrapper(
             overwrite_internal=overwrite_internal,
             mpi_serial=mpi_serial,
             use_mpi=use_mpi,
+            save_internal=update_h5,
         )
 
         if resolved_dict["meta"]["fit_photometry"] in ["bin", "all"]:
