@@ -30,8 +30,8 @@ pregrids
 *.tar.gz
 *.wsl
 galaxies/eazy_outputs/*
-IFU_proposal*
-
+galaxies/singlebin/*
+scripts/IFU*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

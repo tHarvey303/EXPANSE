@@ -73,7 +73,7 @@ initial_load = False
 filter_single_bin = True
 n_jobs = 8
 # Set to True if you want to load the data from the catalogue
-just_bagpipes_parallel = False
+just_bagpipes_parallel = True
 
 if __name__ == "__main__":
     if computer == "morgan":
@@ -82,6 +82,10 @@ if __name__ == "__main__":
         ids = cat_selected["NUMBER"]
         cutout_size = cat_selected["CUTOUT_SIZE"]
         ids = ids  # For testing
+        if filter_single_bin and "Nbins_pixedfit" in cat_selected.colnames:
+            mask = cat_selected["Nbins_pixedfit"] > 1
+            ids = ids[mask]
+
         overwrite = True
         h5_folder = resolved_galaxy_dir
 
@@ -99,11 +103,10 @@ if __name__ == "__main__":
         # remove
         cutout_size = [None] * len(ids)
         # Not used when loading from h5
+        cat_selected = None
 
     # Should speed it up?
-
     cat = None
-
     if not just_bagpipes_parallel and n_jobs > 1:
         galaxies = ResolvedGalaxy.init(
             list(ids),
@@ -127,7 +130,7 @@ if __name__ == "__main__":
 
     num_of_bins = 0
     num_of_single_bin = 0
-    ids_single = []
+
     if rank == 0 and initial_load:
         for posi, galaxy in enumerate(galaxies):
             # Add original imaging back
@@ -174,26 +177,29 @@ if __name__ == "__main__":
 
             import psutil
 
-            process = psutil.Process(os.getpid())
-            print(process.open_files())
+            # process = psutil.Process(os.getpid())
+            # print(process.open_files())
 
             nbins = galaxy.get_number_of_bins()
-            if nbins == 1:
-                ids_single.append(galaxy.galaxy_id)
-                num_of_single_bin += 1
-
             num_of_bins += nbins
 
         print(f"Total number of bins to fit: {num_of_bins}")
         print(f"Number of galaxies with only one bin: {num_of_single_bin}")
         # Run Bagpipes in parallel
+    if not just_bagpipes_parallel:
+        number_of_bins = [galaxy.get_number_of_bins() for galaxy in galaxies]
 
-    if filter_single_bin:
-        print(f"Total number of galaxies to fit: {len(ids)}")
-        print(f"Filtering out {num_of_single_bin} galaxies with only one bin.")
-        print(ids_single)
-        ids = [i for i in ids if i not in ids_single]
-        print(f"New number of galaxies to fit: {len(ids)}")
+        if cat_selected is not None:
+            cat_selected["Nbins_pixedfit"] = number_of_bins
+            cat_selected.write(catalog_path_selected, overwrite=True)
+
+        if filter_single_bin:
+            mask = np.array(number_of_bins) > 1
+            print(f"Total number of galaxies to fit: {len(ids)}")
+            print(f"Filtering out {np.sum(~mask)} galaxies with only one bin.")
+            ids_single = np.array(ids)[~mask]
+            ids = [i for i in ids if i not in ids_single]
+            print(f"New number of galaxies to fit: {len(ids)}")
 
     from EXPANSE.bagpipes.pipes_models import (
         continuity_dict,
@@ -222,14 +228,17 @@ if __name__ == "__main__":
     lognorm_dicts = create_dicts(
         lognorm_dict, override_meta=override_meta, num=len(ids)
     )
-    resolved_dicts = create_dicts(resolved_dict, num=len(ids))
+
+    override_meta_resolved = {
+        "use_bpass": True,
+    }
+    resolved_dicts = create_dicts(
+        resolved_dict, num=len(ids), override_meta=override_meta_resolved
+    )
 
     # Not fitting resolved yet
     for run_dicts in [
-        delayed_dicts,
-        continuity_dicts,
-        dpl_dicts,
-        lognorm_dicts,
+        resolved_dicts,
     ]:
         if size > 1:
             for galaxy_id, resolved_dict in zip(ids, run_dicts):

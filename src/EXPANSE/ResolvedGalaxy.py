@@ -923,7 +923,11 @@ class ResolvedGalaxy:
         h5_names = sorted(h5_names)
 
         # Remove any with 'mock' in the name
-        h5_names = [h5_name for h5_name in h5_names if "mock" not in h5_name]
+        h5_names = [
+            h5_name
+            for h5_name in h5_names
+            if "mock" not in h5_name and "temp" not in h5_name
+        ]
 
         print("Found", len(h5_names), "galaxies in field", field)
         # print(h5_names)
@@ -10443,11 +10447,6 @@ def run_bagpipes_wrapper(
 ):
     # print('Doing', galaxy_id, resolved_dict['meta']['run_name'], overwrite, overwrite_internal)
     # return
-
-    print("here")
-    print("galaxy_id", galaxy_id)
-    print("version", version)
-    print("h5_folder", h5_folder)
 
     try:
         if "mock" in str(galaxy_id):
