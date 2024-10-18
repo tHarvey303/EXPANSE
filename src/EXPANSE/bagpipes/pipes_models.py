@@ -229,9 +229,36 @@ overall_dict = {
 resolved_dict = copy.deepcopy(overall_dict)
 
 
-def create_dicts(dict, num, override_meta=None):
+def create_dicts(
+    dict,
+    num,
+    override_meta=None,
+    redshifts=None,
+    cont_nbins=6,
+    first_bin=10 * u.Myr,
+    second_bin=None,
+):
     dict = copy.deepcopy(dict)
     if override_meta:
         dict["meta"].update(override_meta)
     results = [copy.deepcopy(dict) for i in range(num)]
+    if (
+        redshifts is not None
+        and "continuity" in dict["fit_instructions"].keys()
+    ):
+        assert len(redshifts) == num
+        print("Updating continuity bin edges for redshifts")
+        for redshift, result in zip(redshifts, results):
+            result["fit_instructions"]["continuity"]["bin_edges"] = list(
+                calculate_bins(
+                    redshift=redshift,
+                    num_bins=cont_nbins,
+                    first_bin=first_bin,
+                    second_bin=second_bin,
+                    return_flat=True,
+                    output_unit="Myr",
+                    log_time=False,
+                )
+            )
+
     return results

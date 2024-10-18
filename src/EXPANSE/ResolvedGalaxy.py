@@ -72,6 +72,7 @@ from .utils import (
     compass,
 )
 
+"""
 try:
     from mpi4py import MPI
 
@@ -81,7 +82,7 @@ try:
 
 except ImportError:
     rank = 0
-    size = 1
+    size = 1"""
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 # This class is designed to hold all the data for a galaxy, including the cutouts, segmentation maps, and RMS error maps.
@@ -424,7 +425,9 @@ class ResolvedGalaxy:
             if os.path.exists(f"{h5_folder}/{galaxy_name}.h5"):
                 print("Loading from .h5")
                 return cls.init_from_h5(
-                    galaxy_name, h5_folder=h5_folder, save_out=save_out
+                    galaxy_name,
+                    h5_folder=h5_folder,
+                    save_out=save_out,
                 )
             else:
                 print("Loading from GALFIND")
@@ -453,7 +456,9 @@ class ResolvedGalaxy:
             if all(found):
                 print("Loading from .h5")
                 return cls.init_multiple_from_h5(
-                    galaxy_names, h5_folder=h5_folder
+                    galaxy_names,
+                    h5_folder=h5_folder,
+                    save_out=save_out,
                 )
             else:
                 # Load those that are found
@@ -467,7 +472,9 @@ class ResolvedGalaxy:
                         f"{survey}_{gal_id}" for gal_id in found_ids
                     ]
                     found_galaxies = cls.init_multiple_from_h5(
-                        galaxy_names, h5_folder=h5_folder
+                        galaxy_names,
+                        h5_folder=h5_folder,
+                        save_out=save_out,
                     )
 
                 else:
@@ -907,14 +914,18 @@ class ResolvedGalaxy:
             return objects[0]
 
     @classmethod
-    def init_multiple_from_h5(cls, h5_names, h5_folder=resolved_galaxy_dir):
+    def init_multiple_from_h5(
+        cls, h5_names, h5_folder=resolved_galaxy_dir, save_out=True
+    ):
         return [
-            cls.init_from_h5(h5_name, h5_folder=h5_folder)
+            cls.init_from_h5(h5_name, h5_folder=h5_folder, save_out=save_out)
             for h5_name in h5_names
         ]
 
     @classmethod
-    def init_all_field_from_h5(cls, field, h5_folder=resolved_galaxy_dir):
+    def init_all_field_from_h5(
+        cls, field, h5_folder=resolved_galaxy_dir, save_out=True
+    ):
         h5_names = glob.glob(f"{h5_folder}{field}*.h5")
 
         h5_names = [h5_name.split("/")[-1] for h5_name in h5_names]
@@ -931,7 +942,9 @@ class ResolvedGalaxy:
 
         print("Found", len(h5_names), "galaxies in field", field)
         # print(h5_names)
-        return cls.init_multiple_from_h5(h5_names, h5_folder=h5_folder)
+        return cls.init_multiple_from_h5(
+            h5_names, h5_folder=h5_folder, save_out=False
+        )
 
     @classmethod
     def init_from_h5(
@@ -1875,7 +1888,9 @@ class ResolvedGalaxy:
                 hfile["meta"].create_dataset(
                     "bands", data=str(list(self.bands)), dtype=str_dt
                 )
-                hfile["meta"].create_dataset("cutout_size", data=self.cutout_size)
+                hfile["meta"].create_dataset(
+                    "cutout_size", data=self.cutout_size
+                )
                 hfile["meta"].create_dataset(
                     "zps", data=str(self.im_zps), dtype=str_dt
                 )
@@ -2052,7 +2067,9 @@ class ResolvedGalaxy:
                     for psf_type in self.psf_matched_rms_err.keys():
                         hfile["psf_matched_rms_err"].create_group(psf_type)
                         for band in self.bands:
-                            hfile["psf_matched_rms_err"][psf_type].create_dataset(
+                            hfile["psf_matched_rms_err"][
+                                psf_type
+                            ].create_dataset(
                                 band,
                                 data=self.psf_matched_rms_err[psf_type][band],
                                 compression="gzip",
@@ -2064,12 +2081,16 @@ class ResolvedGalaxy:
                 # Save binned maps
                 for map in self.maps:
                     hfile["bin_maps"].create_dataset(
-                        map, data=getattr(self, f"{map}_map"), compression="gzip"
+                        map,
+                        data=getattr(self, f"{map}_map"),
+                        compression="gzip",
                     )
 
                 if self.binned_flux_map is not None:
                     hfile["bin_fluxes"].create_dataset(
-                        "pixedfit", data=self.binned_flux_map, compression="gzip"
+                        "pixedfit",
+                        data=self.binned_flux_map,
+                        compression="gzip",
                     )
                 if self.binned_flux_err_map is not None:
                     hfile["bin_flux_err"].create_dataset(
@@ -2118,7 +2139,10 @@ class ResolvedGalaxy:
                     for psf_type in self.psf_kernels.keys():
                         hfile["psf_kernels"].create_group(psf_type)
                         for band in self.bands:
-                            if self.psf_kernels[psf_type].get(band) is not None:
+                            if (
+                                self.psf_kernels[psf_type].get(band)
+                                is not None
+                            ):
                                 hfile["psf_kernels"][psf_type].create_dataset(
                                     band,
                                     data=self.psf_kernels[psf_type][band],
@@ -2169,7 +2193,9 @@ class ResolvedGalaxy:
                     hfile.create_group("resolved_sfh")
                     for key in self.resolved_sfh.keys():
                         hfile["resolved_sfh"].create_dataset(
-                            key, data=self.resolved_sfh[key], compression="gzip"
+                            key,
+                            data=self.resolved_sfh[key],
+                            compression="gzip",
                         )
 
                 # Add resolved SED
@@ -2177,7 +2203,9 @@ class ResolvedGalaxy:
                     hfile.create_group("resolved_sed")
                     for key in self.resolved_sed.keys():
                         hfile["resolved_sed"].create_dataset(
-                            key, data=self.resolved_sed[key], compression="gzip"
+                            key,
+                            data=self.resolved_sed[key],
+                            compression="gzip",
                         )
 
                 # Add MockGalaxy properties
@@ -2188,7 +2216,9 @@ class ResolvedGalaxy:
                     if self.noise_images is not None:
                         hfile["mock_galaxy"].create_group("noise_images")
                         for key in self.noise_images.keys():
-                            hfile["mock_galaxy"]["noise_images"].create_dataset(
+                            hfile["mock_galaxy"][
+                                "noise_images"
+                            ].create_dataset(
                                 key,
                                 data=self.noise_images[key],
                                 compression="gzip",
@@ -2196,7 +2226,9 @@ class ResolvedGalaxy:
                     if self.property_images is not None:
                         hfile["mock_galaxy"].create_group("property_images")
                         for key in self.property_images.keys():
-                            hfile["mock_galaxy"]["property_images"].create_dataset(
+                            hfile["mock_galaxy"][
+                                "property_images"
+                            ].create_dataset(
                                 key,
                                 data=self.property_images[key],
                                 compression="gzip",
@@ -2206,7 +2238,9 @@ class ResolvedGalaxy:
                         for key in self.seds.keys():
                             if type(self.seds[key]) is np.ndarray:
                                 hfile["mock_galaxy"]["seds"].create_dataset(
-                                    key, data=self.seds[key], compression="gzip"
+                                    key,
+                                    data=self.seds[key],
+                                    compression="gzip",
                                 )
                             else:
                                 hfile["mock_galaxy"]["seds"].create_group(key)
@@ -2240,7 +2274,9 @@ class ResolvedGalaxy:
                 # Write photometry table(s)
                 if self.photometry_table is not None:
                     for psf_type in self.photometry_table.keys():
-                        for binmap_type in self.photometry_table[psf_type].keys():
+                        for binmap_type in self.photometry_table[
+                            psf_type
+                        ].keys():
                             write_table_hdf5(
                                 self.photometry_table[psf_type][binmap_type],
                                 new_h5_path,
@@ -2273,14 +2309,14 @@ class ResolvedGalaxy:
                                 print("Copying", key)
                                 old_hfile.copy(key, hfile)
         except ValueError as e:
-            print(f'Blocking Error: {e}')
+            print(f"Blocking Error: {e}")
             return False
-        
+
         if exists:
             os.remove(self.h5_path)
             os.rename(
-                    self.h5_path.replace(".h5", f"{append}.h5"), self.h5_path
-                )
+                self.h5_path.replace(".h5", f"{append}.h5"), self.h5_path
+            )
 
     def convolve_with_psf(self, psf_type="webbpsf", init_run=False):
         """Convolve the images with the PSF
@@ -4511,6 +4547,7 @@ class ResolvedGalaxy:
 
     def provide_bagpipes_phot(self, gal_id):
         """Provide the fluxes in the correct format for bagpipes"""
+        gal_id = str(gal_id)
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
         if hasattr(self, "use_psf_type"):
@@ -5181,6 +5218,9 @@ class ResolvedGalaxy:
             rank = 0
             size = 1
 
+        if return_run_args:
+            rank = 10  # Skips making folders etc.
+
         redshift_sigma = meta.get("redshift_sigma", 0)
         min_redshift_sigma = meta.get("min_redshift_sigma", 0)
         sampler = meta.get("sampler", "multinest")
@@ -5204,7 +5244,7 @@ class ResolvedGalaxy:
             redshift_sigma = None
 
         if (
-            type(redshift) in [float, np.float64]
+            type(redshift) in [float, np.float64, np.float32]
             and redshift_sigma is not None
         ):
             print(
@@ -5307,7 +5347,7 @@ class ResolvedGalaxy:
         import hashlib
 
         out_subdir_encoded = hashlib.md5(out_subdir.encode()).hexdigest()
-        
+
         existing_files = []
         for i in [out_subdir, out_subdir_encoded]:
             for j in ["posterior"]:
@@ -5388,15 +5428,19 @@ class ResolvedGalaxy:
                     os.rename(path, nrun_name)
 
         if return_run_args:
-            return {'ids':ids,
-                   'fit_instructions':fit_instructions,
-                   'galaxy_id':self.galaxy_id,
-                   'phot':[self.provide_bagpipes_phot(i) for i in ids]
-                   'cat_filt_list':nircam_filts,
-                   'redshifts':
-                   'redshift_sigma':redshift_sigma,
+            # print(type(redshifts), type(redshift_sigma), type(nircam_filts), type(self.provide_bagpipes_phot('1')))
+            # dog
+            return {
+                "ids": ids,
+                "fit_instructions": fit_instructions,
+                "meta": meta,
+                "galaxy_id": self.galaxy_id,
+                "phot": [self.provide_bagpipes_phot(i).tolist() for i in ids],
+                "cat_filt_list": nircam_filts,
+                "redshifts": list(redshifts),
+                "redshift_sigma": redshift_sigma,
             }
-        if not exist_already:
+        if not exist_already or return_run_args:
             fit_cat = pipes.fit_catalogue(
                 ids,
                 fit_instructions,
@@ -5416,16 +5460,16 @@ class ResolvedGalaxy:
             print(fit_instructions)
             # Run this with MPI
             if mpi_serial and size > 1:
-                print('Running with MPI, one galaxy per core. ')
+                print("Running with MPI, one galaxy per core. ")
             fit_cat.fit(
                 verbose=False,
                 mpi_serial=mpi_serial,
                 sampler=sampler,
                 use_mpi=use_mpi,
             )
-        
+
         if rank == 0:
-        # Move files to the correct location
+            # Move files to the correct location
             for i in ["posterior", "plots", "pdfs", "seds", "sfr"]:
                 new_path = f"{run_dir}/{i}/{out_subdir}"
                 current_path = f"{run_dir}/{i}/{out_subdir_encoded}"
@@ -5449,7 +5493,9 @@ class ResolvedGalaxy:
 
             # Move catalogue
             path = f"{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits"
-            os.makedirs(f"{run_dir}/cats/{run_name}/{self.survey}", exist_ok=True)
+            os.makedirs(
+                f"{run_dir}/cats/{run_name}/{self.survey}", exist_ok=True
+            )
             old_name = f"{run_dir}/cats/{out_subdir_encoded}.fits"
             # os.makedirs(f'{run_dir}/cats/{out_subdir_encoded}', exist_ok=True)
             # Check if all folders in path exist
@@ -10466,37 +10512,124 @@ class MultipleResolvedGalaxy:
                 rfunction = function
             rfunction(*args, **kwargs)
 
-
-    def run_bagpipes_multiple(bagpipes_config,
+    def run_bagpipes_parallel(
+        self,
+        bagpipes_configs,
         filt_dir=bagpipes_filter_dir,
         fit_photometry="all",
-        run_dir="pipes/"):
-        '''
+        run_dir="pipes/",
+        n_jobs=8,
+        out_subdir_name="parallel_temp",
+    ):
+        """
          Convenience function to run a set of run_dicts in parallel, and save results into one catalogue.
-        Can differ in terms of photo-z, priors etc but should be the same overall model 
+        Can differ in terms of photo-z, priors etc but should be the same overall model
         Better for mpirun.
 
         Steps:
-            Get list of IDs from each galaxy that will be fit. 
-            Call get_bagpipes_phot for each and store it. 
+            Get list of IDs from each galaxy that will be fit.
+            Call get_bagpipes_phot for each and store it.
             Store each input argument for bagpipes in a file (and generate new unique IDs)
-            Trigger own seperate mpirun bash script to load in all arguments and IDs, without class overhead. 
+            Trigger own seperate mpirun bash script to load in all arguments and IDs, without class overhead.
             Will need to provide its own singular function to provide photometry given an ID.
             After run, move things back to where they need to be and seperate catalogue out again.
-        
-        '''
 
-        configs = [galaxy.run_bagpipes(bagpipe_config, 
-                                        filt_dir = filt_dir, 
-                                        fit_photometry = fit_photometry, 
-                                        run_dir = run_dir,
-                                        return_run_args = True)
-                                        for galaxy in self]
+        """
 
-        # Dump configs to json 
+        assert all(
+            bagpipes_configs[0]["meta"]["run_name"]
+            == config["meta"]["run_name"]
+            for config in bagpipes_configs
+        ), "All bagpipes configs must have the same run_name (and therefore same overall model)"
 
-        
-        
+        if type(bagpipes_configs) is dict:
+            bagpipes_configs = [
+                copy.deepcopy(bagpipes_configs)
+                for _ in range(len(self.galaxies))
+            ]
+
+        configs = {
+            galaxy.galaxy_id: galaxy.run_bagpipes(
+                bagpipes_config,
+                filt_dir=filt_dir,
+                fit_photometry=fit_photometry,
+                run_dir=run_dir,
+                return_run_args=True,
+            )
+            for galaxy, bagpipes_config in zip(self.galaxies, bagpipes_configs)
+        }
+
+        assert all(
+            type(config) is dict for config in configs.values()
+        ), f"All configs must be dictionaries, got {[type(config) for config in configs.values()]}"
+        # Dump configs to json
+
+        import json
+
+        # Set json_name to be a temporary file
+        import tempfile
+
+        file = tempfile.NamedTemporaryFile(delete=False)
+        file_path = file.name
+
+        with open(file_path, "w") as f:
+            json.dump(configs, f)
+
+        # Run the mpirun script
+
+        import subprocess
+        import os
+
+        # Get path of script
+
+        script_path = os.path.abspath(__file__).replace(
+            "ResolvedGalaxy.py", "bagpipes/run_bagpipes_parallel.py"
+        )
+        print(f"Starting mpi process with {n_jobs} cores.")
+        # get path of 'python' executable
+
+        run_dir = os.path.abspath(run_dir).replace("pipes", "")
+
+        # cd to run_dir
+        os.chdir(run_dir)
+
+        process_args = [
+            "mpirun",
+            "-n",
+            str(n_jobs),
+            "python",
+            script_path,
+            file_path,
+            out_subdir_name,
+        ]
+        print(" ".join(process_args))
+        # Run and block until finished, check for errors
+
+        process = subprocess.Popen(
+            process_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            env=os.environ,
+        )
+
+        for line in iter(process.stdout.readline, ""):
+            print(
+                line, end="", flush=True
+            )  # end='' because the line already contains a newline
+            sys.stdout.flush()  # Ensure output is printed immediately
+
+        process.stdout.close()
+        return_code = process.wait()
+
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, process_args)
+
+        # When it has run, need to move and rename posterior files for each galaxy, and
+        # split catalogues back out again.
+
 
 def run_bagpipes_wrapper(
     galaxy_id,
@@ -10545,7 +10678,10 @@ def run_bagpipes_wrapper(
             only_run=~update_h5,
         )
 
-        if resolved_dict["meta"]["fit_photometry"] in ["bin", "all"] and update_h5:
+        if (
+            resolved_dict["meta"]["fit_photometry"] in ["bin", "all"]
+            and update_h5
+        ):
             print(f"Adding resolved properties to .h5 for {galaxy.galaxy_id}")
             # Save the resolved SED
             galaxy.get_resolved_bagpipes_sed(resolved_dict["meta"]["run_name"])

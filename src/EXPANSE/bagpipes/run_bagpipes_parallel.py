@@ -1,0 +1,104 @@
+import sys
+import os
+
+print(f"Running from {os.getcwd()}")
+sys.stdout.flush()
+
+from collections import OrderedDict
+import sys
+import json
+import numpy as np
+
+try:
+    from mpi4py import MPI
+
+    rank = MPI.COMM_WORLD.Get_rank()
+    size = MPI.COMM_WORLD.Get_size()
+    from mpi4py.futures import MPIPoolExecutor
+
+    if size > 1:
+        print("Running with mpirun/mpiexec detected.")
+
+        MPI.COMM_WORLD.Barrier()
+        print(f"Message from process {rank}")
+        sys.stdout.flush()
+        MPI.COMM_WORLD.Barrier()
+
+except ImportError:
+    rank = 0
+    size = 1
+
+
+def provide_bagpipes_phot(id):
+    return np.ndarray(photometry[id])
+
+
+if __name__ == "__main__":
+    print("Running!")
+    input_json = sys.argv[1]
+    out_subdir = sys.argv[2]
+
+    with open(input_json, "r") as f:
+        input_dict = json.load(f)
+
+    ids, fit_instructions, cat_filt_list, redshifts, redshift_sigma, metas = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
+    photometry = {}
+    for galaxy in input_dict.keys():
+        idd = [f"{galaxy}_{i}" for i in input_dict[galaxy]["ids"]]
+        ids.extend(idd)  # Make IDs unique
+        fit_instructions.extend([input_dict[galaxy]["fit_instructions"]])
+        metas.extend([input_dict[galaxy]["meta"]])
+        cat_filt_list.extend([input_dict[galaxy]["cat_filt_list"]])
+        redshifts.extend(input_dict[galaxy]["redshifts"])
+        redshift_sigma.extend([input_dict[galaxy]["redshift_sigma"]])
+        for pos, id in enumerate(idd):
+            photometry[id] = input_dict[galaxy]["phot"][pos]
+
+    assert (
+        len(ids) == len(fit_instructions)
+    ), f"Length of IDs ({len(ids)}) and fit_instructions ({len(fit_instructions)}) do not match"
+
+    # Check if use_bpass in meta
+
+    use_bpass = False
+    use_bpasses = [meta.get("use_bpass", False) for meta in metas]
+    # Check if all are True or all are False
+    if all(use_bpasses) or not any(use_bpasses):
+        use_bpass = use_bpasses[0]
+    else:
+        raise ValueError("use_bpass must be the same for all galaxies")
+
+    os.environ["use_bpass"] = str(int(use_bpass))
+
+    # If all cat_filt_list are the same, we can use the same filter list for all galaxies.
+    # Otherwise we will need one per bin.
+    import bagpipes as pipes
+
+    fit_cat = pipes.fit_catalogue(
+        ids,
+        fit_instructions,
+        provide_bagpipes_phot,
+        spectrum_exists=False,
+        photometry_exists=True,
+        run=out_subdir,
+        make_plots=False,
+        cat_filt_list=cat_filt_list,
+        redshifts=redshifts,
+        redshift_sigma=redshift_sigma,
+        save_pdf_txts=False,
+        full_catalogue=True,
+        time_calls=False,
+    )  # analysis_function=custom_plotting,
+
+    fit_cat.fit(verbose=False, mpi_serial=True)
+
+    # return exit code 0 if successful
+
+    sys.exit(0)
