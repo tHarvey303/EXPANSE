@@ -7,12 +7,33 @@ from EXPANSE.bagpipes.pipes_models import (
     lognorm_dict,
     resolved_dict,
 )
+import sys
+import os
+# try and get n_jobs from args
 
+if os.path.exists("/.singularity.d/Singularity"):
+    computer = "singularity"
+elif "nvme" in file_path:
+    computer = "morgan"
+elif "Users" in file_path:
+    computer = "mac"
+else:
+    computer = "unknown"
 
-n_jobs = 4
+try:
+    n_jobs = sys.argv[1]
+except:
+    n_jobs = 4
+
 field = "JOF_psfmatched"
-galaxies_dir = "/nvme/scratch/work/tharvey/EXPANSE/galaxies/"
-run_dir = "/nvme/scratch/work/tharvey/EXPANSE/pipes/"
+
+if computer == 'morgan':
+    galaxies_dir = "/nvme/scratch/work/tharvey/EXPANSE/galaxies/"
+    run_dir = "/nvme/scratch/work/tharvey/EXPANSE/pipes/"
+elif computer == 'singularity':
+    galaxies_dir = '/mnt/galaxies/'
+    run_dir = '/mnt/pipes/'
+
 fit_photometry = "TOTAL_BIN"
 model = resolved_dict  # This is the model we are using
 meta = {"use_bpass": True}
