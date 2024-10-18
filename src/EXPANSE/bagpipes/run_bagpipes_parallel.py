@@ -1,8 +1,6 @@
 import sys
 import os
 
-print(f"Running from {os.getcwd()}")
-sys.stdout.flush()
 
 from collections import OrderedDict
 import sys
@@ -30,11 +28,13 @@ except ImportError:
 
 
 def provide_bagpipes_phot(id):
-    return np.ndarray(photometry[id])
+    return np.array(photometry[id])
 
 
 if __name__ == "__main__":
-    print("Running!")
+    if rank == 0:
+        print(f"Running from {os.getcwd()}")
+        sys.stdout.flush()
     input_json = sys.argv[1]
     out_subdir = sys.argv[2]
 
@@ -53,7 +53,15 @@ if __name__ == "__main__":
     for galaxy in input_dict.keys():
         idd = [f"{galaxy}_{i}" for i in input_dict[galaxy]["ids"]]
         ids.extend(idd)  # Make IDs unique
-        fit_instructions.extend([input_dict[galaxy]["fit_instructions"]])
+        if type(input_dict[galaxy]["fit_instructions"]) == dict:
+            fit_inst = [input_dict[galaxy]["fit_instructions"]] * len(idd)
+        elif type(input_dict[galaxy]["fit_instructions"]) == list:
+            fit_inst = input_dict[galaxy]["fit_instructions"]
+        else:
+            raise ValueError(
+                f"fit_instructions must be a dict or a list, not {type(input_dict[galaxy]['fit_instructions'])}"
+            )
+        fit_instructions.extend(fit_inst)
         metas.extend([input_dict[galaxy]["meta"]])
         cat_filt_list.extend([input_dict[galaxy]["cat_filt_list"]])
         redshifts.extend(input_dict[galaxy]["redshifts"])
@@ -80,6 +88,15 @@ if __name__ == "__main__":
     # If all cat_filt_list are the same, we can use the same filter list for all galaxies.
     # Otherwise we will need one per bin.
     import bagpipes as pipes
+
+    # Check if all redshift_sigma are None
+    if all([rs is None for rs in redshift_sigma]):
+        redshift_sigma = None
+
+    cat_filt_list = np.array(cat_filt_list, dtype=object)
+
+    if rank == 0:
+        print(cat_filt_list)
 
     fit_cat = pipes.fit_catalogue(
         ids,
