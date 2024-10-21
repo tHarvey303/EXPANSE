@@ -11,6 +11,8 @@ import sys
 import os
 # try and get n_jobs from args
 
+file_path = os.path.abspath(__file__)
+
 if os.path.exists("/.singularity.d/Singularity"):
     computer = "singularity"
 elif "nvme" in file_path:
@@ -27,12 +29,12 @@ except:
 
 field = "JOF_psfmatched"
 
-if computer == 'morgan':
+if computer == "morgan":
     galaxies_dir = "/nvme/scratch/work/tharvey/EXPANSE/galaxies/"
     run_dir = "/nvme/scratch/work/tharvey/EXPANSE/pipes/"
-elif computer == 'singularity':
-    galaxies_dir = '/mnt/galaxies/'
-    run_dir = '/mnt/pipes/'
+elif computer == "singularity":
+    galaxies_dir = "/mnt/galaxies/"
+    run_dir = "/mnt/pipes/"
 
 fit_photometry = "TOTAL_BIN"
 model = resolved_dict  # This is the model we are using
