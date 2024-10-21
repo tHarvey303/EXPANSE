@@ -70,12 +70,13 @@ if __name__ == "__main__":
                     f"fit_instructions must be a dict or a list, not {type(input_dict[galaxy]['fit_instructions'])}"
                 )
 
-            if len(input_dict[galaxy]["cat_filt_list"]) != len(idd):
-                cat_filt_list_t = [input_dict[galaxy]["cat_filt_list"]] * len(
-                    idd
-                )
+            
+            cat_filt_list_t = [input_dict[galaxy]["cat_filt_list"]] * len(
+                idd
+            )
 
             fit_instructions.extend(fit_inst)
+            assert len(cat_filt_list_t) == len(fit_inst), f'{len(cat_filt_list_t)} != {len(fit_inst)}, {(len(idd))}'
             metas.extend([input_dict[galaxy]["meta"]])
             cat_filt_list.extend(cat_filt_list_t)
             redshifts.extend(input_dict[galaxy]["redshifts"])
@@ -119,6 +120,8 @@ if __name__ == "__main__":
                 len(cat_filt_list),
                 len(redshifts),
             )
+
+        print(type(fit_instructions), fit_instructions[0], type(fit_instructions[0]))
 
         fit_cat = pipes.fit_catalogue(
             ids,
