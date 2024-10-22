@@ -5328,9 +5328,39 @@ class ResolvedGalaxy:
 
         ids = list(flux_table["ID"])
 
+        vary_filter_list = False
         nircam_filts = [
             f"{filt_dir}/{band}_LePhare.txt" for band in self.bands
         ]
+
+        # Check flux_table, see if any fluxes and errors are perfect 0s
+        ids_bands = {band: [] for band in self.bands}
+
+        for band in self.bands:
+            flux_col_name = band
+            fluxerr_col_name = f"{band}_err"
+            mask = (flux_table[flux_col_name] == 0) & (
+                flux_table[fluxerr_col_name] == 0
+            )
+            if np.any(mask):
+                vary_filter_list = True
+                print(
+                    f"Warning: {np.sum(mask)} sources have 0 flux and 0 error in {band} band"
+                )
+                # Get IDs
+                ids_bands[band] = list(flux_table["ID"][mask])
+
+        # Make list of actual bands for each source
+
+        if vary_filter_list:
+            print("Varying filter list")
+            nircam_filts = []
+            for id in ids:
+                bands = []
+                for band in self.bands:
+                    if id not in ids_bands[band]:
+                        bands.append(f"{filt_dir}/{band}_LePhare.txt")
+                nircam_filts.append(bands)
 
         if redshift is None:
             print("Allowing free redshift.")
@@ -5450,6 +5480,7 @@ class ResolvedGalaxy:
                 run=out_subdir_encoded,
                 make_plots=False,
                 cat_filt_list=nircam_filts,
+                vary_filt_list=vary_filter_list,
                 redshifts=redshifts,
                 redshift_sigma=redshift_sigma,
                 save_pdf_txts=False,
@@ -8590,35 +8621,29 @@ class MockResolvedGalaxy(ResolvedGalaxy):
     def init_mock_from_synthesizer(
         cls,
         redshift_code,
-        galaxy_index,
-        tags=["010_z005p000", "008_z007p000", "007_z008p000", "005_z010p000"],
-        regions=[
-            ["00", "00", "01", "10", "18"],
-            ["00", "02", "09"],
-            ["21", "17"],
-            ["15"],
-        ],
+        gal_region=None,
+        gal_id=None,
+        galaxy_index=None,
         psfs_dir="/nvme/scratch/work/tharvey/PSFs/JOF/",
-        ids=[[12, 96, 1424, 1006, 233], [6, 46, 298], [111, 16], [99]],
         cutout_size="auto",
         mock_survey="JOF",
         mock_version="v11",
         mock_instruments=["ACS_WFC", "NIRCam"],
         mock_forced_phot_band=["F277W", "F356W", "F444W"],
         mock_aper_diams=[0.32] * u.arcsec,
-        resolution=0.03,  # in arcsed
+        resolution=0.03,  # in arcsec
         psf_type="",
-        file_path="/nvme/scratch/work/tharvey/synthesizer/flares_flags_balmer_project.hdf5",
+        file_path="/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5",
         grid_name="bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03",
         grid_dir="./grids/",
         debug=False,
+        mock_rms_fit_path="",
         depth_file={
-            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv",
+            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
             "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv",
         },
     ):
-        update_cli_interface = is_cli()
-        update_cli_interface = False
+        update_cli_interface = False  # is_cli()
         if update_cli_interface:
             cli = CLIInterface()
             cli.start()
@@ -8638,6 +8663,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 "Current Task: Initializing Mock Galaxy from Synthesizer"
             )
             cli.update(lines)
+
+        assert (
+            gal_region is not None and gal_id is not None
+        ) or galaxy_index is not None
 
         if False:
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
@@ -8772,28 +8801,51 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         filter_code_from_band = {
             band: code for band, code in zip(bands, filter_codes)
         }
-
-        regions = {
-            "010_z005p000": ["00", "00", "01", "10", "18"],
-            "008_z007p000": ["00", "02", "09"],
-            "007_z008p000": ["21", "17"],
-            "005_z010p000": ["15"],
-        }
-        ids = {
-            "010_z005p000": [12, 96, 1424, 1006, 233],
-            "008_z007p000": [6, 46, 298],
-            "007_z008p000": [111, 16],
-            "005_z010p000": [99],
-        }
-
-        gal_id = ids[redshift_code][galaxy_index] - 1
-        tag = redshift_code
-        region = regions[redshift_code][galaxy_index]
-
-        zed = float(tag[5:].replace("p", "."))
-
+        # Need to get this from the .h5 file instead
         with h5.File(file_path, "r") as hf:  # opening the hdf5 file
             # coordinates of the stellar particles
+            regions = {i: [] for i in hf.keys()}
+            ids = {i: [] for i in hf.keys()}
+            for region in regions.keys():
+                regions[region] = [i for i in hf[region].keys()]
+                for reg in regions[region]:
+                    ids[region].extend(
+                        [i for i in hf[f"{region}/{reg}"].keys()]
+                    )
+
+            print(regions, ids)
+            """regions = {
+                "010_z005p000": ["00", "00", "01", "10", "18"],
+                "008_z007p000": ["00", "02", "09"],
+                "007_z008p000": ["21", "17"],
+                "005_z010p000": ["15"],
+            }
+            ids = {
+                "010_z005p000": [12, 96, 1424, 1006, 233],
+                "008_z007p000": [6, 46, 298],
+                "007_z008p000": [111, 16],
+                "005_z010p000": [99],
+            }"""
+            if gal_id is None and region is None:
+                gal_id = ids[redshift_code][galaxy_index] - 1
+                region = regions[redshift_code][galaxy_index]
+            else:
+                region = gal_region
+
+            tag = redshift_code
+
+            zed = float(tag[5:].replace("p", "."))
+
+            if hf.get(f"{tag}/{region}/{gal_id}") is None:
+                if update_cli_interface:
+                    cli.update(
+                        current_task=f"Error! Galaxy {gal_id} not found in region {region} of tag {tag} in {file_path}"
+                    )
+                print(f"{tag}/{region}/{gal_id}")
+                raise Exception(
+                    f"Galaxy {gal_id} not found in region {region} of tag {tag}"
+                )
+
             coordinates = (
                 np.array(
                     hf[f"{tag}/{region}/{gal_id}"].get("coordinates"),
@@ -9135,13 +9187,31 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         rms_err_images = {}
         final_images = {}
 
-        if len(ids) > 0:
-            ids = ids[:2]
+        loaded = False
+
+        if mock_rms_fit_path != "":
+            if os.path.exists(mock_rms_fit_path):
+                for band in bands:
+                    data = np.genfromtxt(
+                        f"{mock_rms_fit_path}/{band}_rms_fit.csv",
+                        delimiter=",",
+                    )
+                    f = interp1d(
+                        data[:, 0],
+                        data[:, 1],
+                        bounds_error=False,
+                        fill_value="extrapolate",
+                    )
+                    rms_err_images[band] = f(wavs[band])
+                    final_images[band] = imgs[filter_code_from_band[band]].arr
+                loaded = True
+
+        if len(ids) > 0 and not loaded:
+            # ids = ids[:2]
             if update_cli_interface:
                 message = f"Approximating RMS error maps from {len(ids)} real galaxies."
                 cli.update(current_task=message)
             else:
-                print("Warning! Cropping IDs")
                 print(
                     "Found real ResolvedGalaxies to approximate errors from."
                 )
@@ -9149,8 +9219,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
             galaxies = ResolvedGalaxy.init(ids, "JOF_psfmatched", "v11")
 
-            data_type = "ORIGINAL"
-            for prog, band in enumerate(bands):
+            data_type = "PSF"
+            for prog, band in tqdm(enumerate(bands)):
                 if update_cli_interface:
                     message = f"Generating RMS error fits for {band}"
                     cli.update(
@@ -9167,14 +9237,27 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
                 # image_data = image_data.
                 total_err, total_data = [], []
-                for pos, galaxy in enumerate(galaxies):
+                for pos, galaxy in tqdm(enumerate(galaxies)):
                     actual_unit = galaxy.phot_pix_unit
                     if data_type == "PSF":
-                        err = galaxy.psf_matched_rms_err["star_stack"][band]
-                        im = galaxy.psf_matched_data["star_stack"][band]
+                        if (
+                            band
+                            in galaxy.psf_matched_data["star_stack"].keys()
+                        ):
+                            im = galaxy.psf_matched_data["star_stack"][band]
+                            err = galaxy.psf_matched_rms_err["star_stack"][
+                                band
+                            ]
+
+                        else:
+                            continue
+
                     elif data_type == "ORIGINAL":
-                        im = galaxy.unmatched_data[band]
-                        err = galaxy.unmatched_rms_err[band]
+                        if band in galaxy.unmatched_data.keys():
+                            im = galaxy.unmatched_data[band]
+                            err = galaxy.unmatched_rms_err[band]
+                        else:
+                            continue
                     else:
                         breakmeee
 
@@ -9227,6 +9310,17 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                     print(f(image_data.max()), f(image_data.min()))
                 rms_err_images[band] = f(image_data)
                 final_images[band] = image_data
+
+                if mock_rms_fit_path != "":
+                    if not os.path.exists(mock_rms_fit_path):
+                        os.makedirs(mock_rms_fit_path)
+
+                    np.savetxt(
+                        f"{mock_rms_fit_path}/{band}_rms_fit.csv",
+                        np.array([lowess_x, lowess_y]).T,
+                        delimiter=",",
+                    )
+
         else:
             # Add rms of noise map as rms_err_iamges
             raise NotImplementedError("Need to add noise map rms errors")
@@ -9634,7 +9728,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         phot_pix_unit = {band: u.uJy for band in bands}
         im_pixel_scales = {band: resolution.to_astropy() for band in bands}
 
-        galaxy_id = f"{redshift_code}_{galaxy_index}_mock"  # survey is added later to the filename
+        # galaxy_id = f"{redshift_code}_{galaxy_index}_mock"  # survey is added later to the filename
+        galaxy_id = f"{redshift_code}_{region}_{gal_id}_mock"
 
         # stellar mass, stellar age, stellar metallicity, sfr, ssfr (10 and 100 Myr) - all have gal.get_map_ ... method
 
@@ -9735,8 +9830,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         cls,
         mock_survey=None,
         redshift_code=None,
+        gal_region=None,
+        gal_id=None,
+        galaxy_name=None,
         galaxy_index=None,
-        galaxy_id=None,
         overwrite=False,
         h5_folder=resolved_galaxy_dir,
         save_out=True,
@@ -9748,11 +9845,15 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         assert (
             (mock_survey is not None)
             and (redshift_code is not None)
-            and (galaxy_index is not None)
-            or (galaxy_id is not None)
+            and (gal_id is not None)
+            or (galaxy_name is not None)
         ), "Need to provide either galaxy_id or mock_survey, redshift_code, and galaxy_index"
-        if galaxy_id is None:
-            galaxy_id = f"{mock_survey}_{redshift_code}_{galaxy_index}_mock"
+        if galaxy_name is not None:
+            galaxy_id = f"{mock_survey}_{redshift_code}_{galaxy_name}_mock"
+        elif gal_id is not None:
+            galaxy_id = (
+                f"{mock_survey}_{redshift_code}_{gal_region}_{gal_id}_mock"
+            )
 
         if not galaxy_id.startswith(mock_survey) and mock_survey is not None:
             galaxy_id = f"{mock_survey}_{galaxy_id}"
@@ -9769,7 +9870,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         else:
             print("Generating from synthesizer.")
             return cls.init_mock_from_synthesizer(
-                redshift_code, galaxy_index, mock_survey=mock_survey, **kwargs
+                redshift_code,
+                gal_region=gal_region,
+                gal_id=gal_id,
+                galaxy_index=galaxy_index,
+                mock_survey=mock_survey,
+                **kwargs,
             )
 
     @classmethod

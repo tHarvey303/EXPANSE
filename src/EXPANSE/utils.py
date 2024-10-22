@@ -14,6 +14,17 @@ import glob
 from matplotlib.patches import Arrow, FancyArrow
 from astropy.coordinates import SkyCoord
 
+file_path = os.path.abspath(__file__)
+
+if os.path.exists("/.singularity.d/Singularity"):
+    computer = "singularity"
+elif "nvme" in file_path:
+    computer = "morgan"
+elif "Users" in file_path:
+    computer = "mac"
+else:
+    computer = "unknown"
+
 
 def update_mpl(tex_on=True):
     mpl.rcParams["lines.linewidth"] = 2.0

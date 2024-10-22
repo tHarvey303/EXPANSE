@@ -4,6 +4,7 @@ from astropy.cosmology import FlatLambdaCDM
 from joblib import Parallel, delayed
 
 from EXPANSE import MockResolvedGalaxy, run_bagpipes_wrapper
+import h5py
 from EXPANSE.bagpipes import (
     calculate_bins,
     continuity_dict,
@@ -20,21 +21,18 @@ if __name__ == "__main__":
     cosmo = FlatLambdaCDM(H0=70, Om0=0.300)
     grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
     grid_dir = "/nvme/scratch/work/tharvey/synthesizer/grids/"
-    path = "/nvme/scratch/work/tharvey/synthesizer/flares_flags_balmer_project.hdf5"
-    h5_folder = "galaxies/"
+    path = "/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5"
+    mock_rms_fit_path = "/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/"
+    h5_folder = "galaxies/mock/"
 
-    regions = {
-        "010_z005p000": ["00", "00", "01", "10", "18"],
-        "008_z007p000": ["00", "02", "09"],
-        "007_z008p000": ["21", "17"],
-        "005_z010p000": ["15"],
-    }
-    ids = {
-        "010_z005p000": [12, 96, 1424, 1006, 233],
-        "008_z007p000": [6, 46, 298],
-        "007_z008p000": [111, 16],
-        "005_z010p000": [99],
-    }
+    with h5py.File(path, "r") as hf:
+        regions = {i: [] for i in hf.keys()}
+        ids = {i: [] for i in hf.keys()}
+        for region in regions.keys():
+            regions[region] = [i for i in hf[region].keys()]
+            for reg in regions[region]:
+                ids[region].extend([i for i in hf[f"{region}/{reg}"].keys()])
+
     run_ids = []
     num_of_galaxies = np.sum(
         [len(ids[redshift_code]) for redshift_code in list(regions.keys())]
@@ -46,16 +44,18 @@ if __name__ == "__main__":
 
     redshifts = []
     for redshift_code in list(regions.keys())[::-1]:
-        for galaxy_index in range(len(ids[redshift_code])):
-            print(f"Doing {redshift_code} galaxy {galaxy_index}")
+        for region, gal_id in zip(regions[redshift_code], ids[redshift_code]):
+            print(f"Doing {redshift_code} region {region}, galaxy {gal_id}")
             try:
                 mock_galaxy = MockResolvedGalaxy.init(
                     mock_survey="JOF_psfmatched",
                     redshift_code=redshift_code,
-                    galaxy_index=galaxy_index,
+                    gal_region=region,
+                    gal_id=gal_id,
                     grid_dir=grid_dir,
                     file_path=path,
                     overwrite=overwrite,
+                    mock_rms_fit_path=mock_rms_fit_path,
                 )
                 mock_galaxy.pixedfit_processing(
                     gal_region_use="detection", overwrite=overwrite
@@ -71,6 +71,8 @@ if __name__ == "__main__":
                 print(f"Failed on {redshift_code} galaxy {galaxy_index}")
                 continue
 
+    print("Finished creating mock galaxies.")
+    stop = input("Press enter to continue.")
     continuity_dicts = create_dicts(continuity_dict, len(run_ids))
     delayed_dicts = create_dicts(delayed_dict, len(run_ids))
     dpl_dicts = create_dicts(dpl_dict, len(run_ids))
