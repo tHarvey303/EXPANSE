@@ -4617,6 +4617,9 @@ class ResolvedGalaxy:
                 err.append(item)
         final = np.vstack((np.array(flux), np.array(err))).T
 
+        # Loop over rows and check for any where flux and error are 0
+        final = final[~np.all(final == 0, axis=1)]
+
         return final
 
     def plot_photometry_bins(
