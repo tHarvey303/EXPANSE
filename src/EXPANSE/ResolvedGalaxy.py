@@ -10780,17 +10780,17 @@ class MultipleResolvedGalaxy:
             if not os.path.exists(new_dir):
                 os.makedirs(new_dir)
 
-            cat_ids = [f"{galaxy_id}_{id}" for id in config["IDs"]]
+            cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
             mask = np.isin(output_catalogue["#ID"], cat_ids)
             gal_cat = copy.deepcopy(output_catalogue[mask])
-            gal_cat["#ID"] = config["IDs"]
+            gal_cat["#ID"] = config["ids"]
 
             gal_cat.write(
                 os.path.join(new_dir, f"{config['meta']['run_name']}.fits"),
                 overwrite=True,
             )
 
-            for id in config["IDs"]:
+            for id in config["ids"]:
                 old_path = os.path.join(
                     current_posterior_folder, f"{galaxy_id}_{id}.h5"
                 )
