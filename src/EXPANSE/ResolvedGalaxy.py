@@ -10667,6 +10667,10 @@ class MultipleResolvedGalaxy:
             After run, move things back to where they need to be and seperate catalogue out again.
 
         """
+        import json
+        import tempfile
+        import subprocess
+        import os
 
         assert all(
             bagpipes_configs[0]["meta"]["run_name"]
@@ -10696,11 +10700,6 @@ class MultipleResolvedGalaxy:
         ), f"All configs must be dictionaries, got {[type(config) for config in configs.values()]}"
         # Dump configs to json
 
-        import json
-
-        # Set json_name to be a temporary file
-        import tempfile
-
         file = tempfile.NamedTemporaryFile(delete=False)
         file_path = file.name
 
@@ -10708,9 +10707,6 @@ class MultipleResolvedGalaxy:
             json.dump(configs, f)
 
         # Run the mpirun script
-
-        import subprocess
-        import os
 
         # Get path of script
 
@@ -10722,6 +10718,7 @@ class MultipleResolvedGalaxy:
 
         run_dir = os.path.abspath(run_dir).replace("pipes", "")
 
+        print(f"Run directory: {run_dir}")
         # cd to run_dir
         os.chdir(run_dir)
 
@@ -10799,6 +10796,19 @@ class MultipleResolvedGalaxy:
                 )
                 new_path = os.path.join(new_dir, f"{id}.h5")
                 os.rename(old_path, new_path)
+
+        for galaxy, config in zip(self.galaxies, bagpipes_configs):
+            run_name = config["meta"]["run_name"]
+            bins_to_show = config["meta"]["fit_photometry"]
+            galaxy.load_bagpipes_results(run_name)
+            galaxy.get_resolved_bagpipes_sed(run_name)
+            # Save the resolved SFH
+            fig, _ = galaxy.plot_bagpipes_sfh(
+                run_name, bins_to_show=bins_to_show
+            )
+            plt.close(fig)
+            # Save the resolved mass
+            galaxy.get_total_resolved_mass(run_name)
 
         # When it has run, need to move and rename posterior files for each galaxy, and
         # split catalogues back out again.
