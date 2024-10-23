@@ -5287,7 +5287,7 @@ class ResolvedGalaxy:
                         print(f"Overwriting run {run_name}")
                     else:
                         print(f"Run {run_name} already exists")
-                        return
+                        if not return_run_args: return
         # print(psf_type, binmap_type)
         # print(self.photometry_table.keys())
         flux_table = self.photometry_table[psf_type][binmap_type]
@@ -5692,7 +5692,7 @@ class ResolvedGalaxy:
                     plotpipes_dir=plotpipes_dir,
                 )
             except FileNotFoundError:
-                print(f"File not found for {run_name} {rbin}")
+                print(f"File not found for {run_name} {rbin} (corner)")
                 continue
 
             fig_xlim, fig_ylim = [], []
@@ -5806,7 +5806,7 @@ class ResolvedGalaxy:
                     plotpipes_dir=plotpipes_dir,
                 )
             except FileNotFoundError:
-                print(f"File not found for {run_name} {rbin}")
+                print(f"File not found for {run_name} {rbin} (fit)")
                 continue
 
             pipes_obj.plot_best_fit(
@@ -6199,7 +6199,7 @@ class ResolvedGalaxy:
                         plotpipes_dir=plotpipes_dir,
                     )
                 except FileNotFoundError:
-                    print(f"File not found for {run_name} {rbin}")
+                    print(f"File not found for {run_name} {rbin} (sfh)")
                     continue
 
                 pipes_obj.plot_sfh(
@@ -7334,7 +7334,7 @@ class ResolvedGalaxy:
                     plotpipes_dir=plotpipes_dir,
                 )
             except FileNotFoundError:
-                print(f"File not found for {run_name} {rbin}")
+                print(f"File not found for {run_name} {rbin} (comp_corr)")
                 continue
 
             bin_number = True
@@ -7959,7 +7959,7 @@ class ResolvedGalaxy:
                         plotpipes_dir=plotpipes_dir,
                     )
                 except:
-                    print(f"File not found for {run_name} {rbin}")
+                    print(f"File not found for {run_name} {rbin} (sed)")
                     continue
 
                 # This plots the observed SED
@@ -10761,7 +10761,7 @@ class MultipleResolvedGalaxy:
 
         # Current folder will be run_dir /pipes/parallel_temp
 
-        current_posterior_folder = os.path.join(run_dir, out_subdir_name)
+        current_posterior_folder = os.path.join(run_dir, f'posterior/{out_subdir_name}')
 
         # Move all files back to where they should be and rename - currently gal_id_bin.h5, should be bin.h5 only
 
@@ -10790,9 +10790,12 @@ class MultipleResolvedGalaxy:
                 cat_ids
             ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
             gal_cat["#ID"] = config["ids"]
-
+            new_cat_dir = os.path.dirname(new_dir.replace('posterior', 'cats'))
+            print('New cat dir:', new_cat_dir)
+            if not os.path.exists(new_cat_dir):
+                os.makedirs(new_cat_dir)
             gal_cat.write(
-                os.path.join(new_dir, f"{config['meta']['run_name']}.fits"),
+                f'{new_cat_dir}/{galaxy_id}.fits',
                 overwrite=True,
             )
 
@@ -10801,12 +10804,21 @@ class MultipleResolvedGalaxy:
                     current_posterior_folder, f"{galaxy_id}_{id}.h5"
                 )
                 new_path = os.path.join(new_dir, f"{id}.h5")
+
+                if not os.path.exists(os.path.dirname(new_path)):
+                    os.makedirs(os.path.dirname(new_path))
+
+                if not os.path.exists(old_path) and os.path.exists(new_path):
+                    print(f'Output .h5 found in new location for {id}. Skipping.')
+                    continue
+
                 os.rename(old_path, new_path)
 
         for galaxy, config in zip(self.galaxies, bagpipes_configs):
             run_name = config["meta"]["run_name"]
             bins_to_show = config["meta"]["fit_photometry"]
             galaxy.load_bagpipes_results(run_name)
+            '''
             galaxy.get_resolved_bagpipes_sed(run_name)
             # Save the resolved SFH
             fig, _ = galaxy.plot_bagpipes_sfh(
@@ -10815,6 +10827,7 @@ class MultipleResolvedGalaxy:
             plt.close(fig)
             # Save the resolved mass
             galaxy.get_total_resolved_mass(run_name)
+            '''
 
         # When it has run, need to move and rename posterior files for each galaxy, and
         # split catalogues back out again.
