@@ -10716,11 +10716,11 @@ class MultipleResolvedGalaxy:
         print(f"Starting mpi process with {n_jobs} cores.")
         # get path of 'python' executable
 
-        run_dir = os.path.abspath(run_dir).replace("pipes", "")
+        run_dir = os.path.abspath(run_dir)  # .replace("pipes", "")
 
         print(f"Run directory: {run_dir}")
         # cd to run_dir
-        os.chdir(run_dir)
+        os.chdir(os.path.dirname(run_dir))
 
         if not load_only:
             process_args = [
