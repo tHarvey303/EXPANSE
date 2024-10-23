@@ -10781,8 +10781,13 @@ class MultipleResolvedGalaxy:
                 os.makedirs(new_dir)
 
             cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
+
+            print(cat_ids)
             mask = np.isin(output_catalogue["#ID"], cat_ids)
             gal_cat = copy.deepcopy(output_catalogue[mask])
+            assert len(gal_cat) == len(
+                cat_ids
+            ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
             gal_cat["#ID"] = config["ids"]
 
             gal_cat.write(
