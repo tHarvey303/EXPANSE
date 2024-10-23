@@ -10783,7 +10783,8 @@ class MultipleResolvedGalaxy:
             cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
 
             print(cat_ids)
-            mask = np.isin(output_catalogue["#ID"], cat_ids)
+            mask = [id in cat_ids for id in output_catalogue["#ID"]]
+            mask = np.array(mask)
             gal_cat = copy.deepcopy(output_catalogue[mask])
             assert len(gal_cat) == len(
                 cat_ids
