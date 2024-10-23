@@ -28,6 +28,7 @@ except:
     n_jobs = 4
 
 field = "JOF_psfmatched"
+load_only = True
 
 if computer == "morgan":
     galaxies_dir = "/nvme/scratch/work/tharvey/EXPANSE/galaxies/"
@@ -50,5 +51,9 @@ multiple_galaxies = MultipleResolvedGalaxy(galaxies)
 dicts = create_dicts(model, len(multiple_galaxies), override_meta=meta)
 
 multiple_galaxies.run_bagpipes_parallel(
-    dicts, n_jobs=n_jobs, fit_photometry=fit_photometry, run_dir=run_dir
+    dicts,
+    n_jobs=n_jobs,
+    fit_photometry=fit_photometry,
+    run_dir=run_dir,
+    load_only=load_only,
 )

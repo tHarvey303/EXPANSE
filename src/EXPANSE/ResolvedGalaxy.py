@@ -5467,11 +5467,13 @@ class ResolvedGalaxy:
                 "ids": ids,
                 "fit_instructions": fit_instructions,
                 "meta": meta,
+                "run_name": run_name,
                 "galaxy_id": self.galaxy_id,
                 "phot": [self.provide_bagpipes_phot(i).tolist() for i in ids],
                 "cat_filt_list": nircam_filts,
                 "redshifts": list(redshifts),
                 "redshift_sigma": redshift_sigma,
+                "out_dir": f"{run_dir}/posterior/{out_subdir}",
             }
         if not exist_already or return_run_args:
             fit_cat = pipes.fit_catalogue(
@@ -8512,6 +8514,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             already_psf_matched=already_psf_matched,
             det_data=det_data,
             overwrite=False,
+            h5_folder=h5_folder,
             **kwargs,
         )
 
@@ -8634,6 +8637,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         mock_instruments=["ACS_WFC", "NIRCam"],
         mock_forced_phot_band=["F277W", "F356W", "F444W"],
         mock_aper_diams=[0.32] * u.arcsec,
+        h5_folder=resolved_galaxy_dir,
         resolution=0.03,  # in arcsec
         psf_type="",
         file_path="/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5",
@@ -8651,9 +8655,15 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             cli = CLIInterface()
             cli.start()
 
+            full_gal_id = (
+                f"{redshift_code}_{gal_region}_{gal_id}"
+                if gal_id is not None
+                else f"{redshift_code}_{galaxy_index}"
+            )
+
             lines = [
                 [
-                    f"Galaxy: {redshift_code}_{galaxy_index}",
+                    f"Galaxy: {full_gal_id}",
                     f"Survey: {mock_survey}",
                     f"Version: {mock_version}",
                 ],
@@ -8816,7 +8826,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                         [i for i in hf[f"{region}/{reg}"].keys()]
                     )
 
-            print(regions, ids)
             """regions = {
                 "010_z005p000": ["00", "00", "01", "10", "18"],
                 "008_z007p000": ["00", "02", "09"],
@@ -9194,6 +9203,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         if mock_rms_fit_path != "":
             if os.path.exists(mock_rms_fit_path):
+                if update_cli_interface:
+                    message = (
+                        f"Loading RMS error fits from {mock_rms_fit_path}"
+                    )
+                    cli.update(current_task=message)
+
                 for band in bands:
                     data = np.genfromtxt(
                         f"{mock_rms_fit_path}/{band}_rms_fit.csv",
@@ -9205,7 +9220,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                         bounds_error=False,
                         fill_value="extrapolate",
                     )
-                    rms_err_images[band] = f(wavs[band])
+                    rms_err_images[band] = f(
+                        imgs[filter_code_from_band[band]].arr
+                    )
                     final_images[band] = imgs[filter_code_from_band[band]].arr
                 loaded = True
 
@@ -9311,6 +9328,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                     print(image_data.max(), np.max(lowess_x))
                     print(image_data.min(), image_data.max())
                     print(f(image_data.max()), f(image_data.min()))
+
                 rms_err_images[band] = f(image_data)
                 final_images[band] = image_data
 
@@ -9323,8 +9341,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                         np.array([lowess_x, lowess_y]).T,
                         delimiter=",",
                     )
+        elif loaded:
+            if update_cli_interface:
+                message = f"Loaded RMS error fits from {mock_rms_fit_path}"
+                cli.update(current_task=message)
 
-        else:
+        elif len(ids) == 0 and not loaded:
             # Add rms of noise map as rms_err_iamges
             raise NotImplementedError("Need to add noise map rms errors")
 
@@ -9518,7 +9540,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         ax[1].imshow(detection_segmap, origin="lower", cmap="viridis")
         ax[0].set_title("Detection image")
         ax[1].set_title("Detection segmentation map")
-        # plt.show()
+        plt.show()
 
         print(
             f"Found {len(detection_objects)} objects in detection band {detection_band}"
@@ -9806,7 +9828,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             forced_phot_band=mock_forced_phot_band,
             aper_diams=mock_aper_diams,
             output_flux_unit=u.uJy,
-            h5_folder=resolved_galaxy_dir,
+            h5_folder=h5_folder,
             dont_psf_match_bands=[],
             already_psf_matched=False,
             synthesizer_galaxy=gal,
@@ -10629,6 +10651,7 @@ class MultipleResolvedGalaxy:
         run_dir="pipes/",
         n_jobs=8,
         out_subdir_name="parallel_temp",
+        load_only=False,
     ):
         """
          Convenience function to run a set of run_dicts in parallel, and save results into one catalogue.
@@ -10702,39 +10725,80 @@ class MultipleResolvedGalaxy:
         # cd to run_dir
         os.chdir(run_dir)
 
-        process_args = [
-            "mpirun",
-            "-n",
-            str(n_jobs),
-            "python",
-            script_path,
-            file_path,
-            out_subdir_name,
-        ]
-        print(" ".join(process_args))
-        # Run and block until finished, check for errors
+        if not load_only:
+            process_args = [
+                "mpirun",
+                "-n",
+                str(n_jobs),
+                "python",
+                script_path,
+                file_path,
+                out_subdir_name,
+            ]
+            print(" ".join(process_args))
+            # Run and block until finished, check for errors
 
-        process = subprocess.Popen(
-            process_args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-            env=os.environ,
+            process = subprocess.Popen(
+                process_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+                env=os.environ,
+            )
+
+            for line in iter(process.stdout.readline, ""):
+                print(
+                    line, end="", flush=True
+                )  # end='' because the line already contains a newline
+                sys.stdout.flush()  # Ensure output is printed immediately
+
+            process.stdout.close()
+            return_code = process.wait()
+
+            if return_code != 0:
+                raise subprocess.CalledProcessError(return_code, process_args)
+
+        # Folder for posteriors is config[galaxy]['out_dir']
+
+        # Current folder will be run_dir /pipes/parallel_temp
+
+        current_posterior_folder = os.path.join(run_dir, out_subdir_name)
+
+        # Move all files back to where they should be and rename - currently gal_id_bin.h5, should be bin.h5 only
+
+        output_catalogue = os.path.join(
+            run_dir, f"cats/{out_subdir_name}.fits"
         )
+        if os.path.exists(output_catalogue):
+            output_catalogue = Table.read(output_catalogue)
 
-        for line in iter(process.stdout.readline, ""):
-            print(
-                line, end="", flush=True
-            )  # end='' because the line already contains a newline
-            sys.stdout.flush()  # Ensure output is printed immediately
+        else:
+            raise FileNotFoundError(
+                f"Could not find output catalogue at {output_catalogue}"
+            )
+        for galaxy_id, config in configs.items():
+            new_dir = os.path.join(run_dir, config["out_dir"])
+            if not os.path.exists(new_dir):
+                os.makedirs(new_dir)
 
-        process.stdout.close()
-        return_code = process.wait()
+            cat_ids = [f"{galaxy_id}_{id}" for id in config["IDs"]]
+            mask = np.isin(output_catalogue["#ID"], cat_ids)
+            gal_cat = copy.deepcopy(output_catalogue[mask])
+            gal_cat["#ID"] = config["IDs"]
 
-        if return_code != 0:
-            raise subprocess.CalledProcessError(return_code, process_args)
+            gal_cat.write(
+                os.path.join(new_dir, f"{config['meta']['run_name']}.fits"),
+                overwrite=True,
+            )
+
+            for id in config["IDs"]:
+                old_path = os.path.join(
+                    current_posterior_folder, f"{galaxy_id}_{id}.h5"
+                )
+                new_path = os.path.join(new_dir, f"{id}.h5")
+                os.rename(old_path, new_path)
 
         # When it has run, need to move and rename posterior files for each galaxy, and
         # split catalogues back out again.

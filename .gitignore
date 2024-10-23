@@ -6,6 +6,8 @@ crop_*
 stamp_*
 galaxies/temp/*.fits
 galaxies/*.fits
+galaxies/mock
+data/mock_rms/* copy
 pipes/*
 MinViable.py
 .DS_Store
@@ -40,6 +42,7 @@ __pycache__/
 
 # C extensions
 *.so
+
 
 # Distribution / packaging
 .Python
