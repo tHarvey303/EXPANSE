@@ -915,16 +915,38 @@ class ResolvedGalaxy:
 
     @classmethod
     def init_multiple_from_h5(
-        cls, h5_names, h5_folder=resolved_galaxy_dir, save_out=True
+        cls,
+        h5_names,
+        h5_folder=resolved_galaxy_dir,
+        save_out=True,
+        n_jobs=1,
     ):
-        return [
-            cls.init_from_h5(h5_name, h5_folder=h5_folder, save_out=save_out)
-            for h5_name in h5_names
-        ]
+        if n_jobs == 1:
+            galaxies = [
+                cls.init_from_h5(
+                    h5_name, h5_folder=h5_folder, save_out=save_out
+                )
+                for h5_name in h5_names
+            ]
+        elif n_jobs >= 1:
+            from joblib import Parallel, delayed
+
+            galaxies = Parallel(n_jobs=n_jobs)(
+                delayed(cls.init_from_h5)(
+                    h5_name, h5_folder=h5_folder, save_out=save_out
+                )
+                for h5_name in h5_names
+            )
+
+        return galaxies
 
     @classmethod
     def init_all_field_from_h5(
-        cls, field, h5_folder=resolved_galaxy_dir, save_out=True
+        cls,
+        field,
+        h5_folder=resolved_galaxy_dir,
+        save_out=True,
+        n_jobs=1,
     ):
         h5_names = glob.glob(f"{h5_folder}{field}*.h5")
 
@@ -943,7 +965,7 @@ class ResolvedGalaxy:
         print("Found", len(h5_names), "galaxies in field", field)
         # print(h5_names)
         return cls.init_multiple_from_h5(
-            h5_names, h5_folder=h5_folder, save_out=False
+            h5_names, h5_folder=h5_folder, save_out=save_out, n_jobs=n_jobs
         )
 
     @classmethod
@@ -3213,11 +3235,11 @@ class ResolvedGalaxy:
 
         stamp_size = (self.cutout_size, self.cutout_size)
 
-        print("sci_img", sci_img)
-        print("var_img", var_img)
-        print("img_unit", img_unit)
-        print("img_pixsizes", img_pixsizes)
-        print("scale_factors", scale_factors)
+        # print("sci_img", sci_img)
+        # print("var_img", var_img)
+        # print("img_unit", img_unit)
+        # print("img_pixsizes", img_pixsizes)
+        # print("scale_factors", scale_factors)
 
         img_process = images_processing(
             filters,
@@ -4545,7 +4567,7 @@ class ResolvedGalaxy:
 
         return table
 
-    def provide_bagpipes_phot(self, gal_id):
+    def provide_bagpipes_phot(self, gal_id, return_bands=False):
         """Provide the fluxes in the correct format for bagpipes"""
         gal_id = str(gal_id)
         if not hasattr(self, "photometry_table"):
@@ -4618,7 +4640,11 @@ class ResolvedGalaxy:
         final = np.vstack((np.array(flux), np.array(err))).T
 
         # Loop over rows and check for any where flux and error are 0
-        final = final[~np.all(final == 0, axis=1)]
+        mask = ~np.all(final == 0, axis=1)
+        final = final[mask]
+
+        if return_bands:
+            return np.array(self.bands)[mask]
 
         return final
 
@@ -5287,7 +5313,8 @@ class ResolvedGalaxy:
                         print(f"Overwriting run {run_name}")
                     else:
                         print(f"Run {run_name} already exists")
-                        if not return_run_args: return
+                        if not return_run_args:
+                            return
         # print(psf_type, binmap_type)
         # print(self.photometry_table.keys())
         flux_table = self.photometry_table[psf_type][binmap_type]
@@ -7148,6 +7175,8 @@ class ResolvedGalaxy:
         plotpipes_dir="bagpipes/",
         get_advanced_quantities=True,
         n_cores=1,
+        psf_type="star_stack",
+        binmap_type="pixedfit",
     ):
         plotpipes_dir = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), plotpipes_dir
@@ -7216,6 +7245,12 @@ class ResolvedGalaxy:
                 param["h5_path"] = (
                     f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{b}.h5"
                 )
+                # Need to only use bands that were run with.
+                #
+                table = self.photometry_table[psf_type][binmap_type]
+                mask = table["ID"] == b
+                bands_gal = self.provide_bagpipes_phot(b, return_bands=True)
+                param["bands"] = bands_gal
                 params_b.append(param)
 
             pipes_objs = Parallel(n_jobs=n_cores)(
@@ -7407,15 +7442,19 @@ class ResolvedGalaxy:
         # print(f"{param_str} {unit}")
         return fig, cache
 
-    def get_total_resolved_mass(
+    def get_total_resolved_property(
         self,
         run_name,
+        property="stellar_mass",
+        combine_type="sum",  # or "flatten"
+        log=True,  # for mass
         sed_fitting_tool="bagpipes",
         n_draws=10000,
         return_quantiles=True,
         run_dir="pipes/",
         pipes_dir="pipes_scripts/",
         overwrite=False,
+        n_cores=1,
     ):
         table = self.sed_fitting_table[sed_fitting_tool][run_name]
         bins = []
@@ -7443,6 +7482,7 @@ class ResolvedGalaxy:
                 get_advanced_quantities=True,
                 run_dir=run_dir,
                 plotpipes_dir=pipes_dir,
+                n_cores=n_cores,
             )
         except FileNotFoundError:
             print(f"Files not found for {run_name} {bins}")
@@ -7452,7 +7492,7 @@ class ResolvedGalaxy:
         all_samples = []
 
         for obj in pipes_objs:
-            samples = obj.plot_pdf(None, "stellar_mass", return_samples=True)
+            samples = obj.plot_pdf(None, combine_type, return_samples=True)
             all_samples.append(samples)
 
         all_samples = np.array(all_samples, dtype=object)
@@ -7462,16 +7502,39 @@ class ResolvedGalaxy:
             # samples = samples[~np.isnan(samples)]
             new_samples[:, i] = np.random.choice(samples, size=n_draws)
 
-        sum_samples = np.log10(np.sum(10**new_samples, axis=1))
+        if log:
+            new_samples = 10**new_samples
+
+        if combine_type == "sum":
+            # sum_samples = np.log10(np.sum(10**new_samples, axis=1))
+            sum_samples = np.sum(new_samples, axis=1)
+        elif combine_type == "flatten":
+            sum_samples = new_samples.flatten()
+
+        if log:
+            sum_samples = np.log10(sum_samples)
 
         percentiles = np.percentile(sum_samples, [16, 50, 84])
 
-        if self.resolved_mass is None:
-            self.resolved_mass = {}
+        if property == "stellar_mass":
+            if self.resolved_mass is None:
+                self.resolved_mass = {}
 
-        self.resolved_mass[run_name] = percentiles
+            self.resolved_mass[run_name] = percentiles
 
-        self.add_to_h5(percentiles, "resolved_mass", run_name, overwrite=True)
+            self.add_to_h5(
+                percentiles, "resolved_mass", run_name, overwrite=True
+            )
+
+        elif property == "sfr":
+            if self.resolved_sfr is None:
+                self.resolved_sfr = {}
+
+            self.resolved_sfr[run_name] = percentiles
+
+            self.add_to_h5(
+                percentiles, "resolved_sfr", run_name, overwrite=True
+            )
 
         if return_quantiles:
             return percentiles
@@ -9039,7 +9102,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         resolution_kpc = re_kpc.value * kpc
         width = cutout_size * resolution_kpc
 
-        message = f"Creating smoothed image cutouts with resolution {resolution_kpc:.2f} and width {width:.2f}"
+        message = f"Creating smoothed image cutouts with resolution {resolution_kpc:.2f} and width {width:.2f} ({cutout_size} pixels)"
         if update_cli_interface:
             cli.update(current_task=message)
         else:
@@ -9115,6 +9178,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         for band, code in zip(bands, filter_codes):
             psf_file = [f for f in files if band in f][0]
             psf = fits.open(psf_file)[0].data
+            # Normalise the PSF
+            psf /= np.sum(psf)
+
             psfs[code] = psf
 
         if update_cli_interface:
@@ -9182,7 +9248,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 if unit != uJy:
                     img[key].arr = (img[key].arr * unit).to(uJy).value
                     img[key].units = uJy
-
+                    # Syntheszier can change the size of the image by a few pixels
                     cutout_size = img[key].arr.shape[0]
 
         possible_galaxies = glob.glob(
@@ -9514,33 +9580,33 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         ]
 
         # Plot the detection image and objects
-        # if debug:
-        fig, ax = plt.subplots(
-            nrows=1,
-            ncols=2,
-            figsize=(10, 5),
-            constrained_layout=True,
-            facecolor="white",
-        )
-        ax[0].imshow(
-            detection_image, origin="lower", cmap="viridis", norm=LogNorm()
-        )
-
-        for i in range(len(detection_objects)):
-            e = Ellipse(
-                xy=(detection_objects["x"][i], detection_objects["y"][i]),
-                width=6 * detection_objects["a"][i],
-                height=6 * detection_objects["b"][i],
-                angle=detection_objects["theta"][i] * 180.0 / np.pi,
+        if debug:
+            fig, ax = plt.subplots(
+                nrows=1,
+                ncols=2,
+                figsize=(10, 5),
+                constrained_layout=True,
+                facecolor="white",
             )
-            e.set_facecolor("none")
-            e.set_edgecolor("red")
-            ax[0].add_artist(e)
+            ax[0].imshow(
+                detection_image, origin="lower", cmap="viridis", norm=LogNorm()
+            )
 
-        ax[1].imshow(detection_segmap, origin="lower", cmap="viridis")
-        ax[0].set_title("Detection image")
-        ax[1].set_title("Detection segmentation map")
-        plt.show()
+            for i in range(len(detection_objects)):
+                e = Ellipse(
+                    xy=(detection_objects["x"][i], detection_objects["y"][i]),
+                    width=6 * detection_objects["a"][i],
+                    height=6 * detection_objects["b"][i],
+                    angle=detection_objects["theta"][i] * 180.0 / np.pi,
+                )
+                e.set_facecolor("none")
+                e.set_edgecolor("red")
+                ax[0].add_artist(e)
+
+            ax[1].imshow(detection_segmap, origin="lower", cmap="viridis")
+            ax[0].set_title("Detection image")
+            ax[1].set_title("Detection segmentation map")
+            plt.show()
 
         print(
             f"Found {len(detection_objects)} objects in detection band {detection_band}"
@@ -9898,6 +9964,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 redshift_code,
                 gal_region=gal_region,
                 gal_id=gal_id,
+                h5_folder=h5_folder,
                 galaxy_index=galaxy_index,
                 mock_survey=mock_survey,
                 **kwargs,
@@ -10529,18 +10596,98 @@ class MultipleResolvedGalaxy:
     def total_number_of_bins(self):
         return sum([galaxy.get_number_of_bins() for galaxy in self.galaxies])
 
-    def mass_comparison_plot(
+    def comparison_plot(
         self,
         aperture_run,
         resolved_run,
+        parameter="stellar_mass",
         sed_fitting_tool="bagpipes",
         aperture_label="TOTAL_BIN",
         label=False,
+        color_by=None,
+        xlim=None,
+        ylim=None,
+        cmap="viridis",
+        n_jobs=1,
         **kwargs,
     ):
         fig, ax = plt.subplots(
             1, 1, figsize=(5, 5), facecolor="white", dpi=200
         )
+
+        if parameter == "stellar_mass":
+            ax.set_xlabel(
+                rf"Integrated Stellar Mass (M$_\odot$) [{aperture_run}]"
+            )
+            ax.set_ylabel(
+                rf"Resolved Stellar Mass (M$_\odot$) [{resolved_run}]"
+            )
+
+            # Plot a 1:1 line
+
+            if xlim is None:
+                ax.set_xlim(6.5, 10)
+            if ylim is None:
+                ax.set_ylim(6.5, 10)
+
+            # ax.plot([5, 12], [5, 12], "k--")
+
+        if color_by is not None:
+            cbar = make_axes_locatable(ax).append_axes(
+                "top", size="5%", pad="2%"
+            )
+            # Move x-axis to top for cbar
+            cbar.xaxis.set_ticks_position("top")
+            cbar.xaxis.set_label_position("top")
+
+            vals = []
+            colors = {}
+            if color_by.startswith("int_"):
+                for galaxy in self.galaxies:
+                    table = galaxy.sed_fitting_table[sed_fitting_tool][
+                        aperture_run
+                    ]
+                    table = table[table["#ID"] == aperture_label]
+                    if color_by[4:] == "burstiness":
+                        value = float(table["sfr_10myr_50"]) / float(
+                            table["sfr_50"]
+                        )
+                        vals.append(value)
+                    else:
+                        vals.append(float(table[color_by[4:]][0]))
+
+                cbar.set_xlabel(color_by[4:])
+
+            if color_by == "nbins":
+                vals = [
+                    galaxy.get_number_of_bins() for galaxy in self.galaxies
+                ]
+                cbar.set_xlabel("Number of Bins")
+
+            if color_by == "redshift":
+                vals = [galaxy.redshift for galaxy in self.galaxies]
+
+            if color_by.startswith("kron_radius"):
+                band = color_by.split("_")[-1]
+                if band == "DET":
+                    band = "detection"
+                vals = []
+                for galaxy in self.galaxies:
+                    a, b, _ = galaxy.plot_kron_ellipse(
+                        band=band, ax="", center="", return_params=True
+                    )
+                    radii = np.sqrt(a * b)
+                    vals.append(radii)
+
+            norm = Normalize(vmin=min(vals), vmax=max(vals))
+            import matplotlib.cm as cm
+
+            cmap = cm.get_cmap(cmap)
+
+            colors = {
+                galaxy.galaxy_id: cmap(norm(val))
+                for galaxy, val in zip(self.galaxies, vals)
+            }
 
         for galaxy in self.galaxies:
             table = galaxy.sed_fitting_table[sed_fitting_tool][aperture_run]
@@ -10549,43 +10696,57 @@ class MultipleResolvedGalaxy:
                 len(table) == 1
             ), f"Aperture label {aperture_label} not found in table or table is not unique: length {len(table)}"
 
-            mass_16, mass_50, mass_84 = (
-                table["stellar_mass_16"],
-                table["stellar_mass_50"],
-                table["stellar_mass_84"],
+            param_16, param_50, param_84 = (
+                table[f"{parameter}_16"],
+                table[f"{parameter}_50"],
+                table[f"{parameter}_84"],
             )
 
             # resolved mass
-
-            quantities = galaxy.get_total_resolved_mass(
-                resolved_run, sed_fitting_tool=sed_fitting_tool
+            logp = True if parameter == "stellar_mass" else False
+            quantities = galaxy.get_total_resolved_property(
+                resolved_run,
+                sed_fitting_tool=sed_fitting_tool,
+                n_cores=n_jobs,
+                property=parameter,
+                log=logp,
             )
 
             ax.errorbar(
-                mass_50,
+                param_50,
                 quantities[1],
-                xerr=(mass_50 - mass_16, mass_84 - mass_50),
+                xerr=(param_50 - param_16, param_84 - param_50),
                 yerr=(
                     [quantities[1] - quantities[0]],
                     [quantities[2] - quantities[1]],
                 ),
                 fmt="o",
                 label=galaxy.galaxy_id if label else "",
+                color=colors[galaxy.galaxy_id],
                 **kwargs,
             )
-
-        ax.set_xlabel(r"Aperture Stellar Mass (M$_\odot$)")
-
-        ax.set_ylabel(r"Resolved Stellar Mass (M$_\odot$)")
+            if color_by is not None:
+                fig.colorbar(
+                    cm.ScalarMappable(norm=norm, cmap="viridis"),
+                    cax=cbar,
+                    orientation="horizontal",
+                )
+                # Move x-axis to top for cbar
+                cbar.xaxis.set_ticks_position("top")
+                cbar.xaxis.set_label_position("top")
+                cbar.set_xlabel(color_by)
 
         if label:
             ax.legend()
 
-        # Plot a 1:1 line
-
-        ax.set_xlim(8, 10.5)
-        ax.set_ylim(8, 10.5)
-        ax.plot([5, 12], [5, 12], "k--")
+        # Plot a 1:1 line for any parameter
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        ax.plot(
+            [min(xlim[0], ylim[0]), max(xlim[1], ylim[1])],
+            [min(xlim[0], ylim[0]), max(xlim[1], ylim[1])],
+            "k--",
+        )
 
         return fig
 
@@ -10761,7 +10922,9 @@ class MultipleResolvedGalaxy:
 
         # Current folder will be run_dir /pipes/parallel_temp
 
-        current_posterior_folder = os.path.join(run_dir, f'posterior/{out_subdir_name}')
+        current_posterior_folder = os.path.join(
+            run_dir, f"posterior/{out_subdir_name}"
+        )
 
         # Move all files back to where they should be and rename - currently gal_id_bin.h5, should be bin.h5 only
 
@@ -10790,12 +10953,12 @@ class MultipleResolvedGalaxy:
                 cat_ids
             ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
             gal_cat["#ID"] = config["ids"]
-            new_cat_dir = os.path.dirname(new_dir.replace('posterior', 'cats'))
-            print('New cat dir:', new_cat_dir)
+            new_cat_dir = os.path.dirname(new_dir.replace("posterior", "cats"))
+            print("New cat dir:", new_cat_dir)
             if not os.path.exists(new_cat_dir):
                 os.makedirs(new_cat_dir)
             gal_cat.write(
-                f'{new_cat_dir}/{galaxy_id}.fits',
+                f"{new_cat_dir}/{galaxy_id}.fits",
                 overwrite=True,
             )
 
@@ -10809,7 +10972,9 @@ class MultipleResolvedGalaxy:
                     os.makedirs(os.path.dirname(new_path))
 
                 if not os.path.exists(old_path) and os.path.exists(new_path):
-                    print(f'Output .h5 found in new location for {id}. Skipping.')
+                    print(
+                        f"Output .h5 found in new location for {id}. Skipping."
+                    )
                     continue
 
                 os.rename(old_path, new_path)
@@ -10818,7 +10983,7 @@ class MultipleResolvedGalaxy:
             run_name = config["meta"]["run_name"]
             bins_to_show = config["meta"]["fit_photometry"]
             galaxy.load_bagpipes_results(run_name)
-            '''
+            """
             galaxy.get_resolved_bagpipes_sed(run_name)
             # Save the resolved SFH
             fig, _ = galaxy.plot_bagpipes_sfh(
@@ -10827,10 +10992,59 @@ class MultipleResolvedGalaxy:
             plt.close(fig)
             # Save the resolved mass
             galaxy.get_total_resolved_mass(run_name)
-            '''
+            """
 
         # When it has run, need to move and rename posterior files for each galaxy, and
         # split catalogues back out again.
+
+    def save_to_fits(
+        self, filename="auto", overwrite=False, bagpipes_row="TOTAL_BIN"
+    ):
+        """
+        # Saves key properties of all galaxies to a fits file.
+        Only save properties that exist in all galaxies.
+        Save name, redshift, resolved mass, sfr, bagpipes results, cutout size, nbins etc
+
+        """
+        from astropy.table import Table
+
+        rows = []
+
+        properties = [
+            "galaxy_id",
+            "survey",
+            "version",
+            "redshift",
+            "cutout_size",
+        ]
+        # For matching Bagpipes run_names
+        # Get run_name from first galaxy
+        run_name = self.galaxies[0].bagpipes_results.keys()
+
+        for galaxy in self.galaxies:
+            row = {}
+            for prop in properties:
+                if hasattr(galaxy, prop):
+                    row[prop] = getattr(galaxy, prop)
+                else:
+                    row[prop] = np.nan
+
+            pipes_table = galaxy.bagpipes_results[run_name]
+            if bagpipes_row in pipes_table["#ID"]:
+                row = {
+                    **row,
+                    **pipes_table[
+                        pipes_table["#ID"] == bagpipes_row
+                    ].as_dict(),
+                }
+                # Rename keys with run_name
+                row = {key: f"{run_name}_{key}" for key in row.keys()}
+
+            rows.append(row)
+
+        table = Table(rows)
+        if filename == "auto":
+            filename = f"{run_name}_galaxies.fits"
 
 
 def run_bagpipes_wrapper(
@@ -10893,7 +11107,9 @@ def run_bagpipes_wrapper(
             )
             plt.close(fig)
             # Save the resolved mass
-            galaxy.get_total_resolved_mass(resolved_dict["meta"]["run_name"])
+            galaxy.get_total_resolved_mass(
+                resolved_dict["meta"]["run_name"], property="stellar_mass"
+            )
 
         return galaxy
 

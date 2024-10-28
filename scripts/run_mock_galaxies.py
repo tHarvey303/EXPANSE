@@ -47,7 +47,6 @@ if __name__ == "__main__":
 
     print(f"Creating {num_of_galaxies} mock galaxies")
 
-    print(structure)
     redshifts = []
     for redshift_code in structure:
         for region in structure[redshift_code]:
@@ -70,10 +69,13 @@ if __name__ == "__main__":
                         h5_folder=h5_folder,
                     )
                     mock_galaxy.pixedfit_processing(
-                        gal_region_use="detection", overwrite=overwrite
-                    )  # Maybe seg map should be from detection image?
-                    mock_galaxy.pixedfit_binning(overwrite=overwrite)
-                    mock_galaxy.measure_flux_in_bins(overwrite=overwrite)
+                        gal_region_use="detection",
+                        overwrite=overwrite,
+                        dir_images=h5_folder,
+                    )
+                    # Maybe seg map should be from detection image?
+                    # mock_galaxy.pixedfit_binning(overwrite=overwrite)
+                    # mock_galaxy.measure_flux_in_bins(overwrite=overwrite)
                     run_ids.append(mock_galaxy.galaxy_id)
                     redshifts.append(mock_galaxy.redshift)
                     del mock_galaxy  # Clear memory

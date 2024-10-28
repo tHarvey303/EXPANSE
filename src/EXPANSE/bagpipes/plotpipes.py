@@ -371,13 +371,18 @@ class PipesFit:
             photometry_exists = False
             self.filts = None
 
-        self.galaxy = galaxy(
-            galaxy_id,
-            self.data_func,
-            filt_list=self.filts,
-            spectrum_exists=spectrum_exists,
-            photometry_exists=photometry_exists,
-        )
+        try:
+            self.galaxy = galaxy(
+                galaxy_id,
+                self.data_func,
+                filt_list=self.filts,
+                spectrum_exists=spectrum_exists,
+                photometry_exists=photometry_exists,
+            )
+
+        except Exception as e:
+            print(f"Error in {galaxy_id}")
+            raise e
 
         # Recreating the posterior object
         # print(self.h5_path)
