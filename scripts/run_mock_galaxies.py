@@ -97,12 +97,12 @@ if __name__ == "__main__":
                             overwrite=overwrite,
                             mock_rms_fit_path=mock_rms_fit_path,
                             debug=False,
-                            h5_folder=h5_folder,
+                            h5_folder=galaxies_dir,
                         )
                         mock_galaxy.pixedfit_processing(
                             gal_region_use="detection",
                             overwrite=overwrite,
-                            dir_images=h5_folder,
+                            dir_images=galaxies_dir,
                         )
                         # Maybe seg map should be from detection image?
                         mock_galaxy.pixedfit_binning(overwrite=overwrite)
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     # Doesn't preserve order otherwise - can't guarantee they will be run in the input order
     if bagpipes_only:
         galaxies = MockResolvedGalaxy.init_all_field_from_h5(
-            mock_field, h5_folder, save_out=False
+            mock_field, galaxies_dir, save_out=False
         )
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
