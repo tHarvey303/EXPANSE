@@ -12,7 +12,6 @@ import types
 import typing
 import tempfile
 import time
-import datetime
 import warnings
 from io import BytesIO
 from pathlib import Path
@@ -1706,6 +1705,58 @@ class ResolvedGalaxy:
         self.filter_ranges = filter_ranges
         self.filter_instruments = filter_instruments
         self.band_codes = band_codes
+
+    def property_in_mask(
+        property_map,
+        mask=None,
+        mask_name=None,
+        func="sum",
+        density=False,
+        return_total=False,
+    ):
+        """Given a map and mask of the same dimensions, calculate the sum, mean or median of the map within each segment of the mask
+        For the mask  0 is background, positive integers are different segments"""
+        assert (
+            mask is not None or mask_name is not None
+        ), "Need to provide either a mask or a mask_name"
+
+        if mask is None:
+            if mask_name not in self.gal_region.keys():
+                raise ValueError(
+                    f"Mask {mask_name} not found in galaxy region."
+                )
+
+            mask = self.gal_region[mask_name]
+
+        if func == "sum":
+            func = np.nansum
+        elif func == "mean":
+            func = np.nanmean
+        elif func == "median":
+            func = np.nanmedian
+
+        unique = np.unique(mask)
+        unique = unique[unique != 0]
+
+        output = np.zeros_like(map)
+
+        # Make output nans initially
+        output = np.nan * np.zeros_like(property_map)
+
+        for u in unique:
+            output[mask == u] = func(property_map[mask == u])
+
+        if density:
+            # Divide each region by pixel area
+            for u in unique:
+                num_pix = np.sum(mask == u)
+                area = num_pix * pix_size**2
+                output[mask == u] /= area
+
+        if return_total:
+            return func(np.unique(output))
+
+        return output
 
     def get_star_stack_psf(self, match_band=None):
         """Get the PSF kernel from a star stack"""
@@ -10667,6 +10718,17 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         self.synthesizer_galaxy = gal
 
+    def property_map_from_synthesizer():
+        pass
+
+    def synthesizer_property_in_mask(property, mask=None, mask_name=None):
+        # Wrapper for self.property_in_mask for Synthesizer specific properties
+        # Which should be saved in the h5 file.
+
+        # E.g. this should be able to get the stellar mass in a mask, or the SFR in a mask, or average age in a mask etc.
+
+        pass
+
     def plot_bagpipes_sfh(
         self,
         run_name=None,
@@ -11236,7 +11298,7 @@ class ResolvedGalaxies:
                 os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
                 os.path.join(
                     run_dir,
-                    f"cats/{out_subdir_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.fits",
+                    f"cats/{out_subdir_name}_{time.strftime('%Y%m%d_%H%M%S')}.fits",
                 ),
             )
 
