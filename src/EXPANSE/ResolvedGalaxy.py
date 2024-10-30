@@ -12,6 +12,7 @@ import types
 import typing
 import tempfile
 import time
+import datetime
 import warnings
 from io import BytesIO
 from pathlib import Path
@@ -190,6 +191,8 @@ class ResolvedGalaxy:
         resolved_mass=None,
         resolved_sfh=None,
         resolved_sed=None,
+        resolved_sfr_10myr=None,
+        resolved_sfr_100myr=None,
         h5_folder=resolved_galaxy_dir,
         psf_kernel_folder="internal",
         psf_folder="internal",
@@ -308,6 +311,8 @@ class ResolvedGalaxy:
         self.psfs_meta = psfs_meta
         # print(len(psfs_meta))
         self.resolved_mass = resolved_mass
+        self.resolved_sfr_10myr = resolved_sfr_10myr
+        self.resolved_sfr_100myr = resolved_sfr_100myr
         self.resolved_sfh = resolved_sfh
         self.resolved_sed = resolved_sed
 
@@ -926,7 +931,7 @@ class ResolvedGalaxy:
                 cls.init_from_h5(
                     h5_name, h5_folder=h5_folder, save_out=save_out
                 )
-                for h5_name in h5_names
+                for h5_name in tqdm(h5_names, desc="Loading galaxies")
             ]
         elif n_jobs >= 1:
             from joblib import Parallel, delayed
@@ -935,7 +940,9 @@ class ResolvedGalaxy:
                 delayed(cls.init_from_h5)(
                     h5_name, h5_folder=h5_folder, save_out=save_out
                 )
-                for h5_name in h5_names
+                for h5_name in tqdm(
+                    h5_names, desc="Loading galaxies in parallel"
+                )
             )
 
         return galaxies
@@ -1291,6 +1298,24 @@ class ResolvedGalaxy:
             else:
                 resolved_mass = None
 
+            if hfile.get("resolved_sfr_100myr") is not None:
+                resolved_sfr_100myr = {}
+                for key in hfile["resolved_sfr_100myr"].keys():
+                    resolved_sfr_100myr[key] = hfile["resolved_sfr_100myr"][
+                        key
+                    ][()]
+            else:
+                resolved_sfr_100myr = None
+
+            if hfile.get("resolved_sfr_10myr") is not None:
+                resolved_sfr_10myr = {}
+                for key in hfile["resolved_sfr_10myr"].keys():
+                    resolved_sfr_10myr[key] = hfile["resolved_sfr_10myr"][key][
+                        ()
+                    ]
+            else:
+                resolved_sfr_10myr = None
+
             # Read in resolved_sfh
             if hfile.get("resolved_sfh") is not None:
                 resolved_sfh = {}
@@ -1434,6 +1459,8 @@ class ResolvedGalaxy:
             "total_photometry": total_photometry,
             "resolved_mass": resolved_mass,
             "resolved_sfh": resolved_sfh,
+            "resolved_sfr_100myr": resolved_sfr_100myr,
+            "resolved_sfr_10myr": resolved_sfr_10myr,
             "resolved_sed": resolved_sed,
             "cutout_size": cutout_size,
             "h5_folder": h5_folder,
@@ -2210,6 +2237,24 @@ class ResolvedGalaxy:
                             key, data=self.resolved_mass[key]
                         )
 
+                if self.resolved_sfr_10myr is not None:
+                    hfile.create_group("resolved_sfr_10myr")
+                    for key in self.resolved_sfr_10myr.keys():
+                        hfile["resolved_sfr_10myr"].create_dataset(
+                            key,
+                            data=self.resolved_sfr_10myr[key],
+                            compression="gzip",
+                        )
+
+                if self.resolved_sfr_100myr is not None:
+                    hfile.create_group("resolved_sfr_100myr")
+                    for key in self.resolved_sfr_100myr.keys():
+                        hfile["resolved_sfr_100myr"].create_dataset(
+                            key,
+                            data=self.resolved_sfr_100myr[key],
+                            compression="gzip",
+                        )
+
                 # Add resolved SFH
                 if self.resolved_sfh is not None:
                     hfile.create_group("resolved_sfh")
@@ -2292,6 +2337,32 @@ class ResolvedGalaxy:
                                         data=self.sfh[key][key2],
                                         compression="gzip",
                                     )
+
+                # Write interactive outputs
+                if self.interactive_outputs is not None:
+                    hfile.create_group("interactive_outputs")
+                    for region_id in self.interactive_outputs.keys():
+                        hfile["interactive_outputs"].create_group(region_id)
+                        for key in self.interactive_outputs[region_id].keys():
+                            if key == "meta":
+                                pass
+                            else:
+                                data = self.interactive_outputs[region_id][key]
+                                hfile["interactive_outputs"][
+                                    region_id
+                                ].create_dataset(
+                                    key,
+                                    data=data,
+                                    compression="gzip",
+                                )
+                                if key == "eazy_fit":
+                                    meta = self.interactive_outputs[region_id][
+                                        "meta"
+                                    ]
+                                    for meta_key in meta.keys():
+                                        hfile["interactive_outputs"][
+                                            region_id
+                                        ][key].attrs[key] = str(meta[meta_key])
 
                 # Write photometry table(s)
                 if self.photometry_table is not None:
@@ -3487,7 +3558,7 @@ class ResolvedGalaxy:
         ref_band="F277W",
         min_band="auto",
         Dmin_bin=7,
-        redc_chi2_limit=5.0,
+        redc_chi2_limit=9.0,
         del_r=2.0,
         overwrite=False,
         min_snr_wav=1216 * u.AA,
@@ -3562,7 +3633,7 @@ class ResolvedGalaxy:
                 print('Reference band.')
         """
 
-        pixel_binning(
+        out = pixel_binning(
             self.flux_map_path,
             ref_band=ref_band_pos,
             Dmin_bin=Dmin_bin,
@@ -3571,6 +3642,10 @@ class ResolvedGalaxy:
             del_r=del_r,
             name_out_fits=name_out_fits,
         )
+
+        if not out:
+            print("Pixedfit binning failed")
+            return False
 
         self.pixedfit_binmap_path = name_out_fits
         self.add_to_h5(
@@ -5487,6 +5562,25 @@ class ResolvedGalaxy:
                 if os.path.exists(path) and not os.path.exists(nrun_name):
                     os.rename(path, nrun_name)
 
+        if "continuity" in fit_instructions.keys() and meta.get(
+            "update_cont_bins", False
+        ):
+            # Update the continuity bins
+            print("Updating continuity bins")
+            from .bagpipes.plotpipes import calculate_bins
+
+            fit_instructions["continuity"]["bin_edges"] = list(
+                calculate_bins(
+                    redshift=redshifts[0],
+                    num_bins=meta.get("cont_nbins", 6),
+                    first_bin=meta.get("cont_first_bin", 10 * u.Myr),
+                    second_bin=None,
+                    return_flat=True,
+                    output_unit="Myr",
+                    log_time=False,
+                )
+            )
+
         if return_run_args:
             # print(type(redshifts), type(redshift_sigma), type(nircam_filts), type(self.provide_bagpipes_phot('1')))
             # dog
@@ -6472,9 +6566,82 @@ class ResolvedGalaxy:
 
         return gif
 
+    def eazy_fit_measured_photometry(
+        self,
+        phot_name,
+        override_psf_type=None,
+        override_binmap_type=None,
+        overwrite=False,
+        n_proc=4,
+        min_percentage_err=0.05,
+        template_name="fsps_larson",
+        template_dir="/nvme/scratch/work/tharvey/EAZY/inputs/scripts/",
+        meta_details=None,
+        save_tempfilt=True,
+        load_tempfilt=True,
+        save_tempfilt_path="internal",
+        tempfilt=None,
+        update_meta_properties=False,
+    ):
+        """
+        Wrapper function for fit_eazy_photometry. Provides either
+        total fluxes, aperture fluxes or fluxes from photometry_table
+        """
+        if override_psf_type is not None:
+            self.use_psf_type = override_psf_type
+        if override_binmap_type is not None:
+            self.use_binmap_type = override_binmap_type
+
+        arr = self.provide_bagpipes_phot(phot_name)
+        fluxes = arr[:, 0] * u.uJy
+        flux_errs = arr[:, 1] * u.uJy
+
+        name = f"{phot_name}_{template_name}_{min_percentage_err}"
+
+        if (
+            name.replace(".", "_") in list(self.interactive_outputs.keys())
+            and not overwrite
+        ):
+            print(
+                f"Output {name} already exists. Use overwrite=True to recompute."
+            )
+            return
+
+        ez = self.fit_eazy_photometry(
+            fluxes,
+            flux_errs,
+            n_proc=n_proc,
+            min_percentage_err=min_percentage_err,
+            template_name=template_name,
+            template_dir=template_dir,
+            meta_details=meta_details,
+            save_tempfilt=save_tempfilt,
+            load_tempfilt=load_tempfilt,
+            save_tempfilt_path=save_tempfilt_path,
+            tempfilt=tempfilt,
+        )
+
+        meta_dict = self.save_eazy_outputs(
+            ez, [name], [fluxes], [flux_errs], save_txt=False
+        )
+
+        if update_meta_properties:
+            self.meta_properties[f"zbest_{template_name}_zfree"] = meta_dict[
+                "z_best"
+            ]
+            self.meta_properties[f"zbest_16_{template_name}_zfree"] = (
+                meta_dict["z16"]
+            )
+            self.meta_properties[f"zbest_84_{template_name}_zfree"] = (
+                meta_dict["z84"]
+            )
+            self.meta_properties[f"chi2_best_{template_name}_zfree"] = (
+                meta_dict["chi2"]
+            )
+            self.dump_to_h5()
+
     def fit_eazy_photometry(
         self,
-        run_name,
         fluxes,
         flux_errs,
         n_proc=4,
@@ -6608,6 +6775,15 @@ class ResolvedGalaxy:
 
             return ez
 
+    def update_internal_redshift(self, z_override):
+        if type(z_override) in [int, float]:
+            self.redshift = z_override
+
+        if type(z_override) is str:
+            # Could refer to Bagpipes result.
+            # Or EAZY result.
+            raise NotImplementedError
+
     def save_eazy_outputs(
         self, ez, regions, fluxes, flux_errs, save_txt=False
     ):
@@ -6626,17 +6802,24 @@ class ResolvedGalaxy:
                 show_fnu=1,
             )
 
+            z16, z50, z84 = ez.pz_percentiles([16, 50, 84])[0]
+
             meta_dict = {
                 "id_phot": data["id"],
                 "z_best": data["z"],
                 "chi2": data["chi2"],
+                "z16": z16,
+                "z50": z50,
+                "z84": z84,
                 "flux_unit": data["flux_unit"],
                 "wave_unit": data["wave_unit"],
                 "templates_file": ez.param["TEMPLATES_FILE"],
                 "z_min": ez.param["Z_MIN"],
                 "z_max": ez.param["Z_MAX"],
                 "z_step": ez.param["Z_STEP"],
-                "region": region.serialize(format="ds9"),
+                "region": region.serialize(format="ds9")
+                if type(region) is not str
+                else region,
             }
 
             model_flux = data["templf"]
@@ -6656,7 +6839,9 @@ class ResolvedGalaxy:
 
             output_z = np.vstack((z, p_z)).T
             # generate unique ID based on region coordinates
-            if type(region) is not PolygonPixelRegion:
+            if type(region) is str:
+                region_id = region
+            elif type(region) is not PolygonPixelRegion:
                 region_id = f"{region.center.x}_{region.center.y}"
             else:
                 vertices = region.vertices.xy
@@ -6737,6 +6922,7 @@ class ResolvedGalaxy:
                     format="ds9",
                 )
 
+        return meta_dict
         # For each region, save the input fluxes and flux errors, best fit redshift and SED/p(z) in the .h5 file
 
     def plot_eazy_fit(
@@ -7461,12 +7647,29 @@ class ResolvedGalaxy:
         bins_to_show = table["#ID"]
 
         if return_quantiles:
-            if (
-                self.resolved_mass is not None
-                and run_name in self.resolved_mass.keys()
-                and not overwrite
-            ):
-                return self.resolved_mass[run_name]
+            if property == "stellar_mass" and not overwrite:
+                if (
+                    self.resolved_mass is not None
+                    and run_name in self.resolved_mass.keys()
+                    and not overwrite
+                ):
+                    return self.resolved_mass[run_name]
+
+            if property == "sfr" or property == "sfr_100myr" and not overwrite:
+                if (
+                    self.resolved_sfr_100myr is not None
+                    and run_name in self.resolved_sfr_100myr.keys()
+                    and not overwrite
+                ):
+                    return self.resolved_sfr_100myr[run_name]
+
+            if property == "sfr_10myr" and not overwrite:
+                if (
+                    self.resolved_sfr_10myr is not None
+                    and run_name in self.resolved_sfr_10myr.keys()
+                    and not overwrite
+                ):
+                    return self.resolved_sfr_10myr[run_name]
 
         for rbin in bins_to_show:
             try:
@@ -7476,6 +7679,8 @@ class ResolvedGalaxy:
                 pass
 
         try:
+            #
+
             pipes_objs = self.load_pipes_object(
                 run_name,
                 bins,
@@ -7492,7 +7697,8 @@ class ResolvedGalaxy:
         all_samples = []
 
         for obj in pipes_objs:
-            samples = obj.plot_pdf(None, combine_type, return_samples=True)
+            samples = obj.plot_pdf(None, property, return_samples=True)
+            print(samples)
             all_samples.append(samples)
 
         all_samples = np.array(all_samples, dtype=object)
@@ -7526,14 +7732,19 @@ class ResolvedGalaxy:
                 percentiles, "resolved_mass", run_name, overwrite=True
             )
 
-        elif property == "sfr":
-            if self.resolved_sfr is None:
-                self.resolved_sfr = {}
-
-            self.resolved_sfr[run_name] = percentiles
+        elif property == "sfr" or property == "sfr_10myr":
+            if property == "sfr":
+                property = "sfr_100myr"
+                if self.resolved_sfr_100myr is None:
+                    self.resolved_sfr_100myr = {}
+                self.resolved_sfr_100myr[run_name] = percentiles
+            elif property == "sfr_10myr":
+                if self.resolved_sfr_10myr is None:
+                    self.resolved_sfr_10myr = {}
+                self.resolved_sfr_10myr[run_name] = percentiles
 
             self.add_to_h5(
-                percentiles, "resolved_sfr", run_name, overwrite=True
+                percentiles, f"resolved_{property}", run_name, overwrite=True
             )
 
         if return_quantiles:
@@ -9975,6 +10186,44 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         # TODO: Implement this method
         raise NotImplementedError("Need to implement this method.")
 
+    @classmethod
+    def init_all_field_from_h5(
+        cls,
+        field,
+        h5_folder=resolved_galaxy_dir,
+        save_out=True,
+        n_jobs=1,
+    ):
+        h5_names = glob.glob(f"{h5_folder}{field}*.h5")
+
+        h5_names = [h5_name.split("/")[-1] for h5_name in h5_names]
+
+        # sort them
+        h5_names = sorted(h5_names)
+
+        # Remove any with 'mock' in the name
+        h5_names = [
+            h5_name
+            for h5_name in h5_names
+            if "mock" in h5_name and "temp" not in h5_name
+        ]
+
+        print("Found", len(h5_names), "galaxies in field", field)
+        # print(h5_names)
+        return cls.init_multiple_from_h5(
+            h5_names, h5_folder=h5_folder, save_out=save_out, n_jobs=n_jobs
+        )
+
+    """@classmethod
+    def init_multiple_from_h5(
+        cls,
+        h5_names,
+        h5_folder=resolved_galaxy_dir,
+        save_out=True,
+        n_jobs=1,
+    ):"""
+    # Load multiple galaxies from h5 files
+
     def plot_mock_spectra(
         self,
         components,
@@ -10556,7 +10805,7 @@ class MethodForwardingMeta(type):
         return new_class
 
 
-class MultipleResolvedGalaxy:
+class ResolvedGalaxies:
     def __init__(self, list_of_galaxies):
         contained_class = list_of_galaxies[0].__class__
 
@@ -10609,6 +10858,7 @@ class MultipleResolvedGalaxy:
         ylim=None,
         cmap="viridis",
         n_jobs=1,
+        overwrite=False,
         **kwargs,
     ):
         fig, ax = plt.subplots(
@@ -10710,6 +10960,7 @@ class MultipleResolvedGalaxy:
                 n_cores=n_jobs,
                 property=parameter,
                 log=logp,
+                overwrite=overwrite,
             )
 
             ax.errorbar(
@@ -10957,6 +11208,7 @@ class MultipleResolvedGalaxy:
             print("New cat dir:", new_cat_dir)
             if not os.path.exists(new_cat_dir):
                 os.makedirs(new_cat_dir)
+
             gal_cat.write(
                 f"{new_cat_dir}/{galaxy_id}.fits",
                 overwrite=True,
@@ -10979,6 +11231,15 @@ class MultipleResolvedGalaxy:
 
                 os.rename(old_path, new_path)
 
+            # Now rename the bulk catalgoue - just add current time to it as a backup
+            os.rename(
+                os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
+                os.path.join(
+                    run_dir,
+                    f"cats/{out_subdir_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.fits",
+                ),
+            )
+
         for galaxy, config in zip(self.galaxies, bagpipes_configs):
             run_name = config["meta"]["run_name"]
             bins_to_show = config["meta"]["fit_photometry"]
@@ -10998,7 +11259,11 @@ class MultipleResolvedGalaxy:
         # split catalogues back out again.
 
     def save_to_fits(
-        self, filename="auto", overwrite=False, bagpipes_row="TOTAL_BIN"
+        self,
+        filename="auto",
+        overwrite=False,
+        bagpipes_row="TOTAL_BIN",
+        save=True,
     ):
         """
         # Saves key properties of all galaxies to a fits file.
@@ -11013,13 +11278,12 @@ class MultipleResolvedGalaxy:
         properties = [
             "galaxy_id",
             "survey",
-            "version",
+            "galfind_version",
             "redshift",
             "cutout_size",
         ]
         # For matching Bagpipes run_names
         # Get run_name from first galaxy
-        run_name = self.galaxies[0].bagpipes_results.keys()
 
         for galaxy in self.galaxies:
             row = {}
@@ -11028,23 +11292,71 @@ class MultipleResolvedGalaxy:
                     row[prop] = getattr(galaxy, prop)
                 else:
                     row[prop] = np.nan
+            run_names = galaxy.sed_fitting_table["bagpipes"].keys()
 
-            pipes_table = galaxy.bagpipes_results[run_name]
-            if bagpipes_row in pipes_table["#ID"]:
-                row = {
-                    **row,
-                    **pipes_table[
+            for run_name in run_names:
+                if not getattr(galaxy, "resolved_mass", None) is None:
+                    if run_name in galaxy.resolved_mass.keys():
+                        row[f"{run_name}_resolved_mass"] = (
+                            galaxy.resolved_mass[run_name]
+                        )
+                    else:
+                        row[f"{run_name}_resolved_mass"] = np.nan
+                else:
+                    print(f"Resolved mass not found for {galaxy.galaxy_id}")
+
+                if not getattr(galaxy, "resolved_sfr_10myr", None) is None:
+                    if run_name in galaxy.resolved_sfr_10myr.keys():
+                        row[f"{run_name}_resolved_sfr_10myr"] = (
+                            galaxy.resolved_sfr_10myr[run_name]
+                        )
+                    else:
+                        row[f"{run_name}_resolved_sfr_10myr"] = np.nan
+                if not getattr(galaxy, "resolved_sfr_100myr", None) is None:
+                    if run_name in galaxy.resolved_sfr_100myr.keys():
+                        row[f"{run_name}_resolved_sfr_100myr"] = (
+                            galaxy.resolved_sfr_100myr[run_name]
+                        )
+                    else:
+                        row[f"{run_name}_resolved_sfr_100myr"] = np.nan
+
+                pipes_table = galaxy.sed_fitting_table["bagpipes"][run_name]
+                if bagpipes_row in pipes_table["#ID"]:
+                    pipes_table = pipes_table[
                         pipes_table["#ID"] == bagpipes_row
-                    ].as_dict(),
-                }
-                # Rename keys with run_name
-                row = {key: f"{run_name}_{key}" for key in row.keys()}
+                    ]
+                    pipes_row = {
+                        col: pipes_table[col][0]
+                        for col in pipes_table.colnames
+                    }
+                    # Rename keys with run_name
+                    pipes_row = {
+                        f"{run_name}_{key}": item
+                        for key, item in pipes_row.items()
+                    }
+                    row.update(pipes_row)
+                else:
+                    print(
+                        f"Could not find {bagpipes_row} in {run_name} table for {galaxy.galaxy_id}"
+                    )
 
             rows.append(row)
 
         table = Table(rows)
+        # Delete all nan columns
+        for col in table.colnames:
+            vals = list(table[col])
+            if type(vals[0]) is float:
+                if all(np.isnan(vals)):
+                    table.remove_column(col)
+
         if filename == "auto":
             filename = f"{run_name}_galaxies.fits"
+
+        if save:
+            table.write(filename, overwrite=overwrite)
+
+        return table
 
 
 def run_bagpipes_wrapper(

@@ -15,6 +15,7 @@ import os
 from .ResolvedGalaxy import ResolvedGalaxy, MockResolvedGalaxy
 from astropy import units as u
 import xarray as xr
+import hvplot.xarray  # noqa
 from bokeh.models import PrintfTickFormatter, Label
 import matplotlib.cm as cm
 from holoviews import opts, streams
@@ -1649,7 +1650,7 @@ class GalaxyTab(param.Parameterized):
                         self.which_sed_fitter_widget.param.value,
                         watch=True,
                     ),
-                    pn.Row(
+                    pn.Column(
                         self.upscale_select_widget,
                         self.show_sed_photometry_widget,
                     ),
@@ -2671,9 +2672,19 @@ class ResolvedSEDApp(param.Parameterized):
         )
 
         if os.path.exists(galaxies_dir):
-            self.choose_file_input.options = [None] + sorted(
-                [f for f in os.listdir(self.galaxies_dir) if f.endswith(".h5")]
-            )
+            options = [
+                f for f in os.listdir(self.galaxies_dir) if f.endswith(".h5")
+            ]
+            # Add options in nested directories
+            for root, dirs, files in os.walk(self.galaxies_dir):
+                # Only look for files outside the root directory
+                for file in files:
+                    if file.endswith(".h5") and root != self.galaxies_dir:
+                        options.append(
+                            os.path.relpath(os.path.join(root, file))
+                        )
+
+            self.choose_file_input.options = [None] + sorted(options)
         else:
             self.choose_file_input.options = ["No .h5 files found"]
 

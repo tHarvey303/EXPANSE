@@ -1114,6 +1114,9 @@ class PipesFit:
             # if parameter not in names:
             #     raise Exception(f'{parameter} was not fit.')
         # print(names, parameter)
+        if parameter not in names:
+            raise Exception(f"{parameter} was not fit. Not in {names}")
+
         np.argwhere(np.array(names) == parameter)[0][0]
 
         # Get axis labels
@@ -1125,7 +1128,7 @@ class PipesFit:
         samples = np.copy(fit.posterior.samples[name])
 
         # Log parameter samples and labels for parameters with log priors
-        if name == "sfr" or name == "formed_mass":
+        if (name == "sfr" or name == "formed_mass") and not return_samples:
             samples = np.log10(samples)
             label = "$\\mathrm{log_{10}}(" + label[1:-1] + ")$"
 

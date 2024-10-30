@@ -27,7 +27,7 @@ from EXPANSE import (
     ResolvedGalaxy,
     MockResolvedGalaxy,
     run_bagpipes_wrapper,
-    MultipleResolvedGalaxy,
+    ResolvedGalaxies,
 )
 from EXPANSE.bagpipes.pipes_models import *
 
@@ -250,7 +250,7 @@ if __name__ == "__main__":
                     h5_folder=h5_folder,
                     alert=True,
                     use_mpi=True,
-                    mpi_serial = True,
+                    mpi_serial=True,
                     update_h5=False,
                 )
 

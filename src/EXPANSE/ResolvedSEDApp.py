@@ -6,6 +6,7 @@ from panel.layout.gridstack import GridStack
 import panel as pn
 import holoviews as hv
 import xarray as xr
+import hvplot.xarray  # noqa
 
 # import hvplot.xarray
 import click

@@ -1,4 +1,4 @@
-from EXPANSE import ResolvedGalaxy, MultipleResolvedGalaxy
+from EXPANSE import ResolvedGalaxy, ResolvedGalaxies
 from EXPANSE.bagpipes.pipes_models import (
     continuity_dict,
     create_dicts,
@@ -46,7 +46,7 @@ galaxies = ResolvedGalaxy.init_all_field_from_h5(
     field, galaxies_dir, save_out=False
 )
 
-multiple_galaxies = MultipleResolvedGalaxy(galaxies)
+multiple_galaxies = ResolvedGalaxies(galaxies)
 
 dicts = create_dicts(model, len(multiple_galaxies), override_meta=meta)
 
