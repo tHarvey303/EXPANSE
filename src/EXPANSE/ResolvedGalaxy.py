@@ -11197,23 +11197,18 @@ class ResolvedGalaxies:
         os.chdir(os.path.dirname(run_dir))
 
         # Check if already run
-        new_dirs = [
-            os.path.join(run_dir, config["out_dir"])
-            for config in bagpipes_configs
-        ]
-        new_cat_dirs = [
-            os.path.dirname(new_dir.replace("posterior", "cats"))
-            for new_dir in new_dirs
-        ]
 
         done = all(
             [
-                os.path.exists(f"{new_dir}/{galaxy.galaxy_id}.h5")
-                for galaxy, new_dir in zip(self.galaxies, new_dirs)
+                os.path.exists(
+                    f"{os.path.join(run_dir, config[galaxy.galaxy_id]['out_dir'])}/{galaxy.galaxy_id}.h5"
+                )
+                for galaxy, config in zip(self.galaxies, configs)
             ]
             + [
-                os.path.exists(f"{new_cat_dir}/{galaxy.galaxy_id}.fits")
-                for galaxy, new_cat_dir in zip(self.galaxies, new_cat_dirs)
+                os.path.exists(
+                    f"{os.path.join(run_dir, config[galaxy.galaxy_id]['out_dir']).replace('posterior', 'cats')}/{galaxy.galaxy_id}.fits"
+                )
             ]
         )
 
