@@ -11293,14 +11293,14 @@ class ResolvedGalaxies:
 
                 os.rename(old_path, new_path)
 
-            # Now rename the bulk catalgoue - just add current time to it as a backup
-            os.rename(
-                os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
-                os.path.join(
-                    run_dir,
-                    f"cats/{out_subdir_name}_{time.strftime('%Y%m%d_%H%M%S')}.fits",
-                ),
-            )
+        # Now rename the bulk catalgoue - just add current time to it as a backup
+        os.rename(
+            os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
+            os.path.join(
+                run_dir,
+                f"cats/{out_subdir_name}_{time.strftime('%Y%m%d_%H%M%S')}.fits",
+            ),
+        )
 
         for galaxy, config in zip(self.galaxies, bagpipes_configs):
             run_name = config["meta"]["run_name"]
