@@ -11209,16 +11209,16 @@ class ResolvedGalaxies:
             os.path.join(run_dir, f"cats/{out_subdir_name}.fits")
         )
         # also check if .h5 files exist in either location
-        for galaxy, config in zip(self.galaxies, bagpipes_configs):
+        for galaxy_id, config in configs.items():
             # Check all IDs and see if .h5 exists in either new or old location
-            cat_ids = [f"{galaxy.galaxy_id}_{id}" for id in config["ids"]]
+            cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
             for id in cat_ids:
                 new_path = os.path.join(run_dir, config["out_dir"], f"{id}.h5")
                 if not (
                     os.path.exists(
                         os.pat.join(
                             run_dir,
-                            f"posterior/{out_subdir_name}/{galaxy.galaxy_id}_{id}.h5",
+                            f"posterior/{out_subdir_name}/{galaxy_id}_{id}.h5",
                         )
                     )
                     or os.path.exists(new_path)
