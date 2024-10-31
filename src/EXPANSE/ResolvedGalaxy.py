@@ -11201,14 +11201,9 @@ class ResolvedGalaxies:
         done = all(
             [
                 os.path.exists(
-                    f"{os.path.join(run_dir, config[galaxy.galaxy_id]['out_dir'])}/{galaxy.galaxy_id}.h5"
+                    f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}/{galaxy_id}.fits"
                 )
-                for galaxy, config in zip(self.galaxies, configs)
-            ]
-            + [
-                os.path.exists(
-                    f"{os.path.join(run_dir, config[galaxy.galaxy_id]['out_dir']).replace('posterior', 'cats')}/{galaxy.galaxy_id}.fits"
-                )
+                for galaxy_id, config in configs.items()
             ]
         )
 
