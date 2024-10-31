@@ -11216,7 +11216,7 @@ class ResolvedGalaxies:
                 new_path = os.path.join(run_dir, config["out_dir"], f"{id}.h5")
                 if not (
                     os.path.exists(
-                        os.pat.join(
+                        os.path.join(
                             run_dir,
                             f"posterior/{out_subdir_name}/{galaxy_id}_{id}.h5",
                         )
