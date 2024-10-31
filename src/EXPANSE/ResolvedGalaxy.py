@@ -11197,17 +11197,23 @@ class ResolvedGalaxies:
         os.chdir(os.path.dirname(run_dir))
 
         # Check if already run
-        new_dir = os.path.join(run_dir, config["out_dir"])
-        new_cat_dir = os.path.dirname(new_dir.replace("posterior", "cats"))
+        new_dirs = [
+            os.path.join(run_dir, config["out_dir"])
+            for config in bagpipes_configs
+        ]
+        new_cat_dirs = [
+            os.path.dirname(new_dir.replace("posterior", "cats"))
+            for new_dir in new_dirs
+        ]
 
         done = all(
             [
                 os.path.exists(f"{new_dir}/{galaxy.galaxy_id}.h5")
-                for galaxy in self.galaxies
+                for galaxy, new_dir in zip(self.galaxies, new_dirs)
             ]
             + [
                 os.path.exists(f"{new_cat_dir}/{galaxy.galaxy_id}.fits")
-                for galaxy in self.galaxies
+                for galaxy, new_cat_dir in zip(self.galaxies, new_cat_dirs)
             ]
         )
 
@@ -11246,6 +11252,8 @@ class ResolvedGalaxies:
             if return_code != 0:
                 raise subprocess.CalledProcessError(return_code, process_args)
 
+        else:
+            print("Already run, skipping.")
         # Folder for posteriors is config[galaxy]['out_dir']
 
         # Current folder will be run_dir /pipes/parallel_temp
@@ -11281,12 +11289,16 @@ class ResolvedGalaxies:
 
         if not done:
             for galaxy_id, config in configs.items():
+                new_dir = os.path.join(run_dir, config["out_dir"])
+                new_cat_dir = os.path.dirname(
+                    new_dir.replace("posterior", "cats")
+                )
+
                 if not os.path.exists(new_dir):
                     os.makedirs(new_dir)
 
                 cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
 
-                print(cat_ids)
                 mask = [id in cat_ids for id in output_catalogue["#ID"]]
                 mask = np.array(mask)
                 gal_cat = copy.deepcopy(output_catalogue[mask])
