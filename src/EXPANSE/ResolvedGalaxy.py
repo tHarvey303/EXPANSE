@@ -11196,7 +11196,22 @@ class ResolvedGalaxies:
         # cd to run_dir
         os.chdir(os.path.dirname(run_dir))
 
-        if not load_only:
+        # Check if already run
+        new_dir = os.path.join(run_dir, config["out_dir"])
+        new_cat_dir = os.path.dirname(new_dir.replace("posterior", "cats"))
+
+        done = all(
+            [
+                os.path.exists(f"{new_dir}/{galaxy.galaxy_id}.h5")
+                for galaxy in self.galaxies
+            ]
+            + [
+                os.path.exists(f"{new_cat_dir}/{galaxy.galaxy_id}.fits")
+                for galaxy in self.galaxies
+            ]
+        )
+
+        if not load_only and not done:
             process_args = [
                 "mpirun",
                 "-n",
@@ -11244,63 +11259,77 @@ class ResolvedGalaxies:
         output_catalogue = os.path.join(
             run_dir, f"cats/{out_subdir_name}.fits"
         )
+        done = False
         if os.path.exists(output_catalogue):
             output_catalogue = Table.read(output_catalogue)
+
+        elif all(
+            [
+                os.path.exists(f"{run_dir}/cats/{galaxy.galaxy_id}.fits")
+                for galaxy in self.galaxies
+            ]
+        ):
+            print(
+                "Output catalogue not found, but individual galaxy catalogues found. Skipping."
+            )
+            done = True
 
         else:
             raise FileNotFoundError(
                 f"Could not find output catalogue at {output_catalogue}"
             )
-        for galaxy_id, config in configs.items():
-            new_dir = os.path.join(run_dir, config["out_dir"])
-            if not os.path.exists(new_dir):
-                os.makedirs(new_dir)
 
-            cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
+        if not done:
+            for galaxy_id, config in configs.items():
+                if not os.path.exists(new_dir):
+                    os.makedirs(new_dir)
 
-            print(cat_ids)
-            mask = [id in cat_ids for id in output_catalogue["#ID"]]
-            mask = np.array(mask)
-            gal_cat = copy.deepcopy(output_catalogue[mask])
-            assert len(gal_cat) == len(
-                cat_ids
-            ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
-            gal_cat["#ID"] = config["ids"]
-            new_cat_dir = os.path.dirname(new_dir.replace("posterior", "cats"))
-            print("New cat dir:", new_cat_dir)
-            if not os.path.exists(new_cat_dir):
-                os.makedirs(new_cat_dir)
+                cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
 
-            gal_cat.write(
-                f"{new_cat_dir}/{galaxy_id}.fits",
-                overwrite=True,
-            )
+                print(cat_ids)
+                mask = [id in cat_ids for id in output_catalogue["#ID"]]
+                mask = np.array(mask)
+                gal_cat = copy.deepcopy(output_catalogue[mask])
+                assert (
+                    len(gal_cat) == len(cat_ids)
+                ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
+                gal_cat["#ID"] = config["ids"]
+                print("New cat dir:", new_cat_dir)
+                if not os.path.exists(new_cat_dir):
+                    os.makedirs(new_cat_dir)
 
-            for id in config["ids"]:
-                old_path = os.path.join(
-                    current_posterior_folder, f"{galaxy_id}_{id}.h5"
+                gal_cat.write(
+                    f"{new_cat_dir}/{galaxy_id}.fits",
+                    overwrite=True,
                 )
-                new_path = os.path.join(new_dir, f"{id}.h5")
 
-                if not os.path.exists(os.path.dirname(new_path)):
-                    os.makedirs(os.path.dirname(new_path))
-
-                if not os.path.exists(old_path) and os.path.exists(new_path):
-                    print(
-                        f"Output .h5 found in new location for {id}. Skipping."
+                for id in config["ids"]:
+                    old_path = os.path.join(
+                        current_posterior_folder, f"{galaxy_id}_{id}.h5"
                     )
-                    continue
+                    new_path = os.path.join(new_dir, f"{id}.h5")
 
-                os.rename(old_path, new_path)
+                    if not os.path.exists(os.path.dirname(new_path)):
+                        os.makedirs(os.path.dirname(new_path))
 
-        # Now rename the bulk catalgoue - just add current time to it as a backup
-        os.rename(
-            os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
-            os.path.join(
-                run_dir,
-                f"cats/{out_subdir_name}_{time.strftime('%Y%m%d_%H%M%S')}.fits",
-            ),
-        )
+                    if not os.path.exists(old_path) and os.path.exists(
+                        new_path
+                    ):
+                        print(
+                            f"Output .h5 found in new location for {id}. Skipping."
+                        )
+                        continue
+
+                    os.rename(old_path, new_path)
+
+            # Now rename the bulk catalgoue - just add current time to it as a backup
+            os.rename(
+                os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
+                os.path.join(
+                    run_dir,
+                    f"cats/{out_subdir_name}_{time.strftime('%Y%m%d_%H%M%S')}.fits",
+                ),
+            )
 
         for galaxy, config in zip(self.galaxies, bagpipes_configs):
             run_name = config["meta"]["run_name"]
