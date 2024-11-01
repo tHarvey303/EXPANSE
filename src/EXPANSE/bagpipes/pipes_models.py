@@ -254,8 +254,8 @@ meta_resolved_cnst = {
 }
 
 overall_dict = {
-    "meta": meta_resolved,
-    "fit_instructions": fit_instructions_resolved,
+    "meta": meta_resolved_cnst,
+    "fit_instructions": fit_instructions_resolved_cnst,
 }
 resolved_dict_cnst = copy.deepcopy(overall_dict)
 
