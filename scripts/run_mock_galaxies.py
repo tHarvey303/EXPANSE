@@ -166,7 +166,7 @@ if __name__ == "__main__":
         delayed_dicts,
         dpl_dicts,
         lognorm_dicts,
-        resolved_dicts,
+        resolved_dicts_cnst,
         resolved_dicts_bursty,
     ]:
         multiple_galaxies.run_bagpipes_parallel(

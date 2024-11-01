@@ -238,7 +238,7 @@ if __name__ == "__main__":
     override_meta_resolved = {
         "use_bpass": True,
     }
-    resolved_dicts = create_dicts(
+    resolved_dicts_cnst = create_dicts(
         resolved_dict_cnst, num=len(ids), override_meta=override_meta_resolved
     )
 
@@ -250,7 +250,7 @@ if __name__ == "__main__":
 
     # Not fitting resolved yet
     for run_dicts in [
-        resolved_dicts,
+        resolved_dicts_cnst,
         resolved_dicts_bursty,
     ]:
         if size > 1:
