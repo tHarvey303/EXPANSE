@@ -203,11 +203,13 @@ if __name__ == "__main__":
 
     from EXPANSE.bagpipes.pipes_models import (
         continuity_dict,
+        continuity_bursty_dict,
         create_dicts,
         delayed_dict,
         dpl_dict,
         lognorm_dict,
-        resolved_dict,
+        resolved_dict_cnst,
+        resolved_dict_bursty,
     )
 
     override_meta = {
@@ -222,6 +224,10 @@ if __name__ == "__main__":
         continuity_dict, override_meta=override_meta, num=len(ids)
     )
 
+    continuity_bursty_dicts = create_dicts(
+        continuity_bursty_dict, override_meta=override_meta, num=len(ids)
+    )
+
     dpl_dicts = create_dicts(
         dpl_dict, override_meta=override_meta, num=len(ids)
     )
@@ -233,12 +239,19 @@ if __name__ == "__main__":
         "use_bpass": True,
     }
     resolved_dicts = create_dicts(
-        resolved_dict, num=len(ids), override_meta=override_meta_resolved
+        resolved_dict_cnst, num=len(ids), override_meta=override_meta_resolved
+    )
+
+    resolved_dicts_bursty = create_dicts(
+        resolved_dict_bursty,
+        num=len(ids),
+        override_meta=override_meta_resolved,
     )
 
     # Not fitting resolved yet
     for run_dicts in [
         resolved_dicts,
+        resolved_dicts_bursty,
     ]:
         if size > 1:
             for galaxy_id, resolved_dict in zip(ids, run_dicts):

@@ -1,11 +1,13 @@
 from EXPANSE import ResolvedGalaxy, ResolvedGalaxies
 from EXPANSE.bagpipes.pipes_models import (
     continuity_dict,
+    continuity_bursty_dict,
     create_dicts,
     delayed_dict,
     dpl_dict,
     lognorm_dict,
-    resolved_dict,
+    resolved_dict_cnst,
+    resolved_dict_bursty,
 )
 import sys
 import os
@@ -38,7 +40,7 @@ elif computer == "singularity":
     run_dir = "/mnt/pipes/"
 
 fit_photometry = "TOTAL_BIN"
-model = resolved_dict  # This is the model we are using
+model = resolved_dict_cnst  # This is the model we are using
 meta = {"use_bpass": True}
 model["meta"]["run_name"] = "CNST_SFH_RESOLVED_P"
 
