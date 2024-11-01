@@ -42,15 +42,14 @@ elif computer == "singularity":
 if __name__ == "__main__":
     mock_field = "JOF_psfmatched"
     overwrite = False
-    initial_creation = True
+    bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
+    load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
     cosmo = FlatLambdaCDM(H0=70, Om0=0.300)
     grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
     grid_dir = "/nvme/scratch/work/tharvey/synthesizer/grids/"
     path = "/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5"
     mock_rms_fit_path = "/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/"
     fit_photometry = "TOTAL_BIN"
-    bagpipes_only = False
-    load_only = False
 
     try:
         n_jobs = sys.argv[1]
@@ -79,7 +78,6 @@ if __name__ == "__main__":
 
         print(f"Creating {num_of_galaxies} mock galaxies")
 
-        galaxies = []
         for redshift_code in structure:
             for region in structure[redshift_code]:
                 for gal_id in structure[redshift_code][region]:
@@ -111,10 +109,8 @@ if __name__ == "__main__":
                         mock_galaxy.eazy_fit_measured_photometry(
                             "MAG_APER_0.32 arcsec", update_meta_properties=True
                         )
-                        if not initial_creation:
-                            galaxies.append(mock_galaxy)  # Clear memory
-                        else:
-                            del mock_galaxy
+
+                        del mock_galaxy
 
                     except AssertionError as e:
                         print(e)
@@ -125,10 +121,10 @@ if __name__ == "__main__":
         stop = input("Press enter to continue.")
 
     # Doesn't preserve order otherwise - can't guarantee they will be run in the input order
-    if bagpipes_only:
-        galaxies = MockResolvedGalaxy.init_all_field_from_h5(
-            mock_field, galaxies_dir, save_out=False
-        )
+
+    galaxies = MockResolvedGalaxy.init_all_field_from_h5(
+        mock_field, galaxies_dir, save_out=False
+    )
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
 
