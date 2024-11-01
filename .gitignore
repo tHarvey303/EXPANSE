@@ -7,6 +7,7 @@ stamp_*
 galaxies/temp/*.fits
 galaxies/*.fits
 galaxies/mock
+galaxies/mock_nonoise
 data/mock_rms/* copy
 pipes/*
 MinViable.py

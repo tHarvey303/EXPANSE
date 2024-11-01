@@ -348,6 +348,9 @@ class ResolvedGalaxy:
         # Assume bands is in wavelength order, and that the largest PSF is in the last band
         self.use_psf_type = psf_type
 
+        if self.save_out:
+            self.dump_to_h5()
+
         if (
             self.psf_matched_data in [None, {}]
             or self.psf_matched_rms_err in [None, {}]
@@ -368,8 +371,7 @@ class ResolvedGalaxy:
 
         # if self.rms_background is None:
         #    self.estimate_rms_from_background()
-        if self.save_out:
-            self.dump_to_h5()
+
         # Save to .h5
 
     @classmethod
@@ -1707,6 +1709,7 @@ class ResolvedGalaxy:
         self.band_codes = band_codes
 
     def property_in_mask(
+        self,
         property_map,
         mask=None,
         mask_name=None,
@@ -1728,6 +1731,10 @@ class ResolvedGalaxy:
 
             mask = self.gal_region[mask_name]
 
+        assert (
+            property_map.shape == mask.shape
+        ), f"Property map and mask must have the same shape, {property_map.shape} vs {mask.shape}"
+
         if func == "sum":
             func = np.nansum
         elif func == "mean":
@@ -1736,6 +1743,7 @@ class ResolvedGalaxy:
             func = np.nanmedian
 
         unique = np.unique(mask)
+
         unique = unique[unique != 0]
 
         output = np.zeros_like(map)
@@ -1743,15 +1751,17 @@ class ResolvedGalaxy:
         # Make output nans initially
         output = np.nan * np.zeros_like(property_map)
 
-        for u in unique:
-            output[mask == u] = func(property_map[mask == u])
+        for un in unique:
+            output[mask == un] = func(property_map[mask == un])
 
         if density:
+            pix_size = self.im_pixel_scales[self.bands[0]].to(u.arcsec).value
+            print("Assuming pixel size is", pix_size, "arcsec")
             # Divide each region by pixel area
-            for u in unique:
-                num_pix = np.sum(mask == u)
+            for un in unique:
+                num_pix = np.sum(mask == un)
                 area = num_pix * pix_size**2
-                output[mask == u] /= area
+                output[mask == un] /= area
 
         if return_total:
             return func(np.unique(output))
@@ -4296,6 +4306,9 @@ class ResolvedGalaxy:
                 data = fits.open(data)[ext].data
                 original_data = data
 
+        if not os.path.exists(os.path.dirname(self.h5_path)):
+            os.makedirs(os.path.dirname(self.h5_path))
+
         hfile = h5.File(self.h5_path, "a")
         if group not in hfile.keys():
             hfile.create_group(group)
@@ -6650,7 +6663,8 @@ class ResolvedGalaxy:
         name = f"{phot_name}_{template_name}_{min_percentage_err}"
 
         if (
-            name.replace(".", "_") in list(self.interactive_outputs.keys())
+            self.interactive_outputs is not None
+            and name.replace(".", "_") in list(self.interactive_outputs.keys())
             and not overwrite
         ):
             print(
@@ -9551,7 +9565,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                     rms_err_images[band] = f(
                         imgs[filter_code_from_band[band]].arr
                     )
-                    final_images[band] = imgs[filter_code_from_band[band]].arr
+
+                    # Use the images with PSF and noise applied as the final images
+                    final_images[band] = noise_app_imgs[
+                        filter_code_from_band[band]
+                    ].arr
                 loaded = True
 
         if len(ids) > 0 and not loaded:
@@ -10718,16 +10736,56 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         self.synthesizer_galaxy = gal
 
-    def property_map_from_synthesizer():
+    def property_map_from_synthesizer(self):
         pass
 
-    def synthesizer_property_in_mask(property, mask=None, mask_name=None):
+    def synthesizer_property_in_mask(
+        self,
+        property,
+        mask=None,
+        mask_name=None,
+        func="sum",
+        density=False,
+        return_total=False,
+    ):
         # Wrapper for self.property_in_mask for Synthesizer specific properties
         # Which should be saved in the h5 file.
 
         # E.g. this should be able to get the stellar mass in a mask, or the SFR in a mask, or average age in a mask etc.
+        if property not in self.property_images.keys():
+            if getattr(self, synthesizer_galaxy) is None:
+                self.regenerate_synthesizer_galaxy()
+            print("Don't have property map. Generating from synthesizer.")
 
-        pass
+        assert (
+            mask is not None or mask_name is not None
+        ), "Need to provide either a mask or a mask_name"
+
+        if mask_name == "pixedfit":
+            mask = self.pixedfit_map
+
+        elif mask_name == "pixel_by_pixel":
+            mask = self.pixel_by_pixel_map
+
+        elif mask_name == "voronoi":
+            mask = self.voronoi_map
+
+        elif mask_name in self.gal_regions.keys():
+            mask = self.gal_regions[mask_name]
+
+        elif hasattr(self, mask_name):
+            mask = getattr(self, mask_name)
+
+        else:
+            raise ValueError(f"Mask name {mask_name} not recognised.")
+
+        return self.property_in_mask(
+            self.property_images[property],
+            mask,
+            func=func,
+            density=density,
+            return_total=return_total,
+        )
 
     def plot_bagpipes_sfh(
         self,

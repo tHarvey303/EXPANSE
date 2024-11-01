@@ -11,11 +11,13 @@ import h5py
 from EXPANSE.bagpipes import (
     calculate_bins,
     continuity_dict,
+    continuity_bursty_dict,
     create_dicts,
     delayed_dict,
     dpl_dict,
     lognorm_dict,
-    resolved_dict,
+    resolved_dict_cnst,
+    resolved_dict_bursty,
 )
 
 file_path = os.path.abspath(__file__)
@@ -40,13 +42,14 @@ elif computer == "singularity":
 if __name__ == "__main__":
     mock_field = "JOF_psfmatched"
     overwrite = False
+    initial_creation = True
     cosmo = FlatLambdaCDM(H0=70, Om0=0.300)
     grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
     grid_dir = "/nvme/scratch/work/tharvey/synthesizer/grids/"
     path = "/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5"
     mock_rms_fit_path = "/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/"
     fit_photometry = "TOTAL_BIN"
-    bagpipes_only = True
+    bagpipes_only = False
     load_only = False
 
     try:
@@ -62,7 +65,6 @@ if __name__ == "__main__":
                 for region in hf[zbin].keys():
                     structure[zbin][region] = list(hf[zbin][region].keys())
 
-        run_ids = []
         num_of_galaxies = np.sum(
             [
                 len(structure[zbin][region])
@@ -77,7 +79,6 @@ if __name__ == "__main__":
 
         print(f"Creating {num_of_galaxies} mock galaxies")
 
-        redshifts = []
         galaxies = []
         for redshift_code in structure:
             for region in structure[redshift_code]:
@@ -107,12 +108,13 @@ if __name__ == "__main__":
                         # Maybe seg map should be from detection image?
                         mock_galaxy.pixedfit_binning(overwrite=overwrite)
                         mock_galaxy.measure_flux_in_bins(overwrite=overwrite)
-                        run_ids.append(mock_galaxy.galaxy_id)
-                        redshifts.append(mock_galaxy.redshift)
                         mock_galaxy.eazy_fit_measured_photometry(
                             "MAG_APER_0.32 arcsec", update_meta_properties=True
                         )
-                        galaxies.append(mock_galaxy)  # Clear memory
+                        if not initial_creation:
+                            galaxies.append(mock_galaxy)  # Clear memory
+                        else:
+                            del mock_galaxy
 
                     except AssertionError as e:
                         print(e)
@@ -140,6 +142,11 @@ if __name__ == "__main__":
     continuity_dicts = create_dicts(
         continuity_dict, len(galaxies), override_meta=override_cont_meta
     )
+
+    continuity_bursty_dicts = create_dicts(
+        continuity_bursty_dict, len(galaxies), override_meta=override_cont_meta
+    )
+
     delayed_dicts = create_dicts(
         delayed_dict, len(galaxies), override_meta=override_meta
     )
@@ -149,15 +156,22 @@ if __name__ == "__main__":
     lognorm_dicts = create_dicts(
         lognorm_dict, len(galaxies), override_meta=override_meta
     )
-    resolved_dicts = create_dicts(
-        resolved_dict, len(galaxies), override_meta={"use_bpass": True}
+    resolved_dicts_cnst = create_dicts(
+        resolved_dict_cnst, len(galaxies), override_meta={"use_bpass": True}
+    )
+
+    resolved_dicts_bursty = create_dicts(
+        resolved_dict_bursty, len(galaxies), override_meta={"use_bpass": True}
     )
 
     for dicts in [
+        continuity_bursty_dicts,
+        continuity_dicts,
         delayed_dicts,
         dpl_dicts,
         lognorm_dicts,
         resolved_dicts,
+        resolved_dicts_bursty,
     ]:
         multiple_galaxies.run_bagpipes_parallel(
             dicts,

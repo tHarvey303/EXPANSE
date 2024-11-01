@@ -49,11 +49,19 @@ delayed_dict = copy.deepcopy(overall_dict)
 # Second fit
 sfh = "continuity"
 continuity = {}
+continuity_bursty = {}
 continuity["massformed"] = (
     5.0,
     12.0,
 )  # Log_10 total stellar mass formed: M_Solar
+continuity_bursty["massformed"] = (
+    5.0,
+    12.0,
+)  # Log_10 total stellar mass formed: M_Solar
+
 continuity["metallicity"] = (1e-3, 2.5)
+continuity_bursty["metallicity"] = (1e-3, 2.5)
+
 cont_nbins = 6
 first_bin = 10 * u.Myr
 second_bin = None
@@ -68,25 +76,38 @@ continuity["bin_edges"] = list(
         log_time=False,
     )
 )
-scale = 0
-if sfh == "continuity":
-    scale = 0.3
-if sfh == "continuity_bursty":
-    scale = 1.0
+continuity_bursty["bin_edges"] = copy.deepcopy(continuity["bin_edges"])
 
 for i in range(1, len(continuity["bin_edges"]) - 1):
     continuity["dsfr" + str(i)] = (-10.0, 10.0)
     continuity["dsfr" + str(i) + "_prior"] = "student_t"
     continuity["dsfr" + str(i) + "_prior_scale"] = (
-        scale  # Defaults to this value as in Leja19, but can be set
+        0.3  # Defaults to this value as in Leja19, but can be set
     )
     continuity["dsfr" + str(i) + "_prior_df"] = (
         2  # Defaults to this value as in Leja19, but can be set
     )
 
+    continuity_bursty["dsfr" + str(i)] = (-10.0, 10.0)
+    continuity_bursty["dsfr" + str(i) + "_prior"] = "student_t"
+    continuity_bursty["dsfr" + str(i) + "_prior_scale"] = (
+        1.0  # Defaults to this value as in Leja19, but can be set
+    )
+    continuity_bursty["dsfr" + str(i) + "_prior_df"] = (
+        2  # Defaults to this value as in Leja19, but can be set
+    )
+
+
 fit_instructions_continuity = {
     "t_bc": 0.01,
     "continuity": continuity,
+    "nebular": nebular,
+    "dust": dust,
+}
+
+fit_instructions_continuity_bursty = {
+    "t_bc": 0.01,
+    "continuity": continuity_bursty,
     "nebular": nebular,
     "dust": dust,
 }
@@ -100,12 +121,22 @@ meta_continuity = {
     "sampler": "multinest",
 }
 
+meta_continuity_bursty = copy.deepcopy(meta_continuity)
+meta_continuity_bursty["run_name"] = "photoz_continuity_bursty"
+
 overall_dict = {
     "meta": meta_continuity,
     "fit_instructions": fit_instructions_continuity,
 }
 
 continuity_dict = copy.deepcopy(overall_dict)
+
+overall_dict = {
+    "meta": meta_continuity_bursty,
+    "fit_instructions": fit_instructions_continuity_bursty,
+}
+
+continuity_bursty_dict = copy.deepcopy(overall_dict)
 
 # -------------------------------------------------------------------------------------
 
@@ -199,23 +230,23 @@ lognorm_dict = copy.deepcopy(overall_dict)
 
 # Fifth fit
 
-resolved_sfh = {
+resolved_sfh_cnst = {
     "age_max": (0.01, 2.5),  # Gyr
     "age_min": (0, 2.5),  # Gyr
     "metallicity": (1e-3, 2.5),  # solar
     "massformed": (4, 12),  # log mstar/msun
 }
 
-fit_instructions_resolved = {
+fit_instructions_resolved_cnst = {
     "t_bc": 0.01,
-    "constant": resolved_sfh,
+    "constant": resolved_sfh_cnst,
     "nebular": nebular,
     "dust": dust,
 }
 # This means that we are fixing the photo-z to the results from the 'photoz_DPL' run,
 # specifically the 'MAG_APER_TOTAL' photometry
 # We are fitting only the resolved photometry in the 'TOTAL_BIN' bins
-meta_resolved = {
+meta_resolved_cnst = {
     "run_name": "CNST_SFH_RESOLVED",
     "redshift": "photoz_delayed",
     "redshift_id": "TOTAL_BIN",
@@ -226,7 +257,30 @@ overall_dict = {
     "meta": meta_resolved,
     "fit_instructions": fit_instructions_resolved,
 }
-resolved_dict = copy.deepcopy(overall_dict)
+resolved_dict_cnst = copy.deepcopy(overall_dict)
+
+# -------------------------------------------------------------------------------------
+# Do a resolved fit with a continuity bursty SFH
+
+fit_instructions_resolved_bursty = copy.deepcopy(
+    fit_instructions_continuity_bursty
+)
+
+meta_resolved_bursty = {
+    "run_name": "BURSTY_SFH_RESOLVED",
+    "redshift": "photoz_delayed",
+    "redshift_id": "TOTAL_BIN",
+    "fit_photometry": "bin",
+}
+
+overall_dict = {
+    "meta": meta_resolved_bursty,
+    "fit_instructions": fit_instructions_resolved_bursty,
+}
+
+resolved_dict_bursty = copy.deepcopy(overall_dict)
+
+# -------------------------------------------------------------------------------------
 
 
 def create_dicts(
