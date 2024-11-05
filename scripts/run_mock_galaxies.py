@@ -43,7 +43,7 @@ if __name__ == "__main__":
     mock_field = "JOF_psfmatched"
     overwrite = False
     bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
-    load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
+    load_only = True  # This is for running Bagpipes - whether to skip running fitting and load existing results
     cosmo = FlatLambdaCDM(H0=70, Om0=0.300)
     grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
     grid_dir = "/nvme/scratch/work/tharvey/synthesizer/grids/"
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     fit_photometry = "TOTAL_BIN"
 
     try:
-        n_jobs = sys.argv[1]
+        n_jobs = int(sys.argv[1])
     except:
         n_jobs = 6
 
@@ -123,8 +123,8 @@ if __name__ == "__main__":
     # Doesn't preserve order otherwise - can't guarantee they will be run in the input order
 
     galaxies = MockResolvedGalaxy.init_all_field_from_h5(
-        mock_field, galaxies_dir, save_out=False
-    )
+        mock_field, galaxies_dir, save_out=False, n_jobs = n_jobs)
+    
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
 
@@ -161,12 +161,12 @@ if __name__ == "__main__":
     )
 
     for dicts in [
-        continuity_bursty_dicts,
-        continuity_dicts,
-        delayed_dicts,
-        dpl_dicts,
-        lognorm_dicts,
-        resolved_dicts_cnst,
+        #continuity_bursty_dicts,
+        #continuity_dicts,
+        #delayed_dicts,
+        #dpl_dicts,
+        #lognorm_dicts,
+        #resolved_dicts_cnst,
         resolved_dicts_bursty,
     ]:
         multiple_galaxies.run_bagpipes_parallel(

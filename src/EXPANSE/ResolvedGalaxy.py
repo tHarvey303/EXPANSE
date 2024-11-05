@@ -11210,6 +11210,8 @@ class ResolvedGalaxies:
             for config in bagpipes_configs
         ), "All bagpipes configs must have the same run_name (and therefore same overall model)"
 
+        run_name = bagpipes_configs[0]["meta"]["run_name"]
+
         if type(bagpipes_configs) is dict:
             bagpipes_configs = [
                 copy.deepcopy(bagpipes_configs)
@@ -11226,6 +11228,12 @@ class ResolvedGalaxies:
             )
             for galaxy, bagpipes_config in zip(self.galaxies, bagpipes_configs)
         }
+
+        # Check if all outputs exist in SED fitting table
+
+        if all([run_name in galaxy.sed_fitting_table['bagpipes'].keys() for galaxy in self.galaxies]):
+            print("All galaxies already run, skipping.")
+            return
 
         assert all(
             type(config) is dict for config in configs.values()
@@ -11245,12 +11253,11 @@ class ResolvedGalaxies:
         script_path = os.path.abspath(__file__).replace(
             "ResolvedGalaxy.py", "bagpipes/run_bagpipes_parallel.py"
         )
-        print(f"Starting mpi process with {n_jobs} cores.")
         # get path of 'python' executable
 
         run_dir = os.path.abspath(run_dir)  # .replace("pipes", "")
 
-        print(f"Run directory: {run_dir}")
+       
         # cd to run_dir
         os.chdir(os.path.dirname(run_dir))
 
@@ -11267,25 +11274,29 @@ class ResolvedGalaxies:
             os.path.join(run_dir, f"cats/{out_subdir_name}.fits")
         )
         # also check if .h5 files exist in either location
+
         for galaxy_id, config in configs.items():
             # Check all IDs and see if .h5 exists in either new or old location
             cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
-            for id in cat_ids:
-                new_path = os.path.join(run_dir, config["out_dir"], f"{id}.h5")
-                if not (
-                    os.path.exists(
-                        os.path.join(
+            for cat_id, gal_id in zip(cat_ids, config['ids']):
+                new_path = os.path.join(run_dir, config["out_dir"], f"{gal_id}.h5")
+                old_path = os.path.join(
                             run_dir,
-                            f"posterior/{out_subdir_name}/{galaxy_id}_{id}.h5",
-                        )
-                    )
-                    or os.path.exists(new_path)
-                ):
+                            f"posterior/{out_subdir_name}/{cat_id}.h5")
+
+                if not (os.path.exists(old_path) or os.path.exists(new_path)):
                     done = False
-                    print(f"Missing .h5 file for {id}")
+                    print(f"Missing .h5 file for {cat_id}")
+                    print(new_path)
+                    print(old_path)
                     break
+        
+        n_fits = int(np.sum(np.ones(len(configs)) * np.array([len(config["ids"]) for config in configs.values()])))
 
         if not load_only and not done:
+            print(f"Starting mpi process with {n_jobs} cores.")
+            print(f"Run directory: {run_dir}")
+
             process_args = [
                 "mpirun",
                 "-n",
@@ -11336,20 +11347,20 @@ class ResolvedGalaxies:
             run_dir, f"cats/{out_subdir_name}.fits"
         )
         done = False
-        if os.path.exists(output_catalogue):
-            output_catalogue = Table.read(output_catalogue)
 
-        elif all(
-            [
-                os.path.exists(f"{run_dir}/cats/{galaxy.galaxy_id}.fits")
-                for galaxy in self.galaxies
-            ]
+        print([f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits" for galaxy_id, config in configs.items()])
+
+        if all(
+            [os.path.exists(f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits") for galaxy_id, config in configs.items()]
         ):
             print(
-                "Output catalogue not found, but individual galaxy catalogues found. Skipping."
+                "Individual galaxy catalogues found. Skipping."
             )
             done = True
 
+        elif os.path.exists(output_catalogue):
+            output_catalogue = Table.read(output_catalogue)
+            assert len(output_catalogue) == n_fits, f"Catalogue length mismatch - {len(output_catalogue)} vs {n_fits}"
         else:
             raise FileNotFoundError(
                 f"Could not find output catalogue at {output_catalogue}"
@@ -11370,24 +11381,30 @@ class ResolvedGalaxies:
                 mask = [id in cat_ids for id in output_catalogue["#ID"]]
                 mask = np.array(mask)
                 gal_cat = copy.deepcopy(output_catalogue[mask])
+
                 assert (
                     len(gal_cat) == len(cat_ids)
                 ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
-                gal_cat["#ID"] = config["ids"]
-                print("New cat dir:", new_cat_dir)
-                if not os.path.exists(new_cat_dir):
-                    os.makedirs(new_cat_dir)
-
-                gal_cat.write(
-                    f"{new_cat_dir}/{galaxy_id}.fits",
-                    overwrite=True,
-                )
 
                 for id in config["ids"]:
                     old_path = os.path.join(
                         current_posterior_folder, f"{galaxy_id}_{id}.h5"
                     )
                     new_path = os.path.join(new_dir, f"{id}.h5")
+
+
+                    if not os.path.exists(old_path) and not os.path.exists(new_path):
+                        raise FileNotFoundError(f'Could not find .h5 file for {id} at {old_path} or {new_path}')
+
+                    if os.path.exists(old_path):
+                        file = h5.File(old_path, "r")
+                        fit_instructions = copy.deepcopy(file.attrs["fit_instructions"])
+                        file.close()
+                        # Check if the fit instructions are the same
+                        
+                        if 'redshift' in fit_instructions:
+                            del fit_instructions['redshift']
+                        assert fit_instructions == config_copy["fit_instructions"], f"Fit instructions do not match for {id} - {fit_instructions} vs {config['fit_instructions']}. This may be the wrong run!"
 
                     if not os.path.exists(os.path.dirname(new_path)):
                         os.makedirs(os.path.dirname(new_path))
@@ -11402,6 +11419,17 @@ class ResolvedGalaxies:
 
                     os.rename(old_path, new_path)
 
+                gal_cat["#ID"] = config["ids"]
+                print("New cat dir:", new_cat_dir)
+                if not os.path.exists(new_cat_dir):
+                    os.makedirs(new_cat_dir)
+
+                gal_cat.write(
+                    f"{new_cat_dir}/{galaxy_id}.fits",
+                    overwrite=True,
+                )
+
+                
             # Now rename the bulk catalgoue - just add current time to it as a backup
             os.rename(
                 os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
