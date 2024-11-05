@@ -10979,10 +10979,10 @@ class ResolvedGalaxies:
         cmap="viridis",
         n_jobs=1,
         overwrite=False,
-        fig = None, 
-        ax = None,
+        fig=None,
+        ax=None,
         norm=None,
-        add_colorbar = True,
+        add_colorbar=True,
         **kwargs,
     ):
         if fig is None:
@@ -11058,7 +11058,11 @@ class ResolvedGalaxies:
                     radii = np.sqrt(a * b)
                     vals.append(radii)
 
-            norm = Normalize(vmin=min(vals), vmax=max(vals)) if norm is None else norm
+            norm = (
+                Normalize(vmin=min(vals), vmax=max(vals))
+                if norm is None
+                else norm
+            )
             import matplotlib.cm as cm
 
             cmap = cm.get_cmap(cmap)
