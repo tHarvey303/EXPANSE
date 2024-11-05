@@ -1101,6 +1101,8 @@ class PipesFit:
             "mass_weighted_age",
             "dust:Av",
             "tquench",
+            "sfr_10myr",
+            "sfr_100myr",
         ]
         names = sfh_names + fit.fitted_model.params
         if parameter not in names:

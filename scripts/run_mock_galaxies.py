@@ -123,7 +123,7 @@ if __name__ == "__main__":
     # Doesn't preserve order otherwise - can't guarantee they will be run in the input order
 
     galaxies = MockResolvedGalaxy.init_all_field_from_h5(
-        mock_field, galaxies_dir, save_out=False, n_jobs = n_jobs)
+        mock_field, galaxies_dir, save_out=True, n_jobs = n_jobs)
     
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
@@ -166,8 +166,8 @@ if __name__ == "__main__":
         #delayed_dicts,
         #dpl_dicts,
         #lognorm_dicts,
-        #resolved_dicts_cnst,
-        resolved_dicts_bursty,
+        resolved_dicts_cnst,
+        #resolved_dicts_bursty,
     ]:
         multiple_galaxies.run_bagpipes_parallel(
             dicts,
