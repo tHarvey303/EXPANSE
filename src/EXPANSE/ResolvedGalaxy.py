@@ -10979,11 +10979,18 @@ class ResolvedGalaxies:
         cmap="viridis",
         n_jobs=1,
         overwrite=False,
+        fig = None, 
+        ax = None,
+        norm=None,
+        add_colorbar = True,
         **kwargs,
     ):
-        fig, ax = plt.subplots(
-            1, 1, figsize=(5, 5), facecolor="white", dpi=200
-        )
+        if fig is None:
+            fig, ax = plt.subplots(
+                1, 1, figsize=(5, 5), facecolor="white", dpi=200
+            )
+        if ax is None:
+            ax = fig.add_subplot(111)
 
         if parameter == "stellar_mass":
             ax.set_xlabel(
@@ -11003,12 +11010,13 @@ class ResolvedGalaxies:
             # ax.plot([5, 12], [5, 12], "k--")
 
         if color_by is not None:
-            cbar = make_axes_locatable(ax).append_axes(
-                "top", size="5%", pad="2%"
-            )
-            # Move x-axis to top for cbar
-            cbar.xaxis.set_ticks_position("top")
-            cbar.xaxis.set_label_position("top")
+            if add_colorbar:
+                cbar = make_axes_locatable(ax).append_axes(
+                    "top", size="5%", pad="2%"
+                )
+                # Move x-axis to top for cbar
+                cbar.xaxis.set_ticks_position("top")
+                cbar.xaxis.set_label_position("top")
 
             vals = []
             colors = {}
@@ -11025,14 +11033,15 @@ class ResolvedGalaxies:
                         vals.append(value)
                     else:
                         vals.append(float(table[color_by[4:]][0]))
-
-                cbar.set_xlabel(color_by[4:])
+                if add_colorbar:
+                    cbar.set_xlabel(color_by[4:])
 
             if color_by == "nbins":
                 vals = [
                     galaxy.get_number_of_bins() for galaxy in self.galaxies
                 ]
-                cbar.set_xlabel("Number of Bins")
+                if add_colorbar:
+                    cbar.set_xlabel("Number of Bins")
 
             if color_by == "redshift":
                 vals = [galaxy.redshift for galaxy in self.galaxies]
@@ -11049,7 +11058,7 @@ class ResolvedGalaxies:
                     radii = np.sqrt(a * b)
                     vals.append(radii)
 
-            norm = Normalize(vmin=min(vals), vmax=max(vals))
+            norm = Normalize(vmin=min(vals), vmax=max(vals)) if norm is None else norm
             import matplotlib.cm as cm
 
             cmap = cm.get_cmap(cmap)
@@ -11096,7 +11105,7 @@ class ResolvedGalaxies:
                 color=colors[galaxy.galaxy_id],
                 **kwargs,
             )
-            if color_by is not None:
+            if color_by is not None and add_colorbar:
                 fig.colorbar(
                     cm.ScalarMappable(norm=norm, cmap="viridis"),
                     cax=cbar,
@@ -11522,7 +11531,8 @@ class ResolvedGalaxies:
                     table.remove_column(col)
 
         if filename == "auto":
-            filename = f"{run_name}_galaxies.fits"
+            filename = f"galaxies.fits"
+        print(f"Saving to {os.path.abspath(filename)}")
 
         if save:
             table.write(filename, overwrite=overwrite)
