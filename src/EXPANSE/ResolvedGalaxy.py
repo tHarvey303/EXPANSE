@@ -6268,7 +6268,7 @@ class ResolvedGalaxy:
 
         if type(bins_to_show) not in [list, np.ndarray]:
             bins_to_show = [bins_to_show]
-            
+
         if type(marker_colors) is str and len(bins_to_show) > 1:
             cmap = plt.get_cmap(cmap)
             marker_colors = cmap(np.linspace(0, 1, len(bins_to_show)))
@@ -6842,6 +6842,49 @@ class ResolvedGalaxy:
             )
 
             return ez
+
+    def _recalculate_bagpipes_wavelength_array(
+        self,
+        bands=None,
+        bagpipes_filter_dir=bagpipes_filter_dir,
+        use_bpass=False,
+    ):
+        if bands is None:
+            bands = self.bands
+
+        paths = [
+            glob.glob(f"{bagpipes_filter_dir}/*{band}*")[0] for band in bands
+        ]
+        if use_bpass:
+            from bagpipes import config_bpass as config
+        else:
+            from bagpipes import config
+
+        from bagpipes.filters import filter_set
+
+        ft = filter_set(paths)
+        min_wav = ft.min_phot_wav
+        max_wav = ft.max_phot_wav
+        max_z = config.max_redshift
+
+        max_wavs = [(min_wav / (1.0 + max_z)), 1.01 * max_wav, 10**8]
+
+        x = [1.0]
+
+        R = [config.R_other, config.R_phot, config.R_other]
+
+        for i in range(len(R)):
+            if i == len(R) - 1 or R[i] > R[i + 1]:
+                while x[-1] < max_wavs[i]:
+                    x.append(x[-1] * (1.0 + 0.5 / R[i]))
+
+            else:
+                while x[-1] * (1.0 + 0.5 / R[i]) < max_wavs[i]:
+                    x.append(x[-1] * (1.0 + 0.5 / R[i]))
+
+        wav = np.array(x)
+
+        return wav
 
     def update_internal_redshift(self, z_override):
         if type(z_override) in [int, float]:
@@ -7504,8 +7547,10 @@ class ResolvedGalaxy:
                 #
                 table = self.photometry_table[psf_type][binmap_type]
                 mask = table["ID"] == load_p
-                
-                bands_gal = self.provide_bagpipes_phot(str(load_p), return_bands=True)
+
+                bands_gal = self.provide_bagpipes_phot(
+                    str(load_p), return_bands=True
+                )
                 param["bands"] = bands_gal
                 params_b.append(param)
 
@@ -7766,32 +7811,36 @@ class ResolvedGalaxy:
             except FileNotFoundError:
                 print(f"Files not found for {run_name} {bins}")
                 return None
-        
-        # print(pipes_objs)
+
+            # print(pipes_objs)
 
             for obj in pipes_objs:
                 samples = obj.plot_pdf(None, property, return_samples=True)
-                
+
                 all_samples.append(samples)
         else:
             # Manually open .h5 and read in samples. Should be faster.
             for rbin in bins:
                 h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
                 with h5.File(h5_path, "r") as f:
-                    if property in f['basic_quantities'].keys():
-                        samples = f['basic_quantities'][property][:]
-                    elif property in f['advanced_quantities'].keys():
-                        samples = f['advanced_quantities'][property][:]
+                    if property in f["basic_quantities"].keys():
+                        samples = f["basic_quantities"][property][:]
+                    elif property in f["advanced_quantities"].keys():
+                        samples = f["advanced_quantities"][property][:]
                     else:
-                        for key in f['basic_quantities'].keys():
-                            if key.endswith(':massformed'):
-                                sfh = key.split(':')[0]
+                        for key in f["basic_quantities"].keys():
+                            if key.endswith(":massformed"):
+                                sfh = key.split(":")[0]
                                 break
-                        new_prop_name = f'{sfh}:key'
-                        if new_prop_name in f['advanced_quantities'].keys():
-                            samples = f['advanced_quantities'][new_prop_name][:]
+                        new_prop_name = f"{sfh}:key"
+                        if new_prop_name in f["advanced_quantities"].keys():
+                            samples = f["advanced_quantities"][new_prop_name][
+                                :
+                            ]
                         else:
-                            raise Exception(f"Property {property} not found in {h5_path}. Available properties are {f['basic_quantities'].keys()} and {f['advanced_quantities'].keys()}")
+                            raise Exception(
+                                f"Property {property} not found in {h5_path}. Available properties are {f['basic_quantities'].keys()} and {f['advanced_quantities'].keys()}"
+                            )
                     all_samples.append(samples)
 
         all_samples = np.array(all_samples, dtype=object)
@@ -8149,7 +8198,7 @@ class ResolvedGalaxy:
         run_dir="pipes/",
         plotpipes_dir="pipes_scripts/",
         overwrite=False,
-        load_h5=False,
+        load_h5=True,
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -8200,14 +8249,64 @@ class ResolvedGalaxy:
                 print(f"File not found for {run_name} {self.galaxy_id}")
                 return (False, False)
         else:
+            fluxes = []
+            wavs = []
             # Manually open .h5 and read in samples. Should be faster.
             for rbin in count:
                 h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
                 with h5py.File(h5_path, "r") as f:
-                    if "spectrum_full" in f['advanced_quantities'].keys():
-                        data = f['advanced_quantities']['spectrum_full'][:]
+                    """ Fun bodging of SED into correct form"""
+                    use_bpass = (
+                        ast.literal_eval(f.attrs["config"])["type"] == "BPASS"
+                    )
+                    if "spectrum_full" in f["advanced_quantities"].keys():
+                        data = f["advanced_quantities"]["spectrum_full"][:]
+                        bands = self.provide_bagpipes_phot(
+                            str(rbin), return_bands=True
+                        )
+                        wav = self._recalculate_bagpipes_wavelength_array(
+                            bands=bands
+                        )
+                        assert (
+                            len(wav) == len(data)
+                        ), f"Length of wavelength array {len(wav)} does not match data {len(data)}"
 
+                        if "redshift" in f["basic_quantities"].keys():
+                            redshift = np.median(
+                                f["basic_quantities"]["redshift"][:]
+                            )
+                        else:
+                            redshift = ast.literal_eval(
+                                f.attrs["fit_instructions"]
+                            )["redshift"]
+                        wavs_aa = (wav, *(1.0 + redshift) * u.AA)
 
+                        spec_post = np.percentile(data, (16, 50, 84), axis=0).T
+
+                        spec_post = spec_post.astype(
+                            float
+                        )  # fixes weird isfinite error
+
+                        flux_lambda = (
+                            spec_post * u.erg / (u.s * u.cm**2 * u.AA)
+                        )
+
+                        wavs_micron_3 = np.vstack(
+                            [wavs_aa, wavs_aa, wavs_aa]
+                        ).T
+
+                        flux = flux_lambda.to(
+                            flux_units,
+                            equivalencies=u.spectral_density(wavs_micron_3),
+                        ).value
+
+                        fluxes.append(flux)
+                        wavs.append(wavs_aa)
+
+                    else:
+                        raise Exception(
+                            f"Property spectrum_full not found in {h5_path}. Available properties are {f['advanced_quantities'].keys()}"
+                        )
 
         # Get SED
         for pos, pipes_obj in enumerate(pipes_objs):
@@ -8215,6 +8314,9 @@ class ResolvedGalaxy:
                 wav, flux = pipes_obj.plot_best_fit(
                     None, wav_units=u.um, flux_units=u.uJy, return_flux=True
                 )
+            else:
+                flux = fluxes[pos]
+                wav = wavs[pos]
 
             # Clip the SED to the wavelength range 0 to 8 um
             flux = flux[(wav >= 0) & (wav < 8)]
@@ -11236,8 +11338,8 @@ class ResolvedGalaxies:
         run_dir="pipes/",
         n_jobs=8,
         out_subdir_name="parallel_temp",
-        load_only=False, # If set to true, will force reloading of properties and skip running
-        properties_to_load = ['stellar_mass', 'sfr', 'sfr_10myr'],
+        load_only=False,  # If set to true, will force reloading of properties and skip running
+        properties_to_load=["stellar_mass", "sfr", "sfr_10myr"],
     ):
         """
          Convenience function to run a set of run_dicts in parallel, and save results into one catalogue.
@@ -11285,7 +11387,15 @@ class ResolvedGalaxies:
 
         # Check if all outputs exist in SED fitting table
 
-        if all([run_name in galaxy.sed_fitting_table['bagpipes'].keys() for galaxy in self.galaxies]) and not load_only:
+        if (
+            all(
+                [
+                    run_name in galaxy.sed_fitting_table["bagpipes"].keys()
+                    for galaxy in self.galaxies
+                ]
+            )
+            and not load_only
+        ):
             print("All galaxies already run, skipping.")
             return
 
@@ -11311,7 +11421,6 @@ class ResolvedGalaxies:
 
         run_dir = os.path.abspath(run_dir)  # .replace("pipes", "")
 
-       
         # cd to run_dir
         os.chdir(os.path.dirname(run_dir))
 
@@ -11332,11 +11441,13 @@ class ResolvedGalaxies:
         for galaxy_id, config in configs.items():
             # Check all IDs and see if .h5 exists in either new or old location
             cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
-            for cat_id, gal_id in zip(cat_ids, config['ids']):
-                new_path = os.path.join(run_dir, config["out_dir"], f"{gal_id}.h5")
+            for cat_id, gal_id in zip(cat_ids, config["ids"]):
+                new_path = os.path.join(
+                    run_dir, config["out_dir"], f"{gal_id}.h5"
+                )
                 old_path = os.path.join(
-                            run_dir,
-                            f"posterior/{out_subdir_name}/{cat_id}.h5")
+                    run_dir, f"posterior/{out_subdir_name}/{cat_id}.h5"
+                )
 
                 if not (os.path.exists(old_path) or os.path.exists(new_path)):
                     done = False
@@ -11344,8 +11455,13 @@ class ResolvedGalaxies:
                     print(new_path)
                     print(old_path)
                     break
-        
-        n_fits = int(np.sum(np.ones(len(configs)) * np.array([len(config["ids"]) for config in configs.values()])))
+
+        n_fits = int(
+            np.sum(
+                np.ones(len(configs))
+                * np.array([len(config["ids"]) for config in configs.values()])
+            )
+        )
 
         if not load_only and not done:
             print(f"Starting mpi process with {n_jobs} cores.")
@@ -11402,19 +11518,29 @@ class ResolvedGalaxies:
         )
         done = False
 
-        print([f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits" for galaxy_id, config in configs.items()])
+        print(
+            [
+                f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
+                for galaxy_id, config in configs.items()
+            ]
+        )
 
         if all(
-            [os.path.exists(f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits") for galaxy_id, config in configs.items()]
+            [
+                os.path.exists(
+                    f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
+                )
+                for galaxy_id, config in configs.items()
+            ]
         ):
-            print(
-                "Individual galaxy catalogues found. Skipping."
-            )
+            print("Individual galaxy catalogues found. Skipping.")
             done = True
 
         elif os.path.exists(output_catalogue):
             output_catalogue = Table.read(output_catalogue)
-            assert len(output_catalogue) == n_fits, f"Catalogue length mismatch - {len(output_catalogue)} vs {n_fits}"
+            assert (
+                len(output_catalogue) == n_fits
+            ), f"Catalogue length mismatch - {len(output_catalogue)} vs {n_fits}"
         else:
             raise FileNotFoundError(
                 f"Could not find output catalogue at {output_catalogue}"
@@ -11446,21 +11572,27 @@ class ResolvedGalaxies:
                     )
                     new_path = os.path.join(new_dir, f"{id}.h5")
 
-
-                    if not os.path.exists(old_path) and not os.path.exists(new_path):
-                        raise FileNotFoundError(f'Could not find .h5 file for {id} at {old_path} or {new_path}')
+                    if not os.path.exists(old_path) and not os.path.exists(
+                        new_path
+                    ):
+                        raise FileNotFoundError(
+                            f"Could not find .h5 file for {id} at {old_path} or {new_path}"
+                        )
 
                     if os.path.exists(old_path):
                         file = h5.File(old_path, "r")
-                        fit_instructions = copy.deepcopy(file.attrs["fit_instructions"])
+                        fit_instructions = copy.deepcopy(
+                            file.attrs["fit_instructions"]
+                        )
                         file.close()
                         # Parse as dict
                         import ast
+
                         fit_instructions = ast.literal_eval(fit_instructions)
                         # Check if the fit instructions are the same
-                        
-                        if 'redshift' in fit_instructions:
-                            fit_instructions.pop('redshift')
+
+                        if "redshift" in fit_instructions:
+                            fit_instructions.pop("redshift")
 
                         # Convert all lists to np arrays
                         for key, value in fit_instructions.items():
@@ -11471,10 +11603,12 @@ class ResolvedGalaxies:
                                     if type(v) is list:
                                         value[k] = np.array(v)
 
-                        assert list(fit_instructions.keys()) == list(config['fit_instructions'].keys()), f"Fit instructions do not match for {id}."
+                        assert list(fit_instructions.keys()) == list(
+                            config["fit_instructions"].keys()
+                        ), f"Fit instructions do not match for {id}."
                         ## Work out what is different
-                        #diff = {k: v for k, v in fit_instructions.items() if v != config['fit_instructions'].get(k, None)}
-                        #raise ValueError(f"Fit instructions do not match for {id}. {diff}")
+                        # diff = {k: v for k, v in fit_instructions.items() if v != config['fit_instructions'].get(k, None)}
+                        # raise ValueError(f"Fit instructions do not match for {id}. {diff}")
                     if not os.path.exists(os.path.dirname(new_path)):
                         os.makedirs(os.path.dirname(new_path))
 
@@ -11498,7 +11632,6 @@ class ResolvedGalaxies:
                     overwrite=True,
                 )
 
-                
             # Now rename the bulk catalgoue - just add current time to it as a backup
             os.rename(
                 os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
@@ -11508,26 +11641,24 @@ class ResolvedGalaxies:
                 ),
             )
 
-        print('Moving on to loading properties into galaxies.')
-        
+        print("Moving on to loading properties into galaxies.")
+
         for galaxy, config in zip(self.galaxies, bagpipes_configs):
             run_name = config["meta"]["run_name"]
             bins_to_show = config["meta"]["fit_photometry"]
             galaxy.load_bagpipes_results(run_name)
-            if bins_to_show == 'bin' or 'RESOLVED' in run_name:
-                print(f'Loading resolved properties for {run_name}')
-                #galaxy.get_resolved_bagpipes_sed(run_name)
+            if bins_to_show == "bin" or "RESOLVED" in run_name:
+                print(f"Loading resolved properties for {run_name}")
+                # galaxy.get_resolved_bagpipes_sed(run_name)
                 # Save the resolved SFH
-                #fig, _ = galaxy.plot_bagpipes_sfh(
+                # fig, _ = galaxy.plot_bagpipes_sfh(
                 #    run_name, bins_to_show=['RESOLVED'])
-                #plt.close(fig)
+                # plt.close(fig)
                 # Save the resolved properties
                 for prop in properties_to_load:
                     galaxy.get_total_resolved_property(
-                        run_name, property=prop, log = prop == 'stellar_mass')
-                
-                
-            
+                        run_name, property=prop, log=prop == "stellar_mass"
+                    )
 
         # When it has run, need to move and rename posterior files for each galaxy, and
         # split catalogues back out again.
@@ -11689,9 +11820,9 @@ def run_bagpipes_wrapper(
             # Save the resolved SED
             galaxy.get_resolved_bagpipes_sed(resolved_dict["meta"]["run_name"])
             # Save the resolved SFH - broken for some reason
-            #fig, _ = galaxy.plot_bagpipes_sfh(
+            # fig, _ = galaxy.plot_bagpipes_sfh(
             #    resolved_dict["meta"]["run_name"], bins_to_show=["RESOLVED"]
-            #)
+            # )
             plt.close(fig)
             # Save the resolved mass
             galaxy.get_total_resolved_property(
