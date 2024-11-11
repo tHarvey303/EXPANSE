@@ -412,16 +412,24 @@ class GalaxyTab(param.Parameterized):
             name="Log Y-axis", value=self.sed_log_y
         )
         self.sed_x_min_widget = pn.widgets.FloatInput(
-            name="X-axis Min", value=self.sed_x_min
+            name="X-axis Min",
+            value=self.sed_x_min,
+            width=145,
         )
         self.sed_x_max_widget = pn.widgets.FloatInput(
-            name="X-axis Max", value=self.sed_x_max
+            name="X-axis Max",
+            value=self.sed_x_max,
+            width=145,
         )
         self.sed_y_min_widget = pn.widgets.FloatInput(
-            name="Y-axis Min", value=self.sed_y_min
+            name="Y-axis Min",
+            value=self.sed_y_min,
+            width=145,
         )
         self.sed_y_max_widget = pn.widgets.FloatInput(
-            name="Y-axis Max", value=self.sed_y_max
+            name="Y-axis Max",
+            value=self.sed_y_max,
+            width=145,
         )
 
         self.sed_log_x_widget.link(self, value="sed_log_x")
@@ -603,6 +611,7 @@ class GalaxyTab(param.Parameterized):
             pagination="remote",
             page_size=10,
             height=400,
+            max_width=600,
             theme="bootstrap",
             layout="fit_data_table",
             hidden_columns=ignore_cols,
@@ -837,6 +846,8 @@ class GalaxyTab(param.Parameterized):
         self.pdf_param_property_widget.options = [
             i.replace("_50", "") for i in dist_options
         ]
+        # self.pdf_param_property.object = dist_options
+
         self.other_bagpipes_properties_widget.options = actual_options
         self.other_bagpipes_properties_widget.value = param_property
 
@@ -1360,7 +1371,7 @@ class GalaxyTab(param.Parameterized):
                     ax_save_pdf.yaxis.set_tick_params(labelleft=False)
 
                     ez = self.resolved_galaxy.fit_eazy_photometry(
-                        run_name="app", fluxes=fluxes, flux_errs=flux_errs
+                        fluxes=fluxes, flux_errs=flux_errs
                     )
                     datas = []
                     for i, region in enumerate(regions):
@@ -2291,6 +2302,19 @@ class GalaxyTab(param.Parameterized):
                     show_photometry=show_sed_photometry,
                 )
 
+        # Handle plotting true SED for mock galaxies
+        if type(self.resolved_galaxy) == MockResolvedGalaxy:
+            self.resolved_galaxy.plot_mock_spectra(
+                ["det_segmap_fnu"],
+                fig=fig,
+                ax=ax,
+                label="Synthesizer SED (det_seg)",
+                wav_unit=x_unit,
+                flux_unit=y_unit,
+                color="black",
+                show_phot=show_sed_photometry,
+            )
+
         if y_unit == u.ABmag:
             ax.invert_yaxis()
         ax.set_xlabel(
@@ -2680,9 +2704,11 @@ class ResolvedSEDApp(param.Parameterized):
                 # Only look for files outside the root directory
                 for file in files:
                     if file.endswith(".h5") and root != self.galaxies_dir:
-                        options.append(
-                            os.path.relpath(os.path.join(root, file))
+                        new_path = os.path.relpath(
+                            os.path.join(root, file), self.galaxies_dir
                         )
+                        if new_path not in options:
+                            options.append(new_path)
 
             self.choose_file_input.options = [None] + sorted(options)
         else:

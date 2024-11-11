@@ -278,8 +278,8 @@ class ResolvedGalaxy:
             # print('dvipng not found, disabling LaTeX')
             update_mpl(tex_on=False)
         else:
-            update_mpl(tex_on=True)
-            pass
+            update_mpl(tex_on=False)
+
         # Check sizes of images
         for band in self.bands:
             assert (
@@ -1708,6 +1708,74 @@ class ResolvedGalaxy:
         self.filter_instruments = filter_instruments
         self.band_codes = band_codes
 
+    def _convolve_sed(self, flux, wav, filters="self"):
+        """Convolve an SED with a set of filters"""
+
+        self.get_filter_wavs()
+
+        if filters == "self":
+            filters = self.bands
+
+        from astroquery.svo_fps import SvoFps
+
+        filters = [self.band_codes[band] for band in filters]
+
+        mask = np.isfinite(flux) & np.isfinite(wav)
+        mags = flux[mask]
+        wav = wav[mask]
+
+        output_unit = flux.unit
+
+        # if len(wav) < len_wav:
+        # print('Removed nans from input SED')
+        if len(flux) != len(wav) != len(filters):
+            print("Inputs are different lengths!")
+        if type(wav[0]) == float:
+            print("Assuming microns")
+            wav = [i * u.um for i in wav]
+
+        output_phot = []
+        for filt in filters:
+            data = SvoFps.get_transmission_data(filt)
+            filt_wav = data["Wavelength"]
+            trans = data["Transmission"]
+
+            filt_wav = filt_wav.to("micron")
+
+            trap_object = lambda x: np.interp(x, filt_wav, trans)
+            max_wav = np.max(filt_wav)
+            min_wav = np.min(filt_wav)
+
+            # print('Filter min_wav, max_wav', filt, min_wav, max_wav)
+
+            mask = (wav < max_wav) & (wav > min_wav)
+            wav_loop = wav[mask]
+            flux_loop = flux[mask]
+
+            if len(wav_loop) == 0:
+                print(
+                    f"Warning! No overlap between filter {filt} and SED. Filling with 99"
+                )
+                if output_unit == u.ABmag:
+                    out_flux = 99 * u.ABmag
+                else:
+                    out_flux = 0 * output_unit
+            else:
+                fluxes = flux_loop.to(u.Jy)
+                trans_ob = trap_object(wav_loop)
+                trans_int = np.trapz(trans, filt_wav)
+                # print(trans_ob*fluxes, wav_loop)
+                top_int = np.trapz(trans_ob * fluxes, wav_loop)
+                # print(top_int)
+                frac = top_int / trans_int
+
+                out_flux = frac.to(output_unit).value
+
+            output_phot.append(out_flux)
+
+        output_phot = np.array(output_phot) * output_unit
+        return output_phot
+
     def property_in_mask(
         self,
         property_map,
@@ -1932,11 +2000,13 @@ class ResolvedGalaxy:
             print("No galaxy region found")
             return None
 
-    def dump_to_h5(self, h5_folder=resolved_galaxy_dir, mode="append"):
+    def dump_to_h5(
+        self, h5_folder=resolved_galaxy_dir, mode="append", force=False
+    ):
         """Dump the galaxy data to an .h5 file"""
         # for strings
 
-        if not self.save_out:
+        if not self.save_out and not force:
             print("Skipping writing to .h5")
             return
 
@@ -4284,8 +4354,9 @@ class ResolvedGalaxy:
         overwrite=False,
         meta=None,
         setattr_gal_meta=None,
+        force=True,
     ):
-        if not self.save_out:
+        if not self.save_out and not force:
             print("Skipping writing to .h5")
             return
 
@@ -4706,7 +4777,9 @@ class ResolvedGalaxy:
 
         return table
 
-    def provide_bagpipes_phot(self, gal_id, return_bands=False):
+    def provide_bagpipes_phot(
+        self, gal_id, return_bands=False, exclude_bands=[]
+    ):
         """Provide the fluxes in the correct format for bagpipes"""
         gal_id = str(gal_id)
         if not hasattr(self, "photometry_table"):
@@ -4736,7 +4809,9 @@ class ResolvedGalaxy:
             for col in flux_table.colnames[2:]:
                 flux_table[col] = flux_table[col].to(u.uJy)
 
-        for band in self.bands:
+        bands = [band for band in self.bands if band not in exclude_bands]
+
+        for band in bands:
             flux_col_name = band
             fluxerr_col_name = f"{band}_err"
             # Where the error is less than 10% of the flux, set the error to 10% of the flux, if the flux is greater than 0
@@ -4762,7 +4837,7 @@ class ResolvedGalaxy:
                 np.array(
                     [
                         [f"{band}", f"{band}_err"]
-                        for pos, band in enumerate(self.bands)
+                        for pos, band in enumerate(bands)
                     ]
                 )
             )
@@ -6649,6 +6724,7 @@ class ResolvedGalaxy:
         save_tempfilt_path="internal",
         tempfilt=None,
         update_meta_properties=False,
+        exclude_bands=[],
     ):
         """
         Wrapper function for fit_eazy_photometry. Provides either
@@ -6659,11 +6735,16 @@ class ResolvedGalaxy:
         if override_binmap_type is not None:
             self.use_binmap_type = override_binmap_type
 
-        arr = self.provide_bagpipes_phot(phot_name)
+        arr = self.provide_bagpipes_phot(
+            phot_name, exclude_bands=exclude_bands
+        )
         fluxes = arr[:, 0] * u.uJy
         flux_errs = arr[:, 1] * u.uJy
 
         name = f"{phot_name}_{template_name}_{min_percentage_err}"
+
+        if len(exclude_bands) > 0:
+            name += f"_exclude_{exclude_bands}"
 
         if (
             self.interactive_outputs is not None
@@ -6687,6 +6768,7 @@ class ResolvedGalaxy:
             load_tempfilt=load_tempfilt,
             save_tempfilt_path=save_tempfilt_path,
             tempfilt=tempfilt,
+            exclude_bands=exclude_bands,
         )
 
         meta_dict = self.save_eazy_outputs(
@@ -6721,10 +6803,12 @@ class ResolvedGalaxy:
         load_tempfilt=True,
         save_tempfilt_path="internal",
         tempfilt=None,
+        exclude_bands=[],
     ):
         import eazy
         from .eazy.eazy_config import make_params, filter_codes
 
+        bands = [band for band in self.bands if band not in exclude_bands]
         eazy_path = os.getenv("EAZYCODE", "")
         if not os.path.exists(eazy_path):
             raise ValueError(
@@ -6746,7 +6830,7 @@ class ResolvedGalaxy:
             fluxes.shape[-1] == flux_errs.shape[-1]
         ), "Fluxes and flux errors must have the same number of bands"
         assert (
-            fluxes.shape[-1] == len(self.bands)
+            fluxes.shape[-1] == len(self.bands) - len(exclude_bands)
         ), f"Fluxes and flux errors must have the same number of bands as the number of bands in the survey. Expected {len(self.bands)} bands, got {fluxes.shape[-1]} bands"
 
         if type(fluxes) is u.Quantity:
@@ -6772,7 +6856,7 @@ class ResolvedGalaxy:
             # Create a temporary catalogue
             cat = Table()
             cat["id"] = np.arange(len(flux))
-            for i, band in enumerate(self.bands):
+            for i, band in enumerate(bands):
                 cat[f"F{filter_codes[band]}"] = flux[:, i]
                 cat[f"E{filter_codes[band]}"] = flux_err[:, i]
 
@@ -6802,7 +6886,14 @@ class ResolvedGalaxy:
                 if tempfilt is None:
                     import pickle
 
-                    tempfilt_path = f"{save_tempfilt_path}/{self.survey}_{template_name}_tempfilt.pkl"
+                    tempfilt_path = (
+                        f"{save_tempfilt_path}/{self.survey}_{template_name}"
+                    )
+
+                    if exclude_bands:
+                        tempfilt_path += f"_exclude_{'_'.join(exclude_bands)}"
+                    tempfilt_path += "_tempfilt.pkl"
+
                     if os.path.exists(tempfilt_path):
                         with open(tempfilt_path, "rb") as f:
                             tempfilt = pickle.load(f)
@@ -6832,7 +6923,7 @@ class ResolvedGalaxy:
                 import pickle
 
                 with open(
-                    f"{save_tempfilt_path}/{self.survey}_{template_name}_tempfilt.pkl",
+                    tempfilt_path,
                     "wb",
                 ) as f:
                     pickle.dump(ez.tempfilt, f)
@@ -8254,7 +8345,7 @@ class ResolvedGalaxy:
             # Manually open .h5 and read in samples. Should be faster.
             for rbin in count:
                 h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
-                with h5py.File(h5_path, "r") as f:
+                with h5.File(h5_path, "r") as f:
                     """ Fun bodging of SED into correct form"""
                     use_bpass = (
                         ast.literal_eval(f.attrs["config"])["type"] == "BPASS"
@@ -10444,6 +10535,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         wav_unit=u.um,
         flux_unit=u.uJy,
         label=True,
+        show_phot=False,
         **kwargs,
     ):
         if fig is None:
@@ -10471,6 +10563,20 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 flux.to(flux_unit, equivalencies=u.spectral_density(wav)),
                 **kwargs,
                 label=lab,
+            )
+
+        if show_phot:
+            phot = self._convolve_sed(flux, wav)
+            phot_wav = [
+                self.filter_wavs[band].to(u.um).value for band in self.bands
+            ] * u.um
+
+            ax.scatter(
+                phot_wav,
+                phot.to(flux_unit, equivalencies=u.spectral_density(phot_wav)),
+                color="black",
+                label="Photometry",
+                marker="s",
             )
 
         if label:
@@ -10663,7 +10769,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
     def regenerate_synthesizer_galaxy(
         self,
-        file_path="/nvme/scratch/work/tharvey/synthesizer/flares_flags_balmer_project.hdf5",
+        file_path=None,
         basic=False,
     ):
         # Regenerate the synthesizer galaxy
@@ -10751,8 +10857,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         if int(region) == 0:
             region = "00"  # 00 is getting lost
-
-        # file_path = self.meta_properties['file_path']
+        if file_path is None:
+            file_path = self.meta_properties["model_assumptions"]["file_path"]
 
         zed = float(tag[5:].replace("p", "."))
 

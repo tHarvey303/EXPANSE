@@ -52,6 +52,7 @@ def make_params(
     z_step=0.01,
     z_min=0.01,
     z_max=20,
+    add_cgm=False,
     fix_zspec=False,
     cat_flux_unit=u.uJy,
     template_dir="",
@@ -96,6 +97,8 @@ def make_params(
     params["CAT_HAS_EXTCORR"] = (
         False  # Catalog already corrected for reddening?
     )
+
+    params["ADD_CGM"] = add_cgm  # Add Asada CGM damping wings?
 
     # Redshift stuff
     params["Z_STEP"] = z_step  # Setting photo-z step
