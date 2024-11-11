@@ -1992,8 +1992,7 @@ class ResolvedGalaxy:
         #    return fig
 
     def get_number_of_bins(self, binmap_type="pixedfit"):
-        if binmap_type == "pixedfit":
-            region = self.pixedfit_map
+        region = getattr(self, f"{binmap_type}_map", None)
         if region is not None:
             return len(np.unique(region)) - 1
         else:
@@ -3694,6 +3693,8 @@ class ResolvedGalaxy:
         overwrite=False,
         min_snr_wav=1216 * u.AA,
         only_snr_instrument="NIRCam",
+        save_out=True,
+        name_out="pixedfit",  # Allows you to override the name of the output maps
     ):
         """
         : SNR_reqs: list of SNR requirements for each band
@@ -3707,8 +3708,13 @@ class ResolvedGalaxy:
                 "No image processing done. Run pixedfit_processing() first"
             )
 
-        if getattr(self, "pixedfit_map", None) is not None and not overwrite:
-            print("Pixedfit map already exists. Set overwrite=True to re-run")
+        if (
+            getattr(self, f"{name_out}_map", None) is not None
+            and not overwrite
+        ):
+            print(
+                f"{name_out} map already exists. Set overwrite=True to re-run"
+            )
             return
 
         # ref_band_pos = np.argwhere(np.array([band == ref_band for band in self.bands])).flatten()[0]
@@ -3737,9 +3743,7 @@ class ResolvedGalaxy:
                     """
                 # print(f'Auto-selected minimum band for SNR: {min_band}')
 
-        name_out_fits = (
-            f"{self.dir_images}/{self.survey}_{self.galaxy_id}_binned.fits"
-        )
+        name_out_fits = f"{self.dir_images}/{self.survey}_{self.galaxy_id}_{name_out}_binned.fits"
 
         header = fits.open(self.flux_map_path)[0].header
         header_order = [
@@ -3778,31 +3782,49 @@ class ResolvedGalaxy:
             print("Pixedfit binning failed")
             return False
 
-        self.pixedfit_binmap_path = name_out_fits
-        self.add_to_h5(
-            name_out_fits,
-            "bin_maps",
-            "pixedfit",
-            ext="BIN_MAP",
-            setattr_gal="pixedfit_map",
-            overwrite=overwrite,
-        )
-        self.add_to_h5(
-            name_out_fits,
-            "bin_fluxes",
-            "pixedfit",
-            ext="BIN_FLUX",
-            setattr_gal="binned_flux_map",
-            overwrite=overwrite,
-        )
-        self.add_to_h5(
-            name_out_fits,
-            "bin_flux_err",
-            "pixedfit",
-            ext="BIN_FLUXERR",
-            setattr_gal="binned_flux_err_map",
-            overwrite=overwrite,
-        )
+        meta_dict = {
+            "name_out": name_out,
+            "min_snr_wav": min_snr_wav,
+            "only_snr_instrument": only_snr_instrument,
+            "ref_band": ref_band,
+            "SNR_reqs": SNR_reqs,
+            "Dmin_bin": Dmin_bin,
+            "redc_chi2_limit": redc_chi2_limit,
+            "del_r": del_r,
+        }
+
+        if save_out:
+            if name_out not in self.maps:
+                self.maps.append(name_out)
+
+            self.pixedfit_binmap_path = name_out_fits
+            self.add_to_h5(
+                name_out_fits,
+                "bin_maps",
+                name_out,
+                ext="BIN_MAP",
+                setattr_gal=f"{name_out}_map",
+                overwrite=overwrite,
+                meta=meta_dict,
+            )
+            self.add_to_h5(
+                name_out_fits,
+                "bin_fluxes",
+                name_out,
+                ext="BIN_FLUX",
+                setattr_gal=f"{name_out}_binned_flux_map",
+                overwrite=overwrite,
+            )
+            self.add_to_h5(
+                name_out_fits,
+                "bin_flux_err",
+                name_out,
+                ext="BIN_FLUXERR",
+                setattr_gal=f"{name_out}_binned_flux_err_map",
+                overwrite=overwrite,
+            )
+
+        return name_out_fits
 
     def plot_kron_ellipse(
         self, ax, center, band="detection", color="red", return_params=False
@@ -5402,6 +5424,7 @@ class ResolvedGalaxy:
         only_run=False,  # Only run the bagpipes fit, don't do any other processing - good for MPI
         time_calls=False,
         return_run_args=False,
+        override_binmap_type=None,
     ):
         # meta - run_name, use_bpass, redshift (override)
         assert (
@@ -5412,6 +5435,9 @@ class ResolvedGalaxy:
         meta = bagpipes_config.get("meta", {})
         # Override fit_photometry if it is in the meta
         if "fit_photometry" in meta.keys():
+            print(
+                f'Overriding fit_photometry: {fit_photometry} to "{meta["fit_photometry"]}"'
+            )
             fit_photometry = meta["fit_photometry"]
 
         print(f"Fitting photometry: {fit_photometry}")
@@ -5515,7 +5541,11 @@ class ResolvedGalaxy:
         else:
             psf_type = "webbpsf"
 
-        if hasattr(self, "use_binmap_type"):
+        if override_binmap_type:
+            print(f"Overriding binmap type to {override_binmap_type}")
+            binmap_type = override_binmap_type
+            self.use_binmap_type = binmap_type
+        elif hasattr(self, "use_binmap_type"):
             binmap_type = self.use_binmap_type
         else:
             binmap_type = "pixedfit"
@@ -5529,6 +5559,7 @@ class ResolvedGalaxy:
                         print(f"Run {run_name} already exists")
                         if not return_run_args:
                             return
+
         # print(psf_type, binmap_type)
         # print(self.photometry_table.keys())
         flux_table = self.photometry_table[psf_type][binmap_type]
@@ -10648,6 +10679,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         for i in range(len(parameters), len(axes)):
             fig.delaxes(axes[i])
 
+        # These should really be computed at the best-fit Bagpipes redshift, which is not necessarily the same as the input redshift.
         redshift = self.redshift
 
         if type(norm) is str:
@@ -11173,11 +11205,23 @@ class MethodForwardingMeta(type):
         return new_class
 
 
-class ResolvedGalaxies:
+# Make ResolvedGalaxies inherit from a numpy array so than self.galaxies behaves like a numpy array
+class ResolvedGalaxies(np.ndarray):
+    def __new__(cls, list_of_galaxies, *args, **kwargs):
+        return np.array(list_of_galaxies, dtype=object).view(cls)
+
+    """
     def __init__(self, list_of_galaxies):
         contained_class = list_of_galaxies[0].__class__
 
         self.galaxies = list_of_galaxies
+    """
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+
+        self.galaxies = self  # obj.galaxies
 
     @classmethod
     def init(cls, list_of_ids, survey, version, **kwargs):
@@ -11198,6 +11242,7 @@ class ResolvedGalaxies:
 
         return cls(list_of_galaxies)
 
+    """
     def __getitem__(self, key):
         return self.galaxies[key]
 
@@ -11209,6 +11254,7 @@ class ResolvedGalaxies:
 
     def __next__(self):
         return next(self.galaxies)
+    """
 
     def total_number_of_bins(self):
         return sum([galaxy.get_number_of_bins() for galaxy in self.galaxies])
@@ -11446,6 +11492,7 @@ class ResolvedGalaxies:
         out_subdir_name="parallel_temp",
         load_only=False,  # If set to true, will force reloading of properties and skip running
         properties_to_load=["stellar_mass", "sfr", "sfr_10myr"],
+        **kwargs,
     ):
         """
          Convenience function to run a set of run_dicts in parallel, and save results into one catalogue.
@@ -11487,6 +11534,7 @@ class ResolvedGalaxies:
                 fit_photometry=fit_photometry,
                 run_dir=run_dir,
                 return_run_args=True,
+                **kwargs,
             )
             for galaxy, bagpipes_config in zip(self.galaxies, bagpipes_configs)
         }

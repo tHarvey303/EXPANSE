@@ -119,6 +119,7 @@ meta_continuity = {
     "min_redshift_sigma": 0.5,
     "fit_photometry": "TOTAL_BIN",
     "sampler": "multinest",
+    "update_cont_bins": True,
 }
 
 meta_continuity_bursty = copy.deepcopy(meta_continuity)
@@ -271,6 +272,7 @@ meta_resolved_bursty = {
     "redshift": "photoz_delayed",
     "redshift_id": "TOTAL_BIN",
     "fit_photometry": "bin",
+    "update_cont_bins": True,
 }
 
 overall_dict = {
