@@ -6,7 +6,8 @@ from .ResolvedGalaxy import (ResolvedGalaxy,
 from .synthesizer_functions import (convert_coordinates,
                                    apply_pixel_coordinate_mask,
                                    get_spectra_in_mask,
-                                   calculate_sfh)
+                                   calculate_sfh,
+                                   plot_particle_sed)
 
 from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli, PhotometryBandInfo, FieldInfo, compass
 

@@ -18,7 +18,7 @@ from astropy.modeling.fitting import FittingWithOutlierRemoval, LinearLSQFitter
 from astropy.modeling.models import Linear1D
 from astropy.nddata import Cutout2D, block_reduce
 from astropy.stats import mad_std, sigma_clip
-from astropy.table import Table, hstack
+from astropy.table import Table, hstack, vstack
 from astropy.visualization import ImageNormalize, simple_norm
 from astropy.wcs import WCS
 from photutils import CircularAperture, aperture_photometry
@@ -98,6 +98,8 @@ def make_psf(
         if type(image_path) != list:
             image_path = [image_path]
 
+        print(image_path[0])
+
         hdr = fits.getheader(image_path[0])
 
     if match_band is not None:
@@ -175,18 +177,18 @@ def make_psf(
 
         if not skip_psf:
             # print(filename)
-            print(starname)
+            # print(starname)
             # Run in loop
 
             showme = True
-
+            oks = []
             peaks_all, stars_all = [], []
             ra_all, dec_all, ids_all = [], [], []
 
             for i, (filename, psf_mask) in enumerate(
                 zip(filenames, psf_masks)
             ):
-                print(psf_mask)
+                # print(psf_mask)
                 peaks, stars = find_stars(
                     filename,
                     outdir=outdir,
@@ -202,6 +204,7 @@ def make_psf(
                 print(f"Found {len(peaks)} bright sources in {filename}")
 
                 ok = (peaks["mag"] > maglim[0]) & (peaks["mag"] < maglim[1])
+                oks.append(ok)
                 ra, dec, ids = (
                     peaks["ra"][ok],
                     peaks["dec"][ok],
@@ -212,7 +215,7 @@ def make_psf(
                 ids_all.append(ids)
 
             print(
-                f"Found {np.sum([len(i[ok]) for i in peaks_all])} sources with {maglim[0]} < mag < {maglim[1]} in {pfilt}..."
+                f"Found {np.sum([len(i[ok]) for i, ok in zip(peaks_all, oks)])} sources with {maglim[0]} < mag < {maglim[1]} in {pfilt}..."
             )
             print("Processing PSF...")
             # Define the PSF object
@@ -1013,7 +1016,13 @@ class PSF:
 
         print(f"{len(self.cat)} in PSF cat")
 
-        self.data = np.ndarray.flatten(np.array(datas))
+        # Make data one list
+
+        print(datas)
+
+        data = np.array([item for sublist in datas for item in sublist])
+        print(len(data))
+
         self.data = np.ma.array(data, mask=~np.isfinite(data) | (data == 0))
         self.data_orig = self.data.copy()
         self.ok = np.ones(len(self.cat))
@@ -1038,7 +1047,7 @@ class PSF:
 
         peaks = np.array([st.max() for st in self.data])
         peaks[~np.isfinite(peaks) | (peaks == 0)] = 0
-        np.array([self.cat["x"], self.cat["y"]])
+        # pos = np.array([self.cat["x"], self.cat["y"]])
 
         # data = np.array(self.data)
         # data[self.data.mask] = 0
@@ -2343,12 +2352,13 @@ def psf_correction_factor(
     apersize=0.32,
     pixel_scale=0.03,
     fix_extrapolation=False,
+    conv_psfmodel=None,
+    mag_corr_factor=True,
 ):
-    conv_psfmodel = fits.open(psf_dir + f"/{match_band}_psf_norm.fits")[
-        0
-    ].data  # My modelled PSF
-    # conv_psfmodel = fits.open('/raid/scratch/data/jwst/PSFs/TomPSFs/PSF_Resample_03_F444W.fits')[0].data # My WebbPSF PSF
-    # conv_psfmodel = fits.open('/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/f444w_psf_norm.fits')[0].data # UNCOVER/MEGASCIENCE PSF (need 0.04 as pixel size)
+    if conv_psfmodel is None:
+        conv_psfmodel = fits.open(psf_dir + f"/{match_band}_psf_norm.fits")[
+            0
+        ].data  # My modelled PSF
 
     min_corr = 1.0 / psf_cog(
         conv_psfmodel,
@@ -2359,24 +2369,29 @@ def psf_correction_factor(
     )  # defaults to EE(<R_aper)
 
     # Convert to AB mag difference
-
-    corr = 2.5 * np.log10(min_corr)
+    if mag_corr_factor:
+        corr = 2.5 * np.log10(min_corr)
+    else:
+        corr = min_corr
 
     return corr
 
 
 if __name__ == "__main__":
     surveys = ["JOF"]  # ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
+
+    surveys = [[f"COSMOS-Web-{i}A", f"COSMOS-Web-{i}B"] for i in range(0, 7)]
+    # flatten list
+    surveys = [item for sublist in surveys for item in sublist]
+    print(surveys)
+    outdir_name = "+".join(surveys)
+    outdir_name = "COSMOS-Web"
     version = "v11"
-    instruments = ["ACS_WFC", "NIRCam"]
+    instruments = ["NIRCam"]
     match_band = "F444W"  #'F444W' or None
-    outdir = f'/nvme/scratch/work/tharvey/PSFs/{"+".join(surveys)}/'
-    outdir_webbpsf = (
-        f'/nvme/scratch/work/tharvey/PSFs/{"+".join(surveys)}/webbpsf/'
-    )
-    kernel_dir = (
-        f'/nvme/scratch/work/tharvey/PSFs/kernels/{"+".join(surveys)}/'
-    )
+    outdir = f"/nvme/scratch/work/tharvey/PSFs/{outdir_name}/"
+    outdir_webbpsf = f"/nvme/scratch/work/tharvey/PSFs/{outdir_name}/webbpsf/"
+    kernel_dir = f"/nvme/scratch/work/tharvey/PSFs/kernels/{outdir_name}/"
     psf_mask = ""
     use_psf_masks = None  # {'F606W':[psf_mask]} # None
     maglim = (18.0, 25.0)  # Mag limit for stars to stack
@@ -2401,25 +2416,31 @@ if __name__ == "__main__":
         "F410M",
         "F444W",
     ]
+    bands = ["F115W", "F150W", "F277W", "F444W"]
     # NORMAL OPERATION HERE
     # bands = ['F090W', 'F115W', 'F150W', 'F200W', 'F277W', 'F356W', 'F410M', 'F444W']
     folders = [
-        f"/raid/scratch/data/jwst/{survey}/NIRCam/mosaic_1084_wispnathan/"
+        f"/raid/scratch/data/jwst/{survey}/NIRCam/mosaic_1084_wispnathan/30mas/"
         for survey in surveys
     ]
+
     outdir_matched_images = [f"{folder}psf_matched/" for folder in folders]
     outdir_matched_images = {
         band: [f"{folder}psf_matched/" for folder in outdir_matched_images]
         for band in bands
     }
     print(folders)
-    im_paths = {
-        band: [
-            glob.glob(f"{folder}/*{band.lower()}*.fits")[0]
-            for folder in folders
-        ]
-        for band in bands
-    }
+
+    im_paths = {}
+    for band in bands:
+        print(band)
+        im_paths[band] = []
+
+        for folder in folders:
+            path = f"{folder}/*{band}*.fits"
+            print(path)
+            im_paths[band].append(glob.glob(path)[0])
+
     wht_paths = copy(im_paths)  # Placeholder
     err_paths = copy(im_paths)  # Placeholder
     phot_zp = {band: 28.08 for band in bands}
@@ -2476,20 +2497,23 @@ if __name__ == "__main__":
                 + 18.6921
             )
 
-        make_psf(
-            bands,
-            im_paths,
-            outdir,
-            kernel_dir,
-            match_band=match_band,
-            phot_zp=phot_zp,
-            maglim=maglim,
-            use_psf_masks=use_psf_masks,
-            manual_id_remove=manual_id_remove,
-            sigma=3.5,
-            psf_fov=psf_fov,
-            pypher_r=1e-4,
-        )
+    """
+
+    make_psf(
+        bands,
+        im_paths,
+        outdir,
+        kernel_dir,
+        match_band=match_band,
+        phot_zp=phot_zp,
+        maglim=maglim,
+        use_psf_masks=use_psf_masks,
+        manual_id_remove=manual_id_remove,
+        sigma=3.5,
+        psf_fov=psf_fov,
+        pypher_r=1e-4,
+    )
+
     """
 
     # bands = []
@@ -2512,6 +2536,8 @@ if __name__ == "__main__":
         outdir_matched_images[band] = [
             "/raid/scratch/data/hst/JOF/ACS_WFC/30mas/psf_matched/"
         ]
+        outdir_matched_images[band] = [
+
 
         # im_paths[band] = [f'/raid/scratch/data/hst/{survey}/ACS_WFC/30mas/ACS_WFC_{band}_{survey}_drz.fits' for survey in surveys]
         # wht_paths[band] = [f'/raid/scratch/data/hst/{survey}/ACS_WFC/30mas/ACS_WFC_{band}_{survey}_wht.fits' for survey in surveys]
@@ -2539,6 +2565,7 @@ if __name__ == "__main__":
             )
 
         print(band, phot_zp[band])
+    """
     print(im_paths)
     manual_id_remove = []
     # maglim = [18., 25.]
@@ -2610,6 +2637,8 @@ if __name__ == "__main__":
     )
 
     bands = ["F850LP", "F814W", "F775W", "F606W", "F435W"]
+
+    """
     # Convolve images with bands
     convolve_images(
         bands,
@@ -2621,6 +2650,7 @@ if __name__ == "__main__":
         match_band,
         overwrite=True,
     )
+    """
 
     for apersize in [0.2, 0.32, 0.5, 1, 1.5, 2]:
         # Derive correction factor for apertures from a PSF model

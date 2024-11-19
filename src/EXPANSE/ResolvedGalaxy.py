@@ -157,8 +157,8 @@ class ResolvedGalaxy:
         phot_pix_unit,
         phot_img_headers,
         rms_err_imgs,
-        seg_imgs,
-        aperture_dict,
+        aperture_dict=None,
+        seg_imgs=None,
         galfind_version="v11",
         detection_band="F277W+F356W+F444W",
         psf_matched_data=None,
@@ -290,10 +290,12 @@ class ResolvedGalaxy:
                 self.rms_err_imgs[band].shape
                 == (self.cutout_size, self.cutout_size)
             ), f"RMS error image shape for {band} is {self.rms_err_imgs[band].shape}, not {(self.cutout_size, self.cutout_size)}"
-            assert (
-                self.seg_imgs[band].shape
-                == (self.cutout_size, self.cutout_size)
-            ), f"Segmentation map shape for {band} is {self.seg_imgs[band].shape}, not {(self.cutout_size, self.cutout_size)}"
+
+            if self.seg_imgs is not None and len(self.seg_imgs) > 0:
+                assert (
+                    self.seg_imgs[band].shape
+                    == (self.cutout_size, self.cutout_size)
+                ), f"Segmentation map shape for {band} is {self.seg_imgs[band].shape}, not {(self.cutout_size, self.cutout_size)}"
         # Bin the pixels
         if maps is not None:
             for key in maps:
@@ -367,7 +369,7 @@ class ResolvedGalaxy:
             # print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
             # print(self.galaxy_id)
             print("Convolving images with PSF")
-            self.convolve_with_psf(psf_type=psf_type, init_run=True)
+            self.convolve_with_psf(psf_type=psf_type, init_run=False)
 
         # if self.rms_background is None:
         #    self.estimate_rms_from_background()
@@ -1071,13 +1073,18 @@ class ResolvedGalaxy:
                         ()
                     ].decode("utf-8")
                     try:
-                        meta_prop = ast.literal_eval(meta_prop)
+                        meta_prop = ast.literal_eval(
+                            meta_prop.replace("unyt_quantity", "")
+                        )
                     except:
                         meta_prop = meta_prop
                     meta_properties[prop] = meta_prop
             else:
                 meta_properties = None
-            if "auto_photometry" in hfile.keys():
+            if (
+                "auto_photometry" in hfile.keys()
+                and hfile["auto_photometry"].get("auto_photometry") is not None
+            ):
                 ap = (
                     hfile["auto_photometry"]["auto_photometry"][()]
                     .decode("utf-8")
@@ -1128,12 +1135,13 @@ class ResolvedGalaxy:
             # Load aperture photometry
             # aperture_dict = ast.literal_eval(hfile['aperture_photometry']['aperture_dict'][()].decode('utf-8'))
             aperture_dict = {}
-            for aper in hfile["aperture_photometry"].keys():
-                aperture_dict[aper] = {}
-                for key in hfile["aperture_photometry"][aper].keys():
-                    aperture_dict[aper][key] = hfile["aperture_photometry"][
-                        aper
-                    ][key][()]
+            if hfile.get("aperture_photometry") is not None:
+                for aper in hfile["aperture_photometry"].keys():
+                    aperture_dict[aper] = {}
+                    for key in hfile["aperture_photometry"][aper].keys():
+                        aperture_dict[aper][key] = hfile[
+                            "aperture_photometry"
+                        ][aper][key][()]
             # Load raw data
             phot_imgs = {}
             rms_err_imgs = {}
@@ -1146,7 +1154,9 @@ class ResolvedGalaxy:
             for band in bands:
                 phot_imgs[band] = hfile["raw_data"][f"phot_{band}"][()]
                 rms_err_imgs[band] = hfile["raw_data"][f"rms_err_{band}"][()]
-                seg_imgs[band] = hfile["raw_data"][f"seg_{band}"][()]
+                if hfile["raw_data"].get(f"seg_{band}", None) is not None:
+                    seg_imgs[band] = hfile["raw_data"][f"seg_{band}"][()]
+
                 if hfile["headers"].get(band) is not None:
                     header = hfile["headers"][band][()].decode("utf-8")
                     phot_img_headers[band] = header
@@ -1158,9 +1168,16 @@ class ResolvedGalaxy:
                         unmatched_rms_err[band] = hfile["unmatched_data"][
                             f"rms_err_{band}"
                         ][()]
-                        unmatched_seg[band] = hfile["unmatched_data"][
-                            f"seg_{band}"
-                        ][()]
+                        if (
+                            hfile["unmatched_data"].get(f"seg_{band}")
+                            is not None
+                        ):
+                            unmatched_seg[band] = hfile["unmatched_data"][
+                                f"seg_{band}"
+                            ][()]
+
+            if len(seg_imgs) == 0:
+                seg_imgs = None
 
             if len(unmatched_data) == 0:
                 unmatched_data = None
@@ -1836,7 +1853,9 @@ class ResolvedGalaxy:
 
         return output
 
-    def get_star_stack_psf(self, match_band=None):
+    def get_star_stack_psf(
+        self, match_band=None, scaled_psf=False, just_return_psfs=False
+    ):
         """Get the PSF kernel from a star stack"""
 
         # Check for kernel
@@ -1851,13 +1870,17 @@ class ResolvedGalaxy:
         if self.psfs_meta is None:
             self.psfs_meta = {}
 
-        self.psfs["star_stack"] = {}
-        self.psfs_meta["star_stack"] = {}
+        scale = "" if not scaled_psf else "_norm"
+        if "star_stack" not in self.psfs.keys():
+            self.psfs["star_stack"] = {}
+            self.psfs_meta["star_stack"] = {}
+
         run = False
+        psfs = {}
         for band in self.bands:
             if band in self.dont_psf_match_bands or self.already_psf_matched:
                 continue
-            path = f"{psf_folder}/{band}_psf.fits"
+            path = f"{psf_folder}/{band}_psf{scale}.fits"
             if not os.path.exists(path):
                 raise Exception(f"No PSF found for {band} in {psf_folder}")
             else:
@@ -1866,28 +1889,39 @@ class ResolvedGalaxy:
                 self.psfs["star_stack"][band] = psf
                 self.psfs_meta["star_stack"][band] = psf_hdr
 
-            self.add_to_h5(psf, "psfs/star_stack/", band, overwrite=True)
-            self.add_to_h5(
-                psf_hdr, "psfs_meta/star_stack/", band, overwrite=True
-            )
-            if match_band is None:
-                match_band = self.bands[-1]
-            kernel_path = (
-                f"{psf_kernel_folder}/kernel_{band}_to_{match_band}.fits"
-            )
-            if os.path.exists(kernel_path):
-                kernel = fits.getdata(kernel_path)
-                if self.psf_kernels is None:
-                    self.psf_kernels = {"star_stack": {}}
-                elif self.psf_kernels.get("star_stack") is None:
-                    self.psf_kernels["star_stack"] = {}
-
-                self.psf_kernels["star_stack"][band] = kernel
-                self.add_to_h5(
-                    kernel, "psf_kernels/star_stack/", band, overwrite=True
-                )
+            if just_return_psfs:
+                psfs[band] = psf
             else:
-                run = True
+                self.add_to_h5(psf, "psfs/star_stack/", band, overwrite=True)
+                self.add_to_h5(
+                    psf_hdr, "psfs_meta/star_stack/", band, overwrite=True
+                )
+                if match_band is None:
+                    match_band = self.bands[-1]
+                kernel_path = (
+                    f"{psf_kernel_folder}/kernel_{band}_to_{match_band}.fits"
+                )
+
+                if os.path.exists(kernel_path):
+                    kernel = fits.getdata(kernel_path)
+                    if self.psf_kernels is None:
+                        self.psf_kernels = {"star_stack": {}}
+                    elif self.psf_kernels.get("star_stack") is None:
+                        self.psf_kernels["star_stack"] = {}
+
+                    self.psf_kernels["star_stack"][band] = kernel
+                    self.add_to_h5(
+                        kernel, "psf_kernels/star_stack/", band, overwrite=True
+                    )
+                elif band == match_band:
+                    pass
+                else:
+                    print(f"{kernel_path} not found, generating kernel.")
+                    run = True
+
+        if just_return_psfs:
+            return psfs
+
         if run:
             self.convert_psfs_to_kernels(psf_type="star_stack")
 
@@ -2031,6 +2065,9 @@ class ResolvedGalaxy:
             append = ""
         new_h5_path = self.h5_path.replace(".h5", f"{append}.h5")
 
+        if not os.path.exists(os.path.dirname(new_h5_path)):
+            os.makedirs(os.path.dirname(new_h5_path))
+
         try:
             with h5.File(new_h5_path, "w") as hfile:
                 # print('append is', append)
@@ -2156,13 +2193,14 @@ class ResolvedGalaxy:
                     "rms_err_exts", data=str(self.rms_err_exts), dtype=str_dt
                 )
 
-                for aper in self.aperture_dict.keys():
-                    hfile["aperture_photometry"].create_group(aper)
-                    for key in self.aperture_dict[aper].keys():
-                        data = self.aperture_dict[aper][key]
-                        hfile["aperture_photometry"][aper].create_dataset(
-                            f"{key}", data=data
-                        )
+                if self.aperture_dict is not None:
+                    for aper in self.aperture_dict.keys():
+                        hfile["aperture_photometry"].create_group(aper)
+                        for key in self.aperture_dict[aper].keys():
+                            data = self.aperture_dict[aper][key]
+                            hfile["aperture_photometry"][aper].create_dataset(
+                                f"{key}", data=data
+                            )
 
                 # Save raw data
                 for band in self.bands:
@@ -2176,11 +2214,13 @@ class ResolvedGalaxy:
                         data=self.rms_err_imgs[band],
                         compression="gzip",
                     )
-                    hfile["raw_data"].create_dataset(
-                        f"seg_{band}",
-                        data=self.seg_imgs[band],
-                        compression="gzip",
-                    )
+
+                    if self.seg_imgs is not None:
+                        hfile["raw_data"].create_dataset(
+                            f"seg_{band}",
+                            data=self.seg_imgs[band],
+                            compression="gzip",
+                        )
 
                 if self.unmatched_data is not None:
                     hfile.create_group("unmatched_data")
@@ -2195,11 +2235,12 @@ class ResolvedGalaxy:
                             data=self.unmatched_rms_err[band],
                             compression="gzip",
                         )
-                        hfile["unmatched_data"].create_dataset(
-                            f"seg_{band}",
-                            data=self.unmatched_seg[band],
-                            compression="gzip",
-                        )
+                        if self.unmatched_seg is not None:
+                            hfile["unmatched_data"].create_dataset(
+                                f"seg_{band}",
+                                data=self.unmatched_seg[band],
+                                compression="gzip",
+                            )
 
                 if self.det_data is not None:
                     hfile.create_group("det_data")
@@ -2528,11 +2569,23 @@ class ResolvedGalaxy:
                     with h5.File(self.h5_path, "r") as old_hfile:
                         # print("Removing temp", self.h5_path)
                         for key in old_hfile.keys():
+                            # Check subgroups
                             if key not in hfile.keys():
                                 print("Copying", key)
                                 old_hfile.copy(key, hfile)
+
+                            elif type(key) is h5.Group:
+                                for subkey in key.keys():
+                                    if subkey not in hfile[key].keys():
+                                        print("Copying", key, subkey)
+                                        old_hfile.copy(
+                                            f"{key}/{subkey}", hfile[key]
+                                        )
+
         except ValueError as e:
             print(f"Blocking Error: {e}")
+            os.remove(new_h5_path)
+
             return False
 
         if exists:
@@ -2642,7 +2695,8 @@ class ResolvedGalaxy:
                                 psf_matched_rms_err
                             )
                         )
-                    except:
+                    except Exception as e:
+                        print(e)
                         print("Didnt work")
                         pass
 
@@ -2707,13 +2761,18 @@ class ResolvedGalaxy:
                         del h5file[
                             f"psf_matched_rms_err/{psf_type}/{self.bands[-1]}"
                         ]
+                    data = data = self.phot_imgs[self.bands[-1]]
+                    data = data.value if type(data) is u.Quantity else data
+
                     h5file.create_dataset(
                         f"psf_matched_data/{psf_type}/{self.bands[-1]}",
-                        data=self.phot_imgs[self.bands[-1]].value,
+                        data=data,
                     )
+                    data = self.rms_err_imgs[self.bands[-1]]
+                    data = data.value if type(data) is u.Quantity else data
                     h5file.create_dataset(
                         f"psf_matched_rms_err/{psf_type}/{self.bands[-1]}",
-                        data=self.rms_err_imgs[self.bands[-1]].value,
+                        data=data,
                     )
 
             else:
@@ -3217,7 +3276,7 @@ class ResolvedGalaxy:
             )
             ax.text(
                 0.03,
-                0.93,
+                0.9,
                 f'{"+".join(green)}',
                 color="green",
                 transform=ax.transAxes,
@@ -3232,7 +3291,7 @@ class ResolvedGalaxy:
             )
             ax.text(
                 0.03,
-                0.88,
+                0.82,
                 f'{"+".join(blue)}',
                 color="blue",
                 transform=ax.transAxes,
@@ -3347,6 +3406,14 @@ class ResolvedGalaxy:
             psf_type = override_psf_type
 
         from piXedfit.piXedfit_images import images_processing
+
+        if (
+            self.gal_region is not None
+            and gal_region_use in self.gal_region.keys()
+            and not overwrite
+        ):
+            print("Galaxy regions already calculated")
+            return
 
         if not os.path.exists(dir_images):
             os.makedirs(dir_images)
@@ -3512,11 +3579,18 @@ class ResolvedGalaxy:
             det_galaxy_region = copy.copy(self.det_data["seg"])
             # Value of segmap in center
             center = int(self.cutout_size // 2)
-            center_val = det_galaxy_region[center, center]
+            possible_vals = np.unique(det_galaxy_region)
+            if len(possible_vals) == 2:
+                det_gal_mask = det_galaxy_region == 1
+            elif len(possible_vals) > 2:
+                center_val = det_galaxy_region[center, center]
+                mask = det_galaxy_region == center_val
+                det_gal_mask = np.zeros_like(det_galaxy_region)
+                det_gal_mask[mask] = True
 
-            det_galaxy_region[det_galaxy_region == center_val] = 1
-            det_galaxy_region[det_galaxy_region != 1] = 0
-            self.gal_region["detection"] = det_galaxy_region
+            det_gal_mask = det_gal_mask.astype(int)
+
+            self.gal_region["detection"] = det_gal_mask
             if gal_region_use == "detection":
                 seg_type = "detection"
 
@@ -3694,6 +3768,7 @@ class ResolvedGalaxy:
         min_snr_wav=1216 * u.AA,
         only_snr_instrument="NIRCam",
         save_out=True,
+        remove_files=True,
         name_out="pixedfit",  # Allows you to override the name of the output maps
     ):
         """
@@ -3823,6 +3898,10 @@ class ResolvedGalaxy:
                 setattr_gal=f"{name_out}_binned_flux_err_map",
                 overwrite=overwrite,
             )
+
+        if remove_files:
+            os.remove(self.flux_map_path)
+            os.remove(name_out_fits)
 
         return name_out_fits
 
@@ -4376,10 +4455,12 @@ class ResolvedGalaxy:
         overwrite=False,
         meta=None,
         setattr_gal_meta=None,
-        force=True,
+        force=False,
     ):
         if not self.save_out and not force:
-            print("Skipping writing to .h5")
+            print(
+                "Skipping writing to .h5 as save_out is False. Set force=True to do this anyway."
+            )
             return
 
         if type(original_data) in [
@@ -4674,7 +4755,7 @@ class ResolvedGalaxy:
 
         if self.auto_photometry not in [None, {}]:
             # Add MAG_AUTO and MAGERR_AUTO
-            for i in ["MAG_AUTO", "MAG_ISO", "MAG_BEST"]:
+            for i in ["MAG_AUTO"]:
                 row = [i, i]
                 self.get_filter_wavs()
                 for pos, band in enumerate(self.bands):
@@ -4700,7 +4781,7 @@ class ResolvedGalaxy:
                     except (TypeError, KeyError) as e:
                         print(e)
                         print(
-                            f"WARNING! No {i} found for {band}, falling back to aperture photometry!! Should switch to SEP. "
+                            f"WARNING! No {i} found for {band}, falling back to aperture photometry! Probably no detection. "
                         )
                         flux = (
                             self.aperture_dict[str(0.32 * u.arcsec)]["flux"][
@@ -4895,12 +4976,17 @@ class ResolvedGalaxy:
         label_individual=False,
         save=False,
         save_path=None,
+        min_flux=None,
         show=True,
+        legend=True,
         facecolor="white",
         cmap_bins="nipy_spectral_r",
     ):
         self.get_filter_wavs()
         # from galfind import Filter
+
+        if min_flux is not None:
+            min_flux = min_flux.to(flux_unit).value
 
         # Get photometry table
         if not hasattr(self, "photometry_table"):
@@ -5002,18 +5088,39 @@ class ResolvedGalaxy:
 
                 # If error low or high is nan, plot point as upper limit
 
+                alpha = 1
+                ec = "black"
+
                 if np.isnan(yerr[0]) or np.isnan(yerr[1]):
+                    dy = 0.20
                     # calculate dy as 5% of the plot range
+                    flux = flux.item()
+                    if min_flux is not None:
+                        if flux_unit == u.ABmag:
+                            condition = flux + dy > min_flux
+                        else:
+                            condition = flux - dy < min_flux
+
+                        if condition or np.isnan(flux):
+                            flux = (
+                                min_flux - dy
+                                if flux_unit == u.ABmag
+                                else min_flux + dy
+                            )
+                            alpha = 0.5
+                            ec = "mediumslateblue"
 
                     patch = FancyArrow(
                         x=wav.to(wav_unit).value,
-                        y=flux.item(),
+                        y=flux,
                         dx=0,
-                        dy=0.15,
+                        dy=dy,
                         width=0.02,
                         fc=color,
-                        ec="black",
+                        ec=ec,
                         transform=ax.transData,
+                        alpha=alpha,
+                        length_includes_head=True,
                     )
                     ax.add_patch(patch)
                 else:
@@ -5026,7 +5133,7 @@ class ResolvedGalaxy:
                         label=label,
                         markeredgecolor="black",
                     )
-                colorss.append(color)
+                    colorss.append(color)
             # Plot the Bagpipes input
             # tab = self.provide_bagpipes_phot(rbin)
             # for row, band in zip(tab, self.bands):
@@ -5038,7 +5145,12 @@ class ResolvedGalaxy:
         ax.set_ylabel(f"Flux ({flux_unit})")
         if flux_unit == u.ABmag:
             ax.invert_yaxis()
-        ax.legend(loc="lower right", frameon=False)
+
+        if min_flux is not None:
+            ax.set_ylim(min_flux, ax.get_ylim()[1])
+
+        if legend:
+            ax.legend(loc="lower right", frameon=False)
 
     def run_dense_basis(
         self,
@@ -5182,7 +5294,13 @@ class ResolvedGalaxy:
                     fit_result.plot_posterior_spec(filter_wavs, priors)
 
     def plot_filter_transmission(
-        self, bands="all", fig=None, ax=None, label=True, wav_unit=u.um
+        self,
+        bands="all",
+        fig=None,
+        ax=None,
+        label=True,
+        wav_unit=u.um,
+        cmap="RdYlBu_r",
     ):
         self.get_filter_wavs()
 
@@ -5194,6 +5312,10 @@ class ResolvedGalaxy:
         if bands == "all":
             bands = self.bands
 
+        cmap = plt.get_cmap(cmap)
+        norm = Normalize(vmin=0, vmax=len(bands))
+        colors = {band: cmap(norm(i)) for i, band in enumerate(bands)}
+
         from astroquery.svo_fps import SvoFps
 
         for band in bands:
@@ -5202,7 +5324,12 @@ class ResolvedGalaxy:
                 filter_profile = SvoFps.get_transmission_data(filter_name)
                 wav = np.array(filter_profile["Wavelength"]) * u.Angstrom
                 trans = np.array(filter_profile["Transmission"])
-                ax.plot(wav.to(wav_unit), trans, label=band if label else "")
+                ax.plot(
+                    wav.to(wav_unit),
+                    trans,
+                    label=band if label else "",
+                    color=colors[band],
+                )
             except FileNotFoundError:
                 pass
 
@@ -5217,7 +5344,11 @@ class ResolvedGalaxy:
         show=True,
         flux_unit=u.ABmag,
         save=False,
+        rgb_stretch=0.001,
+        rgb_q=0.001,
         binmap_type="pixedfit",
+        legend=True,
+        min_sed_flux=31 * u.ABmag,
     ):
         # GridSpec
 
@@ -5247,8 +5378,10 @@ class ResolvedGalaxy:
             show=False,
             bins_to_show=bins_to_show,
             flux_unit=flux_unit,
+            legend=legend,
             label_individual=True,
             binmap_type=binmap_type,
+            min_flux=min_sed_flux,
         )
 
         ax_filt = fig_sed.add_subplot(gs[1])
@@ -5280,6 +5413,49 @@ class ResolvedGalaxy:
         self.plot_cutouts(
             fig=fig_cutouts, show=False, bands=bands_to_show + ["F444W"]
         )
+
+        second_last_ax = fig_cutouts.axes[-2]
+        # Plot a scalebar on the second last ax
+
+        scalebar = AnchoredSizeBar(
+            second_last_ax.transData,
+            0.5 / self.im_pixel_scales[bands_to_show[-1]].value,
+            '0.5"',
+            "lower right",
+            pad=0.3,
+            color="white",
+            frameon=False,
+            size_vertical=1,
+            fontproperties=FontProperties(size=18),
+            path_effects=[
+                PathEffects.withStroke(linewidth=2, foreground="black")
+            ],
+        )
+        second_last_ax.add_artist(scalebar)
+        # Plot scalebar with physical size
+
+        # Calculate size and resolution of the cutouts
+        d_A = cosmo.angular_diameter_distance(self.redshift).to(u.kpc)
+
+        scalebar_as = 0.5 * u.arcsec
+
+        re = scalebar_as.to(u.rad).value * d_A.value
+
+        scalebar = AnchoredSizeBar(
+            second_last_ax.transData,
+            scalebar_as.value / self.im_pixel_scales[bands_to_show[-1]].value,
+            f"{re:.1f} kpc",
+            "upper left",
+            pad=0.3,
+            color="white",
+            frameon=False,
+            size_vertical=1,
+            fontproperties=FontProperties(size=18),
+            path_effects=[
+                PathEffects.withStroke(linewidth=2, foreground="black")
+            ],
+        )
+        second_last_ax.add_artist(scalebar)
 
         last_cutout_ax = fig_cutouts.axes[-1]
         # Plot detection segmap
@@ -5326,11 +5502,6 @@ class ResolvedGalaxy:
         ax_rgb = fig_bins.add_subplot(211)
         ax_pixedfit = fig_bins.add_subplot(212)
 
-        fig.savefig(
-            f"{resolved_galaxy_dir}/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png",
-            dpi=200,
-        )
-
         self.plot_lupton_rgb(
             ax=ax_rgb,
             fig=fig_bins,
@@ -5339,8 +5510,8 @@ class ResolvedGalaxy:
             green=["F356W"],
             blue=["F200W"],
             return_array=False,
-            stretch=0.001,
-            q=0.001,
+            stretch=rgb_stretch,
+            q=rgb_q,
             label_bands=True,
         )
 
@@ -5354,11 +5525,11 @@ class ResolvedGalaxy:
         # steal space from ax_pixedfit for colorbar
         ax_divider = make_axes_locatable(ax_pixedfit)
 
-        cax = ax_divider.append_axes("top", size="5%", pad="2%")
-        fig.colorbar(norm, cax=cax, orientation="horizontal")
+        cax = ax_divider.append_axes("right", size="5%", pad="2%")
+        fig.colorbar(norm, cax=cax, orientation="vertical", label="Bin Number")
         # move colorbar ticks to top
-        cax.xaxis.set_ticks_position("top")
-        cax.xaxis.set_label_position("top")
+        cax.yaxis.set_ticks_position("right")
+        cax.yaxis.set_label_position("right")
 
         ax_pixedfit.axis("off")
 
@@ -5381,24 +5552,25 @@ class ResolvedGalaxy:
 
         textstr = f"Galaxy {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nBinmap Type: {binmap_type.replace('_', ' ')}\nNumber of bins: {len(np.unique(getattr(self, f'{binmap_type}_map')))-1}"
         fig.text(
-            0.05,
-            0.46,
+            0.01,
+            0.45,
             textstr,
             transform=fig.transFigure,
-            fontsize=14,
+            fontsize=13,
             verticalalignment="top",
             bbox=props,
         )
-        textstr = f"RA: {self.sky_coord.ra.degree:.4f}\nDec: {self.sky_coord.dec.degree:.4f}\nCutout size: {self.cutout_size} pix"
-        fig.text(
-            0.5,
-            0.46,
-            textstr,
-            transform=fig.transFigure,
-            fontsize=14,
-            verticalalignment="top",
-            bbox=props,
-        )
+        if self.sky_coord is not None:
+            textstr = f"RA: {self.sky_coord.ra.degree:.4f}\nDec: {self.sky_coord.dec.degree:.4f}\nCutout size: {self.cutout_size} pix"
+            fig.text(
+                0.5,
+                0.45,
+                textstr,
+                transform=fig.transFigure,
+                fontsize=13,
+                verticalalignment="top",
+                bbox=props,
+            )
 
         if save:
             if not os.path.exists(f"{resolved_galaxy_dir}/diagnostic_plots"):
@@ -6344,6 +6516,7 @@ class ResolvedGalaxy:
         cmap="viridis",
         plotpipes_dir="pipes_scripts/",
         run_dir="pipes/",
+        plottype="lookback",
         cache=None,
         fig=None,
         axes=None,
@@ -6380,6 +6553,11 @@ class ResolvedGalaxy:
             marker_colors = cmap(np.linspace(0, 1, len(bins_to_show)))
             # marker_colors = [marker_colors for i in range(len(bins_to_show))]
 
+        if plottype == "lookback":
+            save_name = run_name
+        elif plottype == "absolute":
+            save_name = f"{run_name}_absolute"
+
         if cache is None:
             cache = {}
         for (
@@ -6392,9 +6570,10 @@ class ResolvedGalaxy:
                 dummy_fig, dummy_ax = plt.subplots(1, 1)
 
                 if self.resolved_sfh is not None:
-                    if run_name in self.resolved_sfh.keys():
-                        resolved_sfh = self.resolved_sfh[run_name]
-                        x_all = resolved_sfh[:, 0]
+                    if save_name in self.resolved_sfh.keys():
+                        resolved_sfh = self.resolved_sfh[save_name]
+                        x_all = resolved_sfh[:, 0] * u.Gyr
+                        x_all = x_all.to(time_unit).value
                         axes.plot(
                             x_all,
                             resolved_sfh[:, 2],
@@ -6427,7 +6606,7 @@ class ResolvedGalaxy:
                                 dummy_ax,
                                 color,
                                 timescale=time_unit,
-                                plottype="lookback",
+                                plottype=plottype,
                                 logify=False,
                                 cosmo=None,
                                 label=rbin,
@@ -6468,19 +6647,28 @@ class ResolvedGalaxy:
                         )
 
                         # Save resolved SFH
+                        x_all *= u.Unit(time_unit)
+                        x_all = x_all.to(u.Gyr)
+                        if type(x_all) is u.Quantity:
+                            x_all = x_all.value
 
                         save_array = np.vstack(
                             (x_all, y_all[:, 0], y_all[:, 1], y_all[:, 2])
                         ).T
+
                         self.add_to_h5(
                             save_array,
                             "resolved_sfh",
-                            run_name,
+                            save_name,
                             overwrite=True,
+                            meta={
+                                "time_unit": time_unit,
+                                "plottype": plottype,
+                            },
                         )
                         if self.resolved_sfh is None:
                             self.resolved_sfh = {}
-                        self.resolved_sfh[run_name] = save_array
+                        self.resolved_sfh[save_name] = save_array
 
                 plt.close(dummy_fig)
             else:
@@ -6502,7 +6690,7 @@ class ResolvedGalaxy:
                     modify_ax=True,
                     add_zaxis=True,
                     timescale=time_unit,
-                    plottype="lookback",
+                    plottype=plottype,
                     logify=False,
                     cosmo=None,
                     label=rbin,
@@ -6791,7 +6979,6 @@ class ResolvedGalaxy:
             fluxes,
             flux_errs,
             n_proc=n_proc,
-            min_percentage_err=min_percentage_err,
             template_name=template_name,
             template_dir=template_dir,
             meta_details=meta_details,
@@ -6821,12 +7008,13 @@ class ResolvedGalaxy:
             )
             self.dump_to_h5()
 
+        return ez
+
     def fit_eazy_photometry(
         self,
         fluxes,
         flux_errs,
         n_proc=4,
-        min_percentage_err=0.05,
         template_name="fsps_larson",
         template_dir="/nvme/scratch/work/tharvey/EAZY/inputs/scripts/",
         meta_details=None,
@@ -6835,6 +7023,9 @@ class ResolvedGalaxy:
         save_tempfilt_path="internal",
         tempfilt=None,
         exclude_bands=[],
+        z_min=0.01,
+        z_max=20.0,
+        z_step=0.01,
     ):
         import eazy
         from .eazy.eazy_config import make_params, filter_codes
@@ -6905,21 +7096,21 @@ class ResolvedGalaxy:
                 tmpdir,
                 template_name="fsps_larson",
                 template_file=None,
-                z_step=0.01,
-                z_min=0.01,
-                z_max=20,
+                z_step=z_step,
+                z_min=z_min,
+                z_max=z_max,
                 fix_zspec=False,
                 cat_flux_unit=unit,
                 template_dir=template_dir,
             )
 
+            print(params)
+
             if load_tempfilt:
                 if tempfilt is None:
                     import pickle
 
-                    tempfilt_path = (
-                        f"{save_tempfilt_path}/{self.survey}_{template_name}"
-                    )
+                    tempfilt_path = f"{save_tempfilt_path}/{self.survey}_{template_name}_{z_min}_{z_max}_{z_step}"
 
                     if exclude_bands:
                         tempfilt_path += f"_exclude_{'_'.join(exclude_bands)}"
@@ -8320,6 +8511,7 @@ class ResolvedGalaxy:
         run_dir="pipes/",
         plotpipes_dir="pipes_scripts/",
         overwrite=False,
+        flux_units=u.uJy,
         load_h5=True,
     ):
         if (
@@ -8373,9 +8565,17 @@ class ResolvedGalaxy:
         else:
             fluxes = []
             wavs = []
+            # Make dummy pipes_obj list to iterate over
+            pipes_objs = [1] * len(count)
             # Manually open .h5 and read in samples. Should be faster.
             for rbin in count:
                 h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
+                if not os.path.exists(h5_path):
+                    print(
+                        f"File not found for {run_name} {self.galaxy_id} {rbin}"
+                    )
+                    return (False, False)
+
                 with h5.File(h5_path, "r") as f:
                     """ Fun bodging of SED into correct form"""
                     use_bpass = (
@@ -8389,9 +8589,13 @@ class ResolvedGalaxy:
                         wav = self._recalculate_bagpipes_wavelength_array(
                             bands=bands
                         )
-                        assert (
-                            len(wav) == len(data)
-                        ), f"Length of wavelength array {len(wav)} does not match data {len(data)}"
+                        # Data is 2D - check one of the dimensions is the same as the length of wav
+                        if data.shape[1] != len(wav) and data.shape[0] != len(
+                            wav
+                        ):
+                            raise Exception(
+                                f"Data shape {data.shape} does not match wavelength shape {len(wav)}"
+                            )
 
                         if "redshift" in f["basic_quantities"].keys():
                             redshift = np.median(
@@ -8401,7 +8605,7 @@ class ResolvedGalaxy:
                             redshift = ast.literal_eval(
                                 f.attrs["fit_instructions"]
                             )["redshift"]
-                        wavs_aa = (wav, *(1.0 + redshift) * u.AA)
+                        wavs_aa = wav * (1.0 + redshift) * u.AA
 
                         spec_post = np.percentile(data, (16, 50, 84), axis=0).T
 
@@ -8422,8 +8626,8 @@ class ResolvedGalaxy:
                             equivalencies=u.spectral_density(wavs_micron_3),
                         ).value
 
-                        fluxes.append(flux)
-                        wavs.append(wavs_aa)
+                        fluxes.append(flux[:, 1])
+                        wavs.append(wavs_aa.to(u.um).value)
 
                     else:
                         raise Exception(
@@ -8432,7 +8636,8 @@ class ResolvedGalaxy:
 
         # Get SED
         for pos, pipes_obj in enumerate(pipes_objs):
-            if type(pipes_obj) == PipesFit:
+            # Check if a callabale object
+            if pipes_obj != 1:
                 wav, flux = pipes_obj.plot_best_fit(
                     None, wav_units=u.um, flux_units=u.uJy, return_flux=True
                 )
@@ -8470,6 +8675,613 @@ class ResolvedGalaxy:
         self.resolved_sed[run_name] = out_array
 
         return (total_flux, total_wav)
+
+    def sep_process(
+        self,
+        forced_phot_band=["F277W", "F356W", "F444W"],
+        detection_image=None,
+        detection_rms_error=None,
+        debug=False,
+        phot_images="psf_matched",
+        rms_err_images="psf_matched",
+        conv=np.array(
+            [
+                [0.034673, 0.119131, 0.179633, 0.119131, 0.034673],
+                [0.119131, 0.409323, 0.617200, 0.409323, 0.119131],
+                [0.179633, 0.617200, 0.930649, 0.617200, 0.179633],
+                [0.119131, 0.409323, 0.617200, 0.409323, 0.119131],
+                [0.034673, 0.119131, 0.179633, 0.119131, 0.034673],
+            ]
+        ),
+        return_results=False,
+        update_h5=True,
+        bands=None,
+        override_psf_type=False,
+        depth_file={
+            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
+            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv",
+        },
+        det_thresh=1.8,
+        minarea=9,
+        deblend_nthresh=32,
+        deblend_cont=0.005,
+        aper_radius=0.16 * u.arcsec,
+        overwrite=False,
+    ):
+        to_add = []
+        if not overwrite:
+            if (self.aperture_dict is None) or (self.aperture_dict == {}):
+                to_add.append("aperture")
+            if (self.auto_photometry is None) or (self.auto_photometry == {}):
+                to_add.append("auto")
+            if (self.seg_imgs is None) or (self.seg_imgs == {}):
+                to_add.append("seg")
+            if self.det_data is None or self.det_data == {}:
+                to_add.append("det_data")
+            # total_photometry
+            if self.total_photometry is None or self.total_photometry == {}:
+                to_add.append("total_photometry")
+        else:
+            to_add = [
+                "aperture",
+                "auto",
+                "seg",
+                "det_data",
+                "total_photometry",
+            ]
+
+        if to_add == []:
+            print(
+                f"All photometry already set, and overwrite = False. Skipping."
+            )
+            return
+
+        print(f"Running for {to_add}")
+
+        import sep
+
+        if override_psf_type:
+            psf_type = override_psf_type
+        else:
+            psf_type = self.use_psf_type
+
+        if bands is None:
+            bands = copy.copy(self.bands)
+
+        if phot_images == "psf_matched":
+            phot_images = self.psf_matched_data[psf_type]
+        elif phot_images == "phot":
+            phot_images = self.phot_imgs
+            phot_psfmatched = False
+
+        if rms_err_images == "psf_matched":
+            rms_err_images = self.psf_matched_rms_err[psf_type]
+        elif rms_err_images == "phot":
+            rms_err_images = self.rms_err_imgs
+            phot_psfmatched = False
+
+        for pos, key in enumerate(depth_file.keys()):
+            table = Table.read(depth_file[key], format="ascii.ecsv")
+
+            if pos == 0:
+                main_table = table
+            else:
+                main_table = vstack([main_table, table])
+
+        table = main_table
+
+        # Select 'all' region column
+        table = table[table["region"] == "all"]
+        # band_depths:
+        depths = {}
+        for band in bands:
+            row = table[table["band"] == band]
+            assert len(row) == 1, f"Multiple rows found for {band}"
+            data = row["median_depth"][0]
+            depths[band] = data * u.ABmag
+            depths[band] = depths[band].to(u.uJy)
+
+        # Use sep.extract to get segmentation maps and measure equivalent fluxes.
+        seg_imgs = {}
+
+        # Detection band -
+
+        detection_band = "+".join(forced_phot_band)
+        # inverse variance weighted stack of mock_forced_phot_band
+
+        inv_var_weights = {
+            band: 1 / rms_err_images[band] ** 2 for band in forced_phot_band
+        }
+
+        # Calculate the weighted sum of images
+        weighted_sum = np.sum(
+            [
+                phot_images[band] * inv_var_weights[band]
+                for band in forced_phot_band
+            ],
+            axis=0,
+        )
+
+        # Calculate the sum of weights
+        sum_of_weights = np.sum(
+            [inv_var_weights[band] for band in forced_phot_band], axis=0
+        )
+
+        # Calculate the inverse variance weighted stack
+        detection_image = weighted_sum / sum_of_weights
+
+        # Calculate the error of the stack
+        detection_rms_error = np.sqrt(1 / sum_of_weights)
+        if debug:
+            plt.imshow(
+                detection_image / detection_rms_error,
+                origin="lower",
+                cmap="viridis",
+            )
+            plt.colorbar()
+            plt.show()
+
+            plt.imshow(
+                detection_image, origin="lower", cmap="viridis", norm=LogNorm()
+            )
+            plt.title("Detection image")
+            plt.show()
+
+            plt.imshow(
+                phot_images[forced_phot_band[0]],
+                origin="lower",
+                cmap="viridis",
+                norm=LogNorm(),
+            )
+            plt.title(f"{forced_phot_band[0]}")
+            plt.show()
+
+        detection_objects, detection_segmap = sep.extract(
+            detection_image,
+            thresh=det_thresh,
+            err=detection_rms_error,
+            minarea=minarea,
+            deblend_nthresh=deblend_nthresh,
+            filter_kernel=conv,
+            deblend_cont=deblend_cont,
+            clean=True,
+            clean_param=1.0,
+            segmentation_map=True,
+        )
+        # Make measurements in other bands
+
+        assert (
+            len(detection_objects) == len(np.unique(detection_segmap)) - 1
+        ), "Segmap should match detection object list."
+        # Can probably do det_data here as well
+
+        det_data = {}
+
+        det_data["phot"] = detection_image
+        det_data["rms_err"] = detection_rms_error
+        det_data["seg"] = detection_segmap
+        detect_seg_id = (
+            detection_segmap[
+                detection_segmap.shape[0] // 2,
+                detection_segmap.shape[1] // 2,
+            ]
+            if len(np.unique(detection_segmap)) > 2
+            else 1
+        )  # Use center pixel if multiple else use 1
+        if len(np.unique(detection_segmap)) == 1:
+            detect_seg_id = 0
+            raise Exception(
+                f"No objects found in detection segmap for {self.galaxy_id}"
+            )
+
+        # Add detection image to phot_images
+
+        bands.append(detection_band)
+
+        # Plot the detection image and objects
+        if debug:
+            fig, ax = plt.subplots(
+                nrows=1,
+                ncols=2,
+                figsize=(10, 5),
+                constrained_layout=True,
+                facecolor="white",
+            )
+            ax[0].imshow(
+                detection_image, origin="lower", cmap="viridis", norm=LogNorm()
+            )
+
+            for i in range(len(detection_objects)):
+                e = Ellipse(
+                    xy=(detection_objects["x"][i], detection_objects["y"][i]),
+                    width=6 * detection_objects["a"][i],
+                    height=6 * detection_objects["b"][i],
+                    angle=detection_objects["theta"][i] * 180.0 / np.pi,
+                )
+                e.set_facecolor("none")
+                e.set_edgecolor("red")
+                ax[0].add_artist(e)
+
+            ax[1].imshow(detection_segmap, origin="lower", cmap="viridis")
+            ax[0].set_title("Detection image")
+            ax[1].set_title("Detection segmentation map")
+            plt.savefig(f"{self.galaxy_id}_detection_seg.png")
+
+        print(
+            f"Found {len(detection_objects)} objects in detection band {detection_band}"
+        )
+
+        assert len(detection_objects) > 0, "No objects found in detection band"
+        # assert len(detection_objects) == 1, 'More than one object found in detection band'
+
+        self.get_filter_wavs()
+
+        # Get aperture photometry
+        auto_photometry = {}
+        flux_aper, flux_err_aper, aper_depths, wave = [], [], [], []
+        for band in bands:
+            if band == detection_band:
+                flux_im = detection_image
+                err_im = detection_rms_error
+                pixel_radius = (
+                    aper_radius / self.im_pixel_scales[self.bands[-1]]
+                )
+
+            else:
+                flux_im = phot_images[band]
+                err_im = rms_err_images[band]
+                wave.append(self.filter_wavs[band].to(u.AA).value)
+                pixel_radius = aper_radius / self.im_pixel_scales[band]
+
+            # Make C contigous arrays
+            flux_im = np.ascontiguousarray(flux_im)
+            err_im = np.ascontiguousarray(err_im)
+
+            band_objects, segmap = sep.extract(
+                flux_im,
+                thresh=det_thresh,
+                err=err_im,
+                minarea=minarea,
+                deblend_nthresh=deblend_nthresh,
+                filter_kernel=conv,
+                deblend_cont=deblend_cont,
+                clean=True,
+                clean_param=1.0,
+                segmentation_map=True,
+            )
+
+            # get seg ID in center
+            seg_id = (
+                segmap[segmap.shape[0] // 2, segmap.shape[1] // 2]
+                if len(np.unique(segmap)) > 2
+                else 1
+            )
+            if len(np.unique(segmap)) == 1:
+                seg_id = 0
+
+            if band != detection_band:
+                seg_imgs[band] = segmap
+
+            flux, fluxerr, flag = sep.sum_circle(
+                flux_im,
+                detection_objects["x"],
+                detection_objects["y"],
+                pixel_radius,
+                err=err_im,
+                gain=1.0,
+            )
+
+            flux = flux[detect_seg_id - 1] * u.uJy
+
+            if band != detection_band:
+                flux_aper.append(flux.to(u.Jy).value)
+                # Divide by 5 as 5 sigma depths.
+
+                flux_err_aper_i = depths[band].to(u.Jy) / 5
+                flux_err_aper.append(flux_err_aper_i.to(u.Jy).value)
+
+                aper_depths.append(
+                    -2.5 * np.log10(depths[band].to(u.uJy).value) + 23.9
+                )
+                auto_photometry[band] = {}
+
+            # FLUX_AUTO
+
+            kronrad, krflag = sep.kron_radius(
+                flux_im,
+                band_objects["x"],
+                band_objects["y"],
+                band_objects["a"],
+                band_objects["b"],
+                band_objects["theta"],
+                6.0,
+            )
+            kron_flux, kron_fluxerr, kron_flag = sep.sum_ellipse(
+                flux_im,
+                band_objects["x"],
+                band_objects["y"],
+                band_objects["a"],
+                band_objects["b"],
+                band_objects["theta"],
+                2.5 * kronrad,
+                subpix=1,
+            )
+            kron_flag |= krflag  # combine flags into 'flag'
+
+            # Replicate SExtractor's FLUX_AUTO with minimum radius (this current setup is equivalent to PHOT_AUTOPARAMS 2.5, 4.0)
+            r_min = 2  # minimum diameter = 4
+            use_circle = (
+                kronrad * np.sqrt(band_objects["a"] * band_objects["b"])
+                < r_min
+            )
+            cflux, cfluxerr, cflag = sep.sum_circle(
+                flux_im,
+                band_objects["x"][use_circle],
+                band_objects["y"][use_circle],
+                r_min,
+                subpix=1,
+            )
+            kron_flux[use_circle] = cflux
+            kron_fluxerr[use_circle] = cfluxerr
+            kron_flag[use_circle] = cflag
+
+            # Kron radius
+
+            r, flag = sep.flux_radius(
+                flux_im,
+                band_objects["x"],
+                band_objects["y"],
+                6.0 * band_objects["a"],
+                0.5,
+                normflux=kron_flux,
+                subpix=5,
+            )
+
+            obj_mask = seg_id - 1  #
+
+            if seg_id != 0:
+                # add dimension on last axis of band_objects
+
+                x = band_objects["x"]
+                # print('here')
+                # print(x, type(x))
+                x = x[obj_mask] if type(x) is np.ndarray else x
+                # print(x)
+                y = band_objects["y"]
+                y = y[obj_mask] if type(y) is np.ndarray else y
+                a = band_objects["a"]
+                a = a[obj_mask] if type(a) is np.ndarray else a
+                b = band_objects["b"]
+                b = b[obj_mask] if type(b) is np.ndarray else b
+                theta = band_objects["theta"]
+                theta = theta[obj_mask] if type(theta) is np.ndarray else theta
+
+                r = r[obj_mask] if type(r) is np.ndarray else r
+                kron_flux = (
+                    kron_flux[obj_mask]
+                    if type(kron_flux) is np.ndarray
+                    else kron_flux
+                )
+                kron_fluxerr = (
+                    kron_fluxerr[obj_mask]
+                    if type(kron_fluxerr) is np.ndarray
+                    else kron_fluxerr
+                )
+                if band != detection_band:
+                    auto_photometry[band]["X_IMAGE"] = np.atleast_1d(x)[0]
+                    auto_photometry[band]["Y_IMAGE"] = np.atleast_1d(y)[0]
+                    auto_photometry[band]["A_IMAGE"] = np.atleast_1d(a)[0]
+                    auto_photometry[band]["B_IMAGE"] = np.atleast_1d(b)[0]
+                    auto_photometry[band]["THETA_IMAGE"] = np.atleast_1d(
+                        theta
+                    )[0]
+                    auto_photometry[band]["FLUX_RADIUS"] = np.atleast_1d(r)[0]
+                    auto_photometry[band]["KRON_RADIUS"] = np.atleast_1d(
+                        kronrad
+                    )[0]
+                    auto_photometry[band]["MAG_AUTO"] = list(
+                        -2.5 * np.log10(np.atleast_1d(kron_flux)) + 23.9
+                    )[0]  # 23.9 is the zero point for a uJy image
+                    auto_photometry[band]["MAGERR_AUTO"] = list(
+                        np.atleast_1d(kron_fluxerr)
+                        / np.atleast_1d(kron_flux)
+                        * 2.5
+                        / np.log(10)
+                    )[0]
+
+                else:
+                    det_data[f"flux_{str(aper_radius)}"] = flux.to(u.uJy).value
+                    det_data[f"kron_radius"] = np.atleast_1d(kronrad)[0]
+                    det_data["a"] = np.atleast_1d(a)[0]
+                    det_data["b"] = np.atleast_1d(b)[0]
+                    det_data["theta"] = np.atleast_1d(theta)[0]
+                    det_data["flux_kron"] = np.atleast_1d(kron_flux)[0]
+
+            else:
+                # No object found
+                if band != detection_band:
+                    auto_photometry[band]["X_IMAGE"] = None
+                    auto_photometry[band]["Y_IMAGE"] = None
+                    auto_photometry[band]["A_IMAGE"] = None
+                    auto_photometry[band]["B_IMAGE"] = None
+                    auto_photometry[band]["THETA_IMAGE"] = None
+                    auto_photometry[band]["FLUX_RADIUS"] = None
+                    auto_photometry[band]["MAG_AUTO"] = None
+                    auto_photometry[band]["MAGERR_AUTO"] = None
+                    auto_photometry[band]["KRON_RADIUS"] = None
+                else:
+                    print("No object found in detection band.")
+                    # Show detection segmap.
+
+            if band != detection_band:
+                auto_photometry[band]["MAG_BEST"] = None
+                auto_photometry[band]["MAGERR_BEST"] = None
+                auto_photometry[band]["MAG_ISO"] = None
+                auto_photometry[band]["MAGERR_ISO"] = None
+
+        aperture_dict = {
+            str(0.32 * u.arcsec): {
+                "flux": flux_aper,
+                "flux_err": flux_err_aper,
+                "depths": aper_depths,
+                "wave": wave,
+            }
+        }
+        if "auto" in to_add:
+            self.auto_photometry = auto_photometry
+        if "aperture" in to_add:
+            self.aperture_dict = aperture_dict
+        if "seg" in to_add:
+            self.det_data = det_data
+        if "det_data" in to_add:
+            self.seg_imgs = seg_imgs
+
+        if "total_photometry" in to_add:
+            self._calc_flux_aper_total()
+
+        if return_results:
+            return auto_photometry, aperture_dict, det_data
+
+        if update_h5:
+            self.dump_to_h5(force=True)
+
+    def aperture_correction_from_psf(
+        self, band, aperture, psf_type="star_stack"
+    ):
+        psf = self.psfs[psf_type][band]
+
+    def _calc_flux_aper_total(
+        self,
+        aper_diam=0.32 * u.arcsec,
+        override_psf_type=False,
+        ratio_band="F277W+F356W+F444W",
+        fluxes_psfmatched=True,
+        fetch_renormed_psfs=True,
+        psf_band="F444W",
+    ):
+        """Wrapper for scale_fluxes. Scales all fluxes by the same factor to get a  total flux.
+        Minimum size of 0.32 arcsec. Requires auto_photometry and aperture_dict to be set.
+        """
+
+        psf_type = self.use_psf_type
+        if override_psf_type:
+            psf_type = override_psf_type
+
+        from .utils import scale_fluxes
+
+        aperture_dict = self.aperture_dict[str(aper_diam)]
+        assert len(aperture_dict["flux"]) == len(
+            self.bands
+        ), "Aperture dict does not match bands"
+
+        flux_totals = []
+        ratios = []
+
+        if (
+            ratio_band in self.auto_photometry.keys()
+            and self.auto_photometry[ratio_band]["MAG_AUTO"] is not None
+        ):
+            mag_auto = self.auto_photometry[ratio_band]["MAG_AUTO"]
+            flux_auto = -2.5 * np.log10(10 ** ((zp - mag_auto) / 2.5)) * u.uJy
+            pos = self.bands.index(ratio_band)
+            flux_aper = aperture_dict["flux"][pos] * u.Jy
+
+            #       # Get a, b thera
+            a = self.auto_photometry[ratio_band]["A_IMAGE"]
+            b = self.auto_photometry[ratio_band]["B_IMAGE"]
+            theta = self.auto_photometry[ratio_band]["THETA_IMAGE"]
+            kron_radius = self.auto_photometry[ratio_band]["KRON_RADIUS"]
+        elif "+" in ratio_band:
+            print(f"Assuming {ratio_band} is detection band.")
+            a = self.det_data["a"]
+            b = self.det_data["b"]
+
+            theta = self.det_data["theta"]
+            kron_radius = self.det_data["kron_radius"]
+            flux_auto = self.det_data["flux_kron"] * u.uJy
+            flux_aper = self.det_data[f"flux_{str(aper_diam/2)}"] * u.uJy
+            mag_auto = -2.5 * np.log10(flux_auto.to(u.uJy).value) + 23.9
+
+        else:
+            raise Exception(f"No auto photometry found for {band}.")
+
+        if "+" in ratio_band:
+            bands = ratio_band.split("+")
+            zp = self.im_zps[bands[-1]]
+            pix_scale = self.im_pixel_scales[bands[-1]]
+        else:
+            zp = self.im_zps[ratio_band]
+            pix_scale = self.im_pixel_scales[ratio_band]
+
+        if fetch_renormed_psfs:
+            # This gets the _renorm psfs we need.
+            psfs = self.get_star_stack_psf(
+                match_band=None, scaled_psf=True, just_return_psfs=True
+            )
+        else:
+            psfs = self.psfs[psf_type]
+
+        bands = self.bands
+        if fluxes_psfmatched:
+            psfs = [psfs[psf_band]]
+            bands = [psf_band]
+
+        ratios = []
+        kron_ratios = []
+        for band, psf in zip(bands, psfs):
+            total_ratio, kron_ratio = scale_fluxes(
+                mag_aper=flux_aper,
+                mag_auto=flux_auto,
+                a=a,
+                b=b,
+                theta=theta,
+                band=band,
+                kron_radius=kron_radius,
+                psf=psf,
+                zero_point=zp,
+                aper_diam=aper_diam,
+                pix_scale=pix_scale,
+                flux_type="flux",
+            )
+            ratios.append(total_ratio)
+            kron_ratios.append(kron_ratio)
+
+        assert (
+            len(ratios) == len(self.bands) or len(ratios) == 1
+        ), "Ratios do not match bands"
+
+        ratios = np.array(ratios)
+        kron_ratios = np.array(kron_ratios)
+
+        if len(ratios) == 1:
+            ratios = np.repeat(ratios, len(self.bands))
+            kron_ratios = np.repeat(kron_ratios, len(self.bands))
+
+        print(f"Ratio is {ratios[0]:.3f}")
+        flux = aperture_dict["flux"] * u.Jy
+        flux_err = aperture_dict["flux_err"] * u.Jy
+        flux = flux.to(u.uJy).value
+        flux_err = flux_err.to(u.uJy).value
+
+        total_photometry = {}
+
+        for pos, band in enumerate(self.bands):
+            total_photometry[band] = {
+                "flux": flux[pos] * ratios[pos],
+                "flux_err": flux_err[pos] * kron_ratios[pos],
+                "flux_unit": "uJy",
+            }
+
+        total_photometry[ratio_band] = {
+            f"a_{ratio_band}": a * kron_radius,
+            f"b_{ratio_band}": b * kron_radius,
+            f"theta_{ratio_band}": theta,
+            f"kron_radius_{ratio_band}": kron_radius,
+            f"total_correction_{ratio_band}": ratios[0],
+            f"flux_ratio_{ratio_band}": kron_ratios[0],
+        }
+
+        self.total_photometry = total_photometry
 
     def plot_bagpipes_sed(
         self,
@@ -8664,14 +9476,14 @@ class ResolvedGalaxy:
         for row in tqdm(table):
             flux_Jy, flux_Jy_errs = [], []
             instrument = copy.deepcopy(start_instrument)
-            for band in instrument.band_names:
-                if band in self.bands:
-                    flux = row[band].to(u.Jy).value
-                    flux_err = row[f"{band}_err"].to(u.Jy).value
+            for ratio_band in instrument.band_names:
+                if ratio_band in self.bands:
+                    flux = row[ratio_band].to(u.Jy).value
+                    flux_err = row[f"{ratio_band}_err"].to(u.Jy).value
                     flux_Jy.append(flux)
                     flux_Jy_errs.append(flux_err)
                 else:
-                    instrument.remove_band(band)
+                    instrument.remove_band(ratio_band)
 
             flux_Jy = np.array(flux_Jy) * u.Jy
             flux_Jy_errs = np.array(flux_Jy_errs) * u.Jy
@@ -9252,6 +10064,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
             "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv",
         },
+        override_model_assumptions={},
     ):
         update_cli_interface = False  # is_cli()
         if update_cli_interface:
@@ -9358,7 +10171,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 IncidentEmission,
                 PacmanEmission,
             )
-            from synthesizer.emission_models.attenuation import PowerLaw
+            from synthesizer.emission_models.attenuation import (
+                PowerLaw,
+                Calzetti2000,
+            )
             from synthesizer.emission_models.attenuation.igm import (
                 Inoue14,
                 Madau96,
@@ -9534,28 +10350,71 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             "grid_dir": grid_dir,
             "file_path": file_path,
             "dust_type": "pacman",
-            "dust_curve": "power_law",
-            "dust_slope": -0.7,
+            # "dust_curve": "power_law",
+            # "dust_slope": -0.7,
+            "dust_curve": "calzetti2000",
+            "dust_slope": 0.0,
+            "dust_bump_amplitude": 0.0,
+            "dust_bump_wavelength": 0.2175,
+            "dust_fwhm_bump": 0.035,
             "dust_emission": "greybody",
             "dust_temp": 30,
             "dust_beta": 1.2,
             "igm": "inoue14",
+            "fesc_ly_alpha": 0.0,
+            "fesc": 0.0,
             "cosmo": str(cosmo),
         }
+
+        model_assumptions.update(
+            override_model_assumptions
+        )  # override with any user input
+
+        if model_assumptions["dust_curve"] == "power_law":
+            dust_curve = PowerLaw(model_assumptions["dust_slope"])
+        elif model_assumptions["dust_curve"] == "calzetti2000":
+            dust_curve = Calzetti2000(
+                slope=model_assumptions["dust_slope"],
+                ampl=model_assumptions["dust_bump_amplitude"],
+                cent_lam=model_assumptions["dust_bump_wavelength"] * um,
+                gamma=model_assumptions["dust_fwhm_bump"] * um,
+            )
+
+        if model_assumptions["dust_emission"] == "greybody":
+            dust_emission = Greybody(
+                temperature=model_assumptions["dust_temp"] * K,
+                emissivity=model_assumptions["dust_beta"],
+            )
+        elif model_assumptions["dust_emission"] == "blackbody":
+            dust_emission = Blackbody(
+                temperature=model_assumptions["dust_temp"] * K,
+            )
 
         emission_model = PacmanEmission(
             grid=grid,
             tau_v=tau_v,
-            dust_curve=PowerLaw(slope=-0.7),
-            dust_emission=Greybody(30 * K, 1.2),
+            dust_curve=dust_curve,
+            dust_emission=dust_emission,
+            fesc_ly_alpha=model_assumptions["fesc_ly_alpha"],
+            fesc=model_assumptions["fesc"],
+            per_particle=True,
         )
+
+        if model_assumptions["igm"] == "inoue14":
+            igm = Inoue14
+        elif model_assumptions["igm"] == "madau96":
+            igm = Madau96
+        else:
+            raise ValueError(
+                f"IGM model {model_assumptions['igm']} not recognised."
+            )
 
         gal.stars.get_particle_spectra(emission_model)
         models = gal.stars.particle_spectra.keys()
         for model in models:
             # Generate spectra for each particle for each model component
             gal.stars.particle_spectra[model].get_fnu(
-                cosmo, gal.redshift, igm=Inoue14
+                cosmo, gal.redshift, igm=igm
             )
             # Need this for making luminosity images only
             gal.stars.particle_spectra[model].get_photo_lnu(filters)
@@ -9582,7 +10441,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 "JWST/NIRCam.F444W",
             ]
             half_light_radius = (
-                np.max(
+                np.nanmax(
                     [
                         gal.stars.get_flux_radius(
                             "total", band, flux_enclosed
@@ -9592,13 +10451,27 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 )
                 * kpc
             )
+            print(
+                [
+                    gal.stars.get_flux_radius("total", band, flux_enclosed).to(
+                        kpc
+                    )
+                    for band in size_bands
+                ]
+            )
+
+            if np.isnan(half_light_radius):
+                print("95% flux radius is NaN, using 5 kpc")
+                half_light_radius = 5 * kpc
 
             # convert to arcseconds
+            print(f"95% flux radius: {half_light_radius}")
             half_light_radius = half_light_radius.to_astropy()
             d_A = cosmo.angular_diameter_distance(gal.redshift)
             half_light_radius_arcsec = (half_light_radius / d_A).to(
                 u.arcsec, u.dimensionless_angles()
             )
+            print(f"Half light radius arcsec: {half_light_radius_arcsec}")
 
             # convert to pixels
             pixel_scale = 0.03 * u.arcsecond
@@ -9631,18 +10504,18 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         spectra_type = "total"
 
         # Calculate size and resolution of the cutouts
-        re = 1
-        d_A = cosmo.angular_diameter_distance(gal.redshift)
-        pix_scal = u.pixel_scale(
-            resolution.to(arcsecond).value * u.arcsec / u.pixel
+        d_A = (
+            float(
+                cosmo.angular_diameter_distance(gal.redshift).to(u.kpc).value
+            )
+            * kpc
         )
-        re_as = (re * u.pixel).to(u.arcsec, pix_scal)
-        re_kpc = (re_as * d_A).to(u.kpc, u.dimensionless_angles())
 
-        resolution_kpc = re_kpc.value * kpc
-        width = cutout_size * resolution_kpc
+        resolution_physical = resolution.to("rad").value * d_A
 
-        message = f"Creating smoothed image cutouts with resolution {resolution_kpc:.2f} and width {width:.2f} ({cutout_size} pixels)"
+        fov = (cutout_size - 0.000001) * resolution_physical
+
+        message = f"Creating smoothed image cutouts with resolution {resolution_physical:.3f} and FOV {fov:.3f} ({cutout_size} pixels)"
         if update_cli_interface:
             cli.update(current_task=message)
         else:
@@ -9650,67 +10523,25 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         # Get the image
         imgs = gal.get_images_flux(
-            resolution_kpc,
-            fov=width,
+            resolution_physical,
+            fov=fov,
             img_type=img_type,
-            stellar_photometry=spectra_type,
-            blackhole_photometry=None,
+            limit_to=spectra_type,
             kernel=kernel_data,
             kernel_threshold=1,
+            emission_model=emission_model,
         )
 
-        # Get other property maps
-        property_images = {}
-        for prop in [
-            "stellar_mass",
-            "sfr",
-            "ssfr",
-            "stellar_age",
-            "stellar_metallicity",
-        ]:
-            func = getattr(gal, f"get_map_{prop}")
-            arguments = {
-                "resolution": resolution_kpc,
-                "fov": width,
-                "img_type": img_type,
-                "kernel": kernel_data,
-                "kernel_threshold": 1,
-            }
+        # update resolution_physical from the image
 
-            if update_cli_interface:
-                cli.update(current_task=f"Generating {prop} map")
-
-            if prop in ["ssfr", "sfr"]:
-                if prop == "ssfr":
-                    unit = yr**-1
-                if prop == "sfr":
-                    unit = Msun / yr
-
-                for age_bin in [10, 100] * Myr:
-                    arguments["age_bin"] = age_bin
-
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("error")
-
-                        try:
-                            prop_im = func(**arguments)
-                        except Warning:
-                            # Catch case where no star formation is happening
-                            prop_im = Image(
-                                resolution=resolution_kpc,
-                                fov=width,
-                                img=unyt_array(
-                                    np.zeros((cutout_size, cutout_size)),
-                                    units=unit,
-                                ),
-                            )
-
-                    data_im = prop_im.arr * prop_im.units
-                    property_images[f"{prop}_{age_bin}"] = data_im.to_astropy()
-            else:
-                prop_im = func(**arguments)
-                data_im = prop_im.arr * prop_im.units
-                property_images[prop] = data_im.to_astropy()
+        fov = imgs[list(imgs.keys())[0]].fov
+        resolution_physical = imgs[list(imgs.keys())[0]].resolution
+        npix = imgs[list(imgs.keys())[0]].npix
+        print(
+            f"Synthesizer Images generated with resolution {resolution_physical} and fov {fov} and npix {npix}"
+        )
+        cutout_size = npix
+        fov = npix * resolution_physical
 
         psfs = {}
         files = glob.glob(f"{psfs_dir}/*_psf.fits")
@@ -9771,9 +10602,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         depths = {k: v[0] for k, v in depths.items()}
 
-        radius_kpc = (mock_aper_diams[0] * d_A).to(
-            u.kpc, u.dimensionless_angles()
-        )
+        radius_kpc = mock_aper_diams[0] * d_A
+
         radius_kpc = radius_kpc.value / 2 * kpc
 
         noise_app_imgs = psf_imgs.apply_noise_from_snrs(
@@ -9826,8 +10656,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                         bounds_error=False,
                         fill_value="extrapolate",
                     )
+                    # Generate RMS err images from unnoised psf images
                     rms_err_images[band] = f(
-                        imgs[filter_code_from_band[band]].arr
+                        psf_imgs[filter_code_from_band[band]].arr
                     )
 
                     # Use the images with PSF and noise applied as the final images
@@ -9974,6 +10805,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
             # Compare to the Synthesizer generated noise maps
             syn_noise = noise_app_imgs[filter_code_from_band[band]].noise_arr
+            # Check it is 2D
+            assert (
+                np.ndim(syn_noise) == 2
+            ), f"Noise map is not 2D {np.shape(syn_noise)}"
             syn_noise_data = (
                 syn_noise * noise_app_imgs[filter_code_from_band[band]].units
             )
@@ -10012,336 +10847,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 fig.suptitle(f"{band} noise comparison")
                 plt.show()
 
-        # Then we need to get segmentation maps
-
-        import sep
-
-        if update_cli_interface:
-            cli.update(
-                current_task="Running SEP to get segmentation maps and measured fluxes."
-            )
-
-        # Our convolution kernel (gauss_2.5_5x5.conv) is:
-
-        conv = np.array(
-            [
-                [0.034673, 0.119131, 0.179633, 0.119131, 0.034673],
-                [0.119131, 0.409323, 0.617200, 0.409323, 0.119131],
-                [0.179633, 0.617200, 0.930649, 0.617200, 0.179633],
-                [0.119131, 0.409323, 0.617200, 0.409323, 0.119131],
-                [0.034673, 0.119131, 0.179633, 0.119131, 0.034673],
-            ]
-        )
-
-        # Use sep.extract to get segmentation maps and measure equivalent fluxes.
-        seg_imgs = {}
-
-        # Detection band -
-
-        detection_band = "+".join(mock_forced_phot_band)
-        # inverse variance weighted stack of mock_forced_phot_band
-
-        if update_cli_interface:
-            cli.update(
-                current_task=f"Stacking {detection_band} images to get detection image."
-            )
-
-        inv_var_weights = {
-            band: 1 / rms_err_images[band] ** 2
-            for band in mock_forced_phot_band
-        }
-
-        # Calculate the weighted sum of images
-        weighted_sum = np.sum(
-            [
-                final_images[band] * inv_var_weights[band]
-                for band in mock_forced_phot_band
-            ],
-            axis=0,
-        )
-
-        # Calculate the sum of weights
-        sum_of_weights = np.sum(
-            [inv_var_weights[band] for band in mock_forced_phot_band], axis=0
-        )
-
-        # Calculate the inverse variance weighted stack
-        detection_image = weighted_sum / sum_of_weights
-
-        # Calculate the error of the stack
-        detection_rms_error = np.sqrt(1 / sum_of_weights)
-        if debug:
-            plt.imshow(
-                detection_image / detection_rms_error,
-                origin="lower",
-                cmap="viridis",
-            )
-            plt.colorbar()
-            plt.show()
-
-            plt.imshow(
-                detection_image, origin="lower", cmap="viridis", norm=LogNorm()
-            )
-            plt.title("Detection image")
-            plt.show()
-
-            plt.imshow(
-                final_images[mock_forced_phot_band[0]],
-                origin="lower",
-                cmap="viridis",
-                norm=LogNorm(),
-            )
-            plt.title(f"{mock_forced_phot_band[0]}")
-            plt.show()
-
-        if update_cli_interface:
-            cli.update(current_task="Running sep.extract()")
-
-        detection_objects, detection_segmap = sep.extract(
-            detection_image,
-            thresh=1.8,
-            err=detection_rms_error,
-            minarea=9,
-            deblend_nthresh=32,
-            filter_kernel=conv,
-            deblend_cont=0.005,
-            clean=True,
-            clean_param=1.0,
-            segmentation_map=True,
-        )
-        # Make measurements in other bands
-
-        # Can probably do det_data here as well
-
-        det_data = {}
-
-        det_data["phot"] = detection_image
-        det_data["rms_err"] = detection_rms_error
-        det_data["seg"] = detection_segmap
-        detect_seg_id = detection_segmap[
-            int(detection_segmap.shape[0] / 2),
-            int(detection_segmap.shape[1] / 2),
-        ]
-
-        # Plot the detection image and objects
-        if debug:
-            fig, ax = plt.subplots(
-                nrows=1,
-                ncols=2,
-                figsize=(10, 5),
-                constrained_layout=True,
-                facecolor="white",
-            )
-            ax[0].imshow(
-                detection_image, origin="lower", cmap="viridis", norm=LogNorm()
-            )
-
-            for i in range(len(detection_objects)):
-                e = Ellipse(
-                    xy=(detection_objects["x"][i], detection_objects["y"][i]),
-                    width=6 * detection_objects["a"][i],
-                    height=6 * detection_objects["b"][i],
-                    angle=detection_objects["theta"][i] * 180.0 / np.pi,
-                )
-                e.set_facecolor("none")
-                e.set_edgecolor("red")
-                ax[0].add_artist(e)
-
-            ax[1].imshow(detection_segmap, origin="lower", cmap="viridis")
-            ax[0].set_title("Detection image")
-            ax[1].set_title("Detection segmentation map")
-            plt.show()
-
-        print(
-            f"Found {len(detection_objects)} objects in detection band {detection_band}"
-        )
-
-        assert len(detection_objects) > 0, "No objects found in detection band"
-        # assert len(detection_objects) == 1, 'More than one object found in detection band'
-
-        # Get aperture photometry
-        auto_photometry = {}
-        flux_aper, flux_err_aper, aper_depths, wave = [], [], [], []
-        for band in bands:
-            if update_cli_interface:
-                cli.update(
-                    current_task=f"Running detection and segmentation for {band}"
-                )
-
-            band_objects, segmap = sep.extract(
-                final_images[band],
-                thresh=1.8,
-                err=rms_err_images[band],
-                minarea=9,
-                deblend_nthresh=32,
-                filter_kernel=conv,
-                deblend_cont=0.005,
-                clean=True,
-                clean_param=1.0,
-                segmentation_map=True,
-            )
-
-            seg_imgs[band] = segmap
-
-            # get seg ID in center
-            seg_id = segmap[int(segmap.shape[0] / 2), int(segmap.shape[1] / 2)]
-
-            pixel_radius = (0.16 * u.arcsec) / resolution
-
-            flux, fluxerr, flag = sep.sum_circle(
-                final_images[band],
-                detection_objects["x"],
-                detection_objects["y"],
-                pixel_radius,
-                err=rms_err_images[band],
-                gain=1.0,
-            )
-
-            flux = flux[detect_seg_id - 1] * u.uJy
-            flux_aper.append(flux.to(u.Jy).value)
-
-            # SHOULD SET THIS BASED ON DEPTH!
-            flux_err_aper_i = depths[filter_code_from_band[band]] * u.uJy
-            flux_err_aper.append(flux_err_aper_i.to(u.Jy).value)
-
-            aper_depths.append(
-                -2.5 * np.log10(5 * depths[filter_code_from_band[band]]) + 23.9
-            )
-            wave.append(wavs[band])
-
-            # Get aperture photometry
-
-            auto_photometry[band] = {}
-
-            # FLUX_AUTO
-
-            if update_cli_interface:
-                cli.update(
-                    current_task=f"Doing aperture photometry and kron fluxes for {band}"
-                )
-
-            kronrad, krflag = sep.kron_radius(
-                final_images[band],
-                band_objects["x"],
-                band_objects["y"],
-                band_objects["a"],
-                band_objects["b"],
-                band_objects["theta"],
-                6.0,
-            )
-            kron_flux, kron_fluxerr, kron_flag = sep.sum_ellipse(
-                final_images[band],
-                band_objects["x"],
-                band_objects["y"],
-                band_objects["a"],
-                band_objects["b"],
-                band_objects["theta"],
-                2.5 * kronrad,
-                subpix=1,
-            )
-            kron_flag |= krflag  # combine flags into 'flag'
-
-            # Replicate SExtractor's FLUX_AUTO with minimum radius (this current setup is equivalent to PHOT_AUTOPARAMS 2.5, 4.0)
-            r_min = 2  # minimum diameter = 4
-            use_circle = (
-                kronrad * np.sqrt(band_objects["a"] * band_objects["b"])
-                < r_min
-            )
-            cflux, cfluxerr, cflag = sep.sum_circle(
-                final_images[band],
-                band_objects["x"][use_circle],
-                band_objects["y"][use_circle],
-                r_min,
-                subpix=1,
-            )
-            kron_flux[use_circle] = cflux
-            kron_fluxerr[use_circle] = cfluxerr
-            kron_flag[use_circle] = cflag
-
-            # Kron radius
-
-            r, flag = sep.flux_radius(
-                final_images[band],
-                band_objects["x"],
-                band_objects["y"],
-                6.0 * band_objects["a"],
-                0.5,
-                normflux=kron_flux,
-                subpix=5,
-            )
-
-            obj_mask = seg_id - 1  #
-
-            if seg_id != 0:
-                # add dimension on last axis of band_objects
-
-                x = band_objects["x"]
-                # print('here')
-                # print(x, type(x))
-                x = x[obj_mask] if type(x) is np.ndarray else x
-                # print(x)
-                y = band_objects["y"]
-                y = y[obj_mask] if type(y) is np.ndarray else y
-                a = band_objects["a"]
-                a = a[obj_mask] if type(a) is np.ndarray else a
-                b = band_objects["b"]
-                b = b[obj_mask] if type(b) is np.ndarray else b
-                theta = band_objects["theta"]
-                theta = theta[obj_mask] if type(theta) is np.ndarray else theta
-
-                r = r[obj_mask] if type(r) is np.ndarray else r
-                kron_flux = (
-                    kron_flux[obj_mask]
-                    if type(kron_flux) is np.ndarray
-                    else kron_flux
-                )
-                kron_fluxerr = (
-                    kron_fluxerr[obj_mask]
-                    if type(kron_fluxerr) is np.ndarray
-                    else kron_fluxerr
-                )
-
-                auto_photometry[band]["X_IMAGE"] = np.atleast_1d(x)[0]
-                auto_photometry[band]["Y_IMAGE"] = np.atleast_1d(y)[0]
-                auto_photometry[band]["A_IMAGE"] = np.atleast_1d(a)[0]
-                auto_photometry[band]["B_IMAGE"] = np.atleast_1d(b)[0]
-                auto_photometry[band]["THETA_IMAGE"] = np.atleast_1d(theta)[0]
-                auto_photometry[band]["FLUX_RADIUS"] = np.atleast_1d(r)[0]
-                auto_photometry[band]["MAG_AUTO"] = (
-                    -2.5 * np.log10(np.atleast_1d(kron_flux)) + 23.9
-                )  # 23.9 is the zero point for a uJy image
-                auto_photometry[band]["MAGERR_AUTO"] = (
-                    np.atleast_1d(kron_fluxerr)
-                    / np.atleast_1d(kron_flux)
-                    * 2.5
-                    / np.log(10)
-                )
-
-            else:
-                # No object found
-                auto_photometry[band]["X_IMAGE"] = None
-                auto_photometry[band]["Y_IMAGE"] = None
-                auto_photometry[band]["A_IMAGE"] = None
-                auto_photometry[band]["B_IMAGE"] = None
-                auto_photometry[band]["THETA_IMAGE"] = None
-                auto_photometry[band]["FLUX_RADIUS"] = None
-                auto_photometry[band]["MAG_AUTO"] = None
-                auto_photometry[band]["MAGERR_AUTO"] = None
-
-            auto_photometry[band]["MAG_BEST"] = None
-            auto_photometry[band]["MAGERR_BEST"] = None
-            auto_photometry[band]["MAG_ISO"] = None
-            auto_photometry[band]["MAGERR_ISO"] = None
-
-        aperture_dict = {
-            str(0.32 * u.arcsec): {
-                "flux": flux_aper,
-                "flux_err": flux_err_aper,
-                "depths": aper_depths,
-                "wave": wave,
-            }
-        }
-
         # Would also be good to get the property maps
 
         # Things to save - background cutouts, background error maps, background position, noise_data
@@ -10353,6 +10858,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             "region": region,
             "grid": grid_name,
             "filters": filter_codes,
+            "forced_phot_band": mock_forced_phot_band,
             "stellar_mass": gal.stellar_mass.value,
             "tau_v": np.median(gal.tau_v),
             "age": gal.stellar_mass_weighted_age.value,
@@ -10411,16 +10917,90 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             .to(uJy)
             .value
         )
+
+        """
         seds["det_segmap_fnu"] = {}
         seds["det_segmap_fnu"]["total"] = (
             get_spectra_in_mask(
-                gal, pixel_mask=det_data["seg"], spectra_type="total"
+                gal, pixel_mask=det_data["seg"], spectra_type="total", pixel_mask_value='center',
             )
             .to(uJy)
             .value
         )
+        """
 
         # other maps - tau_v
+
+        # Get other property maps
+        property_images = {}
+        for prop in [
+            "stellar_mass",
+            "sfr",
+            "ssfr",
+            "stellar_age",
+            "stellar_metallicity",
+        ]:
+            func = getattr(gal, f"get_map_{prop}")
+            arguments = {
+                "resolution": resolution_physical,
+                "fov": fov,
+                "img_type": img_type,
+                "kernel": kernel_data,
+                "kernel_threshold": 1,
+            }
+
+            if update_cli_interface:
+                cli.update(current_task=f"Generating {prop} map")
+
+            if prop in ["ssfr", "sfr"]:
+                if prop == "ssfr":
+                    unit = yr**-1
+                if prop == "sfr":
+                    unit = Msun / yr
+
+                for age_bin in [10, 100] * Myr:
+                    arguments["age_bin"] = age_bin
+
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("error")
+
+                        data = np.zeros((1, 1))
+                        size_diff = 0
+                        # Hard to predict image size. This is an iterative approach.
+                        while np.shape(data) != (cutout_size, cutout_size):
+                            npix = arguments["fov"] / arguments["resolution"]
+                            # Change FOV by size_diff pixels
+                            arguments["fov"] = (npix + size_diff) * arguments[
+                                "resolution"
+                            ]
+
+                            try:
+                                prop_im = func(**arguments)
+                            except Warning:
+                                # Catch case where no star formation is happening
+                                prop_im = Image(
+                                    resolution=resolution_physical,
+                                    fov=fov,
+                                    img=unyt_array(
+                                        np.zeros((cutout_size, cutout_size)),
+                                        units=unit,
+                                    ),
+                                )
+
+                            data_im = prop_im.arr * prop_im.units
+                            data = data_im.to_astropy()
+                            size_diff = cutout_size - np.shape(data)[0]
+
+                    # Check the size matches the other cutouts
+                    assert np.shape(data) == (
+                        cutout_size,
+                        cutout_size,
+                    ), f"Shape of {prop} map is {np.shape(data)}"
+                    property_images[f"{prop}_{age_bin}"] = data
+            else:
+                prop_im = func(**arguments)
+                data_im = prop_im.arr * prop_im.units
+                property_images[prop] = data_im.to_astropy()
 
         if update_cli_interface:
             message = "Finished generating mock galaxy."
@@ -10442,17 +11022,17 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             dont_psf_match_bands=[],
             already_psf_matched=False,
             synthesizer_galaxy=gal,
-            aperture_dict=aperture_dict,
-            auto_photometry=auto_photometry,
+            # aperture_dict=aperture_dict,
+            # auto_photometry=auto_photometry,
             redshift=zed,
             rms_err_imgs=rms_err_images,
-            seg_imgs=seg_imgs,
+            seg_imgs=None,
             psf_matched_data=None,
             psf_matched_rms_err=None,
             im_pixel_scales=im_pixel_scales,
             im_zps=im_zps,
             phot_pix_unit=phot_pix_unit,
-            det_data=det_data,
+            # det_data=det_data,
             phot_imgs=final_images,
             noise_images=noise_images,
             meta_properties=meta_properties,
@@ -10557,6 +11137,156 @@ class MockResolvedGalaxy(ResolvedGalaxy):
     ):"""
     # Load multiple galaxies from h5 files
 
+    def save_new_synthesizer_sed(
+        self,
+        save_name="",
+        synthesizer_sed_name="total",
+        save_in_aperture=True,
+        save_in_det_segmap=True,
+        regenerate_original=False,
+        overwrite=False,
+    ):
+        # Function to save a regenerated Synthesizer SED (maybe with overridden parameters) to self.seds and the h5 file
+        from unyt import uJy, Angstrom
+        from .synthesizer_functions import get_spectra_in_mask
+
+        if save_name != "" and save_name[-1] != "_":
+            save_name += "_"
+
+        if regenerate_original:
+            self.regenerate_synthesizer_galaxy()
+
+        if (
+            self.seds is not None
+            and f"{save_name}total_fnu" in self.seds.keys()
+            and not overwrite
+        ):
+            print(
+                f"SED with name {save_name}total_fnu already exists in self.seds. Set overwrite=True to overwrite."
+            )
+            return
+
+        if self.synthesizer_galaxy is not None:
+            gal = self.synthesizer_galaxy
+            # Get the SED
+            seds = {}
+            seds["wav"] = (
+                gal.stars.spectra[synthesizer_sed_name]
+                .obslam.to(Angstrom)
+                .value
+            )
+            seds[f"{save_name}total_fnu"] = {}
+            seds[f"{save_name}total_fnu"]["total"] = (
+                gal.stars.spectra[synthesizer_sed_name].fnu.to(uJy).value
+            )
+            if save_in_aperture:
+                seds[f"{save_name}0.32as_fnu"] = {}
+                seds[f"{save_name}0.32as_fnu"]["total"] = (
+                    get_spectra_in_mask(
+                        gal,
+                        aperture_mask_radii=0.16 * u.arcsec,
+                        spectra_type=synthesizer_sed_name,
+                    )
+                    .to(uJy)
+                    .value
+                )
+            if save_in_det_segmap:
+                seds[f"{save_name}det_segmap_fnu"] = {}
+                seds[f"{save_name}det_segmap_fnu"]["total"] = (
+                    get_spectra_in_mask(
+                        gal,
+                        pixel_mask=self.det_data["seg"],
+                        spectra_type=synthesizer_sed_name,
+                        pixel_mask_value="center",
+                    )
+                    .to(uJy)
+                    .value
+                )
+            self.seds.update(seds)
+            self.dump_to_h5()
+
+    def eazy_sed_fit_mock_photometry(
+        self,
+        sed_name=None,
+        scatter_phot=0.1,
+        n_proc=1,
+        min_percentage_err=0.05,
+        template_name="fsps_larson",
+        tempfilt=None,
+        template_dir="/nvme/scratch/work/tharvey/EAZY/inputs/scripts/",
+        errors_based_on_depths=True,
+    ):
+        """
+        This lets you run EAZY on the Synthesizer galaxy photometry - either the internal SED or from the regenerated object.
+
+        """
+        if sed_name in self.seds.keys():
+            sed = self.seds[sed_name]
+            wav = self.seds["wav"] * u.Angstrom
+            flux = sed["total"] * u.uJy
+            # Get photometry
+            phot = self._convolve_sed(flux, wav)
+        else:
+            if self.synthesizer_galaxy is not None:
+                from unyt import uJy, Angstrom
+
+                gal = self.synthesizer_galaxy
+                wav = (
+                    gal.stars.spectra[sed_name].obslam.to(Angstrom).value
+                    * u.Angstrom
+                )
+                flux = gal.stars.spectra[sed_name].fnu.to(uJy).value * u.uJy
+                phot = (
+                    gal.stars.photo_fnu[sed_name].photo_fnu.to(uJy).value
+                    * u.uJy
+                )
+
+                # Can probably get photometry directly.
+            else:
+                raise ValueError(
+                    "Need to provide a valid SED name or first regenerate the Synthesizer galaxy to get the SED from."
+                )
+
+        # Add scatter
+        # phot = np.random.normal(phot, scatter_phot * phot) * u.uJy
+        # print(phot)
+
+        if errors_based_on_depths:
+            # Get the depths
+            if self.aperture_dict is not None:
+                errors = self.aperture_dict["0.32 arcsec"]["flux_err"]
+                assert len(errors) == len(
+                    phot
+                ), "Length of errors does not match length of photometry"
+
+                phot_err = errors * u.Jy
+                phot_err = phot_err.to(u.uJy)
+
+                print(f"Errors from {phot_err}")
+        else:
+            phot_err = min_percentage_err * np.abs(phot)
+
+        mask = ((phot_err / phot) < min_percentage_err) & (phot_err > 0)
+        phot_err[mask] = min_percentage_err * phot[mask]
+
+        print(100 * phot_err / phot)
+
+        ez = self.fit_eazy_photometry(
+            phot,
+            phot_err,
+            n_proc=n_proc,
+            template_name=template_name,
+            template_dir=template_dir,
+            meta_details=None,
+            save_tempfilt=True,
+            load_tempfilt=True,
+            save_tempfilt_path="internal",
+            tempfilt=tempfilt,
+            exclude_bands=[],
+        )
+
+        return ez
+
     def plot_mock_spectra(
         self,
         components,
@@ -10567,6 +11297,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         flux_unit=u.uJy,
         label=True,
         show_phot=False,
+        phot_color="black",
+        phot_ecolor="black",
         **kwargs,
     ):
         if fig is None:
@@ -10584,7 +11316,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             if type(label) is str:
                 lab = label
             elif label:
-                lab = components
+                lab = component
             else:
                 lab = ""
             wav = self.seds["wav"] * u.Angstrom
@@ -10605,21 +11337,22 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             ax.scatter(
                 phot_wav,
                 phot.to(flux_unit, equivalencies=u.spectral_density(phot_wav)),
-                color="black",
-                label="Photometry",
+                color=phot_color,
+                edgecolor=phot_ecolor,
+                label="True Photometry",
                 marker="s",
+                zorder=10,
             )
 
-        if label:
-            if made_fig:
-                ax.set_xlim(0.5, 5)
-                max_flux = np.max(flux[(wav > 0.5 * u.um) & (wav < 5 * u.um)])
-                # Get max flux in the xlim range
-                ax.set_ylim(0, 1.1 * max_flux.to(flux_unit).value)
-                # ax.set_ylim(0, 5)
-                ax.legend()
-                ax.set_xlabel("Wavelength (um)")
-                ax.set_ylabel("Flux (uJy)")
+        if label and made_fig:
+            ax.set_xlim(0.5, 5)
+            max_flux = np.max(flux[(wav > 0.5 * u.um) & (wav < 5 * u.um)])
+            # Get max flux in the xlim range
+            ax.set_ylim(0, 1.1 * max_flux.to(flux_unit).value)
+            # ax.set_ylim(0, 5)
+            ax.legend()
+            ax.set_xlabel("Wavelength (um)")
+            ax.set_ylabel("Flux (uJy)")
 
         return fig
 
@@ -10803,6 +11536,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         self,
         file_path=None,
         basic=False,
+        grid_dir="/nvme/scratch/work/tharvey/synthesizer/grids/",
+        override_internal_model={},
     ):
         # Regenerate the synthesizer galaxy
 
@@ -10814,8 +11549,15 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             from synthesizer.emission_models import (
                 IncidentEmission,
                 PacmanEmission,
+                IntrinsicEmission,
+                TotalEmission,
+                # CharlottFall2000,
+                # BiModalPacmanEmission,
             )
-            from synthesizer.emission_models.attenuation import PowerLaw
+            from synthesizer.emission_models.attenuation import (
+                PowerLaw,
+                Calzetti2000,
+            )
             from synthesizer.emission_models.attenuation.igm import (
                 Inoue14,
                 Madau96,
@@ -10851,20 +11593,21 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 get_spectra_in_mask,
             )
 
-        except ImportError:
+        except ImportError as e:
+            print(e)
             raise Exception(
                 "Synthesizer not installed. Please clone from Github and install using pip install ."
             )
 
         grid = Grid(
             grid_name=self.meta_properties["grid"],
-            grid_dir="/nvme/scratch/work/tharvey/synthesizer/grids/",
+            grid_dir=grid_dir,
         )
 
         # Get the synthesizer galaxy
 
-        # filter_codes = self.meta_properties.get('filters', None)
-        filter_codes = None
+        filter_codes = self.meta_properties.get("filters", None)
+
         if filter_codes is None:
             # print(
             #    "No filter codes found in meta_properties. Using default filters."
@@ -10880,7 +11623,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         filters = Filters(filter_codes, new_lam=grid.lam)
 
         filter_code_from_band = {
-            band: code for band, code in zip(bands, filter_codes)
+            band: code for band, code in zip(self.bands, filter_codes)
         }
 
         gal_id = self.meta_properties["id"]
@@ -10957,20 +11700,64 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         gal.tau_v = tau_v
 
         if not basic:
-            model_assumptions = self.meta_properties["model_assumptions"]
+            model_assumptions = copy.deepcopy(
+                self.meta_properties["model_assumptions"]
+            )
+            model_assumptions.update(override_internal_model)
+
+            if type(model_assumptions["dust_temp"]) is tuple:
+                model_assumptions["dust_temp"] = float(
+                    model_assumptions["dust_temp"][0]
+                )
+
             if "dust_type" in model_assumptions.keys():
                 if model_assumptions["dust_type"] == "pacman":
                     dust_object = PacmanEmission
 
+                elif model_assumptions["dust_type"] == "charlotfall2000":
+                    dust_object = CharlottFall2000
+                elif model_assumptions["dust_type"] == "bimodal_pacman":
+                    dust_object = BiModalPacmanEmission
+
+            else:
+                dust_object = IntrinsicEmission
+
+            fesc_ly_alpha = model_assumptions.get("fesc_ly_alpha", 1.0)
+            print(f"fesc_ly_alpha: {fesc_ly_alpha}")
+            fesc = model_assumptions.get("fesc", 0.0)
+
             if model_assumptions["dust_curve"] == "power_law":
                 dust_curve = PowerLaw(slope=model_assumptions["dust_slope"])
+            elif model_assumptions["dust_curve"] == "calzetti2000":
+                slope = model_assumptions.get("dust_slope", 0.0)
+                bump_amplitude = model_assumptions.get(
+                    "dust_bump_amplitude", 0.0
+                )
+                bump_wavelength = (
+                    model_assumptions.get("dust_bump_wavelength", 0.2175) * um
+                )
+                fwhm_bump = model_assumptions.get("dust_fwhm_bump", 0.035) * um
+                dust_curve = Calzetti2000(
+                    ampl=bump_amplitude,
+                    cent_lam=bump_wavelength,
+                    slope=slope,
+                    gamma=fwhm_bump,
+                )
+            else:
+                dust_curve = None
 
             if "dust_emission" in model_assumptions.keys():
                 if model_assumptions["dust_emission"] == "greybody":
                     dust_emission = Greybody(
-                        model_assumptions["dust_temp"] * K,
-                        model_assumptions["dust_beta"],
+                        temperature=model_assumptions["dust_temp"] * K,
+                        emissivity=model_assumptions["dust_beta"],
                     )
+                if model_assumptions["dust_emission"] == "blackbody":
+                    dust_emission = Blackbody(
+                        temperature=model_assumptions["dust_temp"] * K
+                    )
+            else:
+                dust_emission = None
 
             if "igm" in model_assumptions.keys():
                 if model_assumptions["igm"] == "inoue14":
@@ -10994,6 +11781,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 tau_v=gal.tau_v,
                 dust_curve=dust_curve,
                 dust_emission=dust_emission,
+                fesc_ly_alpha=fesc_ly_alpha,
+                fesc=fesc,
+                per_particle=True,
             )
 
             gal.stars.get_particle_spectra(emission_model)
@@ -11050,8 +11840,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         elif mask_name == "voronoi":
             mask = self.voronoi_map
 
-        elif mask_name in self.gal_regions.keys():
-            mask = self.gal_regions[mask_name]
+        elif mask_name in self.gal_region.keys():
+            mask = self.gal_region[mask_name]
 
         elif hasattr(self, mask_name):
             mask = getattr(self, mask_name)
@@ -11066,6 +11856,92 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             density=density,
             return_total=return_total,
         )
+
+    def plot_overview(
+        self,
+        figsize=(12, 8),
+        bands_to_show=["F814W", "F115W", "F200W", "F335M", "F444W"],
+        bins_to_show=["TOTAL_BIN", "MAG_APER_TOTAL", "1"],
+        show=True,
+        flux_unit=u.ABmag,
+        save=False,
+        rgb_stretch=0.001,
+        rgb_q=0.001,
+        binmap_type="pixedfit",
+        min_sed_flux=31 * u.ABmag,
+    ):
+        # Call parent method
+
+        fig = super().plot_overview(
+            figsize=figsize,
+            bands_to_show=bands_to_show,
+            bins_to_show=bins_to_show,
+            show=show,
+            flux_unit=flux_unit,
+            save=False,
+            legend=False,
+            binmap_type=binmap_type,
+            rgb_stretch=rgb_stretch,
+            rgb_q=rgb_q,
+            min_sed_flux=min_sed_flux,
+        )
+
+        # Get axes and plot the SED
+
+        axes = fig.get_axes()
+        ax = axes[0]
+
+        ax.set_xlim(ax.get_xlim())
+        ax.set_ylim(ax.get_ylim())
+
+        self.plot_mock_spectra(
+            components=["det_segmap_fnu"],
+            fig=fig,
+            ax=ax,
+            facecolor="white",
+            wav_unit=u.um,
+            flux_unit=flux_unit,
+            show_phot=True,
+            phot_color="teal",
+            zorder=2,
+            color="teal",
+        )
+
+        props = dict(boxstyle="square", facecolor="white", alpha=0.5)
+
+        mask_mass = self.synthesizer_property_in_mask(
+            "stellar_mass",
+            mask_name="pixedfit",
+            density=False,
+            return_total=True,
+        )
+        total_mass = self.meta_properties["stellar_mass"]
+
+        textstr = f"True Properties\nRedshift: {self.redshift:.2f}\nM$_\star (tot)$:{np.log10(total_mass):.2f} M$_\odot$\nM$_\star (seg)$:{np.log10(mask_mass):.2f} M$_\odot$"
+        fig.text(
+            0.5,
+            0.45,
+            textstr,
+            transform=fig.transFigure,
+            fontsize=13,
+            verticalalignment="top",
+            bbox=props,
+        )
+
+        ax.legend(frameon=False)
+
+        if save:
+            if not os.path.exists(f"{resolved_galaxy_dir}/diagnostic_plots"):
+                os.makedirs(f"{resolved_galaxy_dir}/diagnostic_plots")
+
+            fig.savefig(
+                f"{resolved_galaxy_dir}/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png",
+                dpi=200,
+            )
+
+        return fig
+
+        # Plot
 
     def plot_bagpipes_sfh(
         self,
@@ -11367,37 +12243,77 @@ class ResolvedGalaxies(np.ndarray):
             }
 
         for galaxy in self.galaxies:
-            table = galaxy.sed_fitting_table[sed_fitting_tool][aperture_run]
-            table = table[table["#ID"] == aperture_label]
-            assert (
-                len(table) == 1
-            ), f"Aperture label {aperture_label} not found in table or table is not unique: length {len(table)}"
+            integrated, resolved = [], []
+            for run, label in zip(
+                [aperture_run, resolved_run], [aperture_label, ""]
+            ):
+                if (
+                    run in galaxy.sed_fitting_table[sed_fitting_tool]
+                    and label
+                    in galaxy.sed_fitting_table[sed_fitting_tool][run]["#ID"]
+                ):
+                    table = galaxy.sed_fitting_table[sed_fitting_tool][run]
+                    table = table[table["#ID"] == label]
+                    assert (
+                        len(table) == 1
+                    ), f"Aperture label {label} not found in table or table is not unique: length {len(table)}"
 
-            param_16, param_50, param_84 = (
-                table[f"{parameter}_16"],
-                table[f"{parameter}_50"],
-                table[f"{parameter}_84"],
-            )
+                    param_16, param_50, param_84 = (
+                        table[f"{parameter}_16"],
+                        table[f"{parameter}_50"],
+                        table[f"{parameter}_84"],
+                    )
 
-            # resolved mass
-            logp = True if parameter == "stellar_mass" else False
-            quantities = galaxy.get_total_resolved_property(
-                resolved_run,
-                sed_fitting_tool=sed_fitting_tool,
-                n_cores=n_jobs,
-                property=parameter,
-                log=logp,
-                overwrite=overwrite,
-            )
+                    integrated.append((param_50, param_16, param_84))
+                else:
+                    # resolved mass
+                    logp = True if parameter == "stellar_mass" else False
+                    quantities = galaxy.get_total_resolved_property(
+                        run,
+                        sed_fitting_tool=sed_fitting_tool,
+                        n_cores=n_jobs,
+                        property=parameter,
+                        log=logp,
+                        overwrite=overwrite,
+                    )
+
+                    param_16, param_50, param_84 = quantities
+                    resolved.append((param_50, param_16, param_84))
+
+            if len(resolved) == 1 and len(integrated) == 1:
+                x = integrated[0]
+                y = resolved[0]
+            elif len(resolved) == 2 and len(integrated) == 0:
+                x, y = resolved[1], resolved[0]
+                ax.set_xlabel(
+                    rf"Resolved Stellar Mass (M$_\odot$) [{aperture_run}]"
+                )
+
+            elif len(resolved) == 0 and len(integrated) == 2:
+                x, y = integrated[1], integrated[0]
+                ax.set_ylabel(
+                    rf"Integrated Stellar Mass (M$_\odot$) [{resolved_run}]"
+                )
+            else:
+                raise ValueError(
+                    "Resolved and integrated properties must be unique"
+                )
+
+            # Force xerr and yerr to always be (2, n ) shape using np.atleast_2d and np.squeeze
+            xerr = [
+                [np.squeeze(np.array(x[0] - x[1]))],
+                [np.squeeze(np.array(x[2] - x[0]))],
+            ]
+            yerr = [
+                [np.squeeze(np.array(y[0] - y[1]))],
+                [np.squeeze(np.array(y[2] - y[0]))],
+            ]
 
             ax.errorbar(
-                param_50,
-                quantities[1],
-                xerr=(param_50 - param_16, param_84 - param_50),
-                yerr=(
-                    [quantities[1] - quantities[0]],
-                    [quantities[2] - quantities[1]],
-                ),
+                x[0],
+                y[0],
+                xerr=xerr,
+                yerr=yerr,
                 fmt="o",
                 label=galaxy.galaxy_id if label else "",
                 color=colors[galaxy.galaxy_id],
@@ -11851,6 +12767,8 @@ class ResolvedGalaxies(np.ndarray):
                     row[prop] = getattr(galaxy, prop)
                 else:
                     row[prop] = np.nan
+            if "bagpipes" not in galaxy.sed_fitting_table.keys():
+                print(f"No bagpipes results found for {galaxy.galaxy_id}")
             run_names = galaxy.sed_fitting_table["bagpipes"].keys()
 
             for run_name in run_names:

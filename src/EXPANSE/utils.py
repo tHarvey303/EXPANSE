@@ -13,6 +13,8 @@ from astropy.io import fits
 import glob
 from matplotlib.patches import Arrow, FancyArrow
 from astropy.coordinates import SkyCoord
+from astropy.table import Table
+from scipy.interpolate import interp1d
 
 file_path = os.path.abspath(__file__)
 
@@ -54,37 +56,45 @@ def update_mpl(tex_on=True):
 def scale_fluxes(
     mag_aper,
     mag_auto,
+    band,
     a,
     b,
     theta,
     kron_radius,
     psf,
+    flux_type="mag",  # 'mag' or 'flux'
     zero_point=28.08,
     aper_diam=0.32 * u.arcsec,
-    sourcex_factor=6,
-    pix_scale=0.03,
+    pix_scale=0.03 * u.arcsec,
 ):
     """Scale fluxes to total flux using PSF
     Scale mag_aper to mag_auto (ideally measured in LW stack), and then derive PSF correction by placing a elliptical aperture around the PSF.
     """
-    a = sourcex_factor * a
-    b = sourcex_factor * b
-
-    area_of_aper = np.pi * (aper_diam / 2) ** 2
+    a = kron_radius * a
+    b = kron_radius * b
+    area_of_aper = np.pi * (aper_diam.to(u.arcsec) / (2 * pix_scale)) ** 2
     area_of_ellipse = np.pi * a * b
     scale_factor = area_of_aper / area_of_ellipse
-    flux_auto = 10 ** ((zero_point - mag_auto) / 2.5)
-    flux_aper = 10 ** ((zero_point - mag_aper) / 2.5)
-
-    if scale_factor > 1:
+    if flux_type == "mag":
+        flux_auto = 10 ** ((zero_point - mag_auto) / 2.5)
+        flux_aper = 10 ** ((zero_point - mag_aper) / 2.5)
+    else:
+        flux_auto = mag_auto
+        flux_aper = mag_aper
+    if (scale_factor > 1) and flux_auto > flux_aper:
         factor = flux_auto / flux_aper
-        factor = np.clip(factor, 1, 1)
+        clip = False
     else:
         factor = 1
+        clip = True
 
-    flux_aper_corrected = flux_aper * factor
+    if clip:
+        # Make Elliptical Aperture be the circle
+        a = aper_diam.to(u.arcsec) / (2 * pix_scale)
+        b = aper_diam.to(u.arcsec) / (2 * pix_scale)
+        theta = 0
 
-    print(f"Corrected aperture magnitude by {factor} mag.")
+    print(f"Corrected aperture flux by {factor} for kron ellipse flux.")
     # Scale for PSF
     assert type(psf) is np.ndarray, "PSF must be a numpy array"
     assert (
@@ -99,22 +109,52 @@ def scale_fluxes(
     # circular_aperture = CircularAperture(center, center, r=aper_diam/(2*pixel_scale))
     # circular_aperture_phot = aperture_photometry(psf, circular_aperture)
 
+    # get path of this file
+    file_path = os.path.abspath(__file__)
+    psf_path = (
+        os.path.dirname(os.path.dirname(os.path.dirname(file_path))) + "/psfs"
+    )
+    file1 = f"{psf_path}/Encircled_Energy_LW_ETCv2.txt"
+    tab1 = Table.read(file1, format="ascii")
+
+    file2 = f"{psf_path}/ACS_WFC_EE.txt"
+    tab2 = Table.read(file2, format="ascii.commented_header")
+
+    if band in tab1.colnames:
+        tab = tab1
+    elif band in tab2["band"]:
+        tab = tab2
+        # Current tab is bands in row and aper_radius in column, need to swap this
+        tab = tab.to_pandas().T
+        # Change row 0 to column names
+        tab.columns = tab.iloc[0]
+        tab = tab.drop(tab.index[0])
+        # Rename band to aper_radius
+        tab["aper_radius"] = [float(i) * pix_scale for i in tab.index]
+
+    x = tab["aper_radius"] / pix_scale
+    y = tab[band]
+    f = interp1d(x, y, kind="linear", fill_value=(0, 1.0), bounds_error=False)
+
+    a = float(a)
+    b = float(b)
+
     if a > psf.shape[0] or b > psf.shape[0]:
         # approximate as a circle
-        np.sqrt(a * b) * kron_radius
+        r = np.sqrt(a * b)
+        encircled_energy = f(r)
+
         # encircled_energy = # enclosed_energy in F444W from band
     else:
-        elliptical_aperture = EllipticalAperture(
-            center, a=6 * a, b=6 * b, theta=theta
-        )
+        elliptical_aperture = EllipticalAperture(center, a=a, b=b, theta=theta)
         elliptical_aperture_phot = aperture_photometry(
             psf, elliptical_aperture
         )
         encircled_energy = elliptical_aperture_phot["aperture_sum"][0]
 
-    flux_aper_total = flux_aper_corrected / encircled_energy
-    mag_aper_total = -2.5 * np.log10(flux_aper_total) + zero_point
-    return mag_aper_total
+    factor_total = factor / encircled_energy
+
+    return factor_total, factor
 
 
 def make_EAZY_SED_fit_params_arr(SED_code_arr, templates_arr, lowz_zmax_arr):
@@ -355,6 +395,16 @@ def send_email(contents, subject="", address="tharvey303@gmail.com"):
         oauth2_file="/nvme/scratch/work/tharvey/scripts/testing/client_secret.json",
     ).send(address, subject, contents)
     print("Sent email.")
+
+
+def calculate_ab_zeropoint(known_jy, unknown_counts):
+    # Convert μJy to AB magnitude
+    ab_mag_known = -2.5 * np.log10(known_jy) + 8.90
+
+    # Calculate zeropoint
+    zeropoint = ab_mag_known + 2.5 * np.log10(unknown_counts)
+
+    return zeropoint
 
 
 class PhotometryBandInfo:

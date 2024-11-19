@@ -41,15 +41,19 @@ elif computer == "singularity":
 
 if __name__ == "__main__":
     mock_field = "JOF_psfmatched"
-    overwrite = False
-    bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
-    load_only = True  # This is for running Bagpipes - whether to skip running fitting and load existing results
+    overwrite = True
+    bagpipes_only = False  # This is for running Bagpipes only if the galaxies have already been created
+    load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
+    only_new = (
+        False  # This is whether to skip initial running of existing .h5 files.
+    )
     cosmo = FlatLambdaCDM(H0=70, Om0=0.300)
     grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
     grid_dir = "/nvme/scratch/work/tharvey/synthesizer/grids/"
     path = "/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5"
     mock_rms_fit_path = "/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/"
     fit_photometry = "TOTAL_BIN"
+    plot_overview = True
 
     try:
         n_jobs = int(sys.argv[1])
@@ -78,6 +82,7 @@ if __name__ == "__main__":
 
         print(f"Creating {num_of_galaxies} mock galaxies")
 
+        start_now = False
         for redshift_code in structure:
             for region in structure[redshift_code]:
                 for gal_id in structure[redshift_code][region]:
@@ -85,6 +90,24 @@ if __name__ == "__main__":
                         f"Doing {redshift_code} region {region}, galaxy {gal_id}"
                     )
 
+                    if start_now or (
+                        redshift_code == "010_z005p000"
+                        and region == "10"
+                        and gal_id == "480"
+                    ):
+                        #    continue
+                        start_now = True
+                    else:
+                        continue
+
+                    if only_new and os.path.exists(
+                        os.path.join(
+                            galaxies_dir,
+                            f"{mock_field}_{redshift_code}_{region}_{gal_id}_mock.h5",
+                        )
+                    ):
+                        print("Galaxy already exists. Skipping.")
+                        continue
                     try:
                         mock_galaxy = MockResolvedGalaxy.init(
                             mock_survey=mock_field,
@@ -93,10 +116,19 @@ if __name__ == "__main__":
                             gal_id=gal_id,
                             grid_dir=grid_dir,
                             file_path=path,
-                            overwrite=overwrite,
+                            overwrite=False,
                             mock_rms_fit_path=mock_rms_fit_path,
                             debug=False,
                             h5_folder=galaxies_dir,
+                        )
+                        # Use sep to process the detection image, get aperture fluxes etc using PSF matched imaging.
+                        mock_galaxy.sep_process(
+                            debug=False, overwrite=overwrite
+                        )
+                        # Save Synthesizer SED within the detection image region.
+                        # if 'det_segmap_fnu' not in mock_galaxy.seds.keys():
+                        mock_galaxy.save_new_synthesizer_sed(
+                            regenerate_original=True, overwrite=overwrite
                         )
                         mock_galaxy.pixedfit_processing(
                             gal_region_use="detection",
@@ -107,8 +139,23 @@ if __name__ == "__main__":
                         mock_galaxy.pixedfit_binning(overwrite=overwrite)
                         mock_galaxy.measure_flux_in_bins(overwrite=overwrite)
                         mock_galaxy.eazy_fit_measured_photometry(
-                            "MAG_APER_0.32 arcsec", update_meta_properties=True
+                            "MAG_APER_0.32 arcsec",
+                            update_meta_properties=True,
+                            overwrite=overwrite,
                         )
+
+                        if plot_overview:
+                            mock_galaxy.plot_overview(
+                                bins_to_show=[
+                                    "MAG_APER_TOTAL",
+                                    "TOTAL_BIN",
+                                    "1",
+                                ],
+                                rgb_q=5,
+                                rgb_stretch=6e-5,
+                                save=True,
+                                show=False,
+                            )
 
                         del mock_galaxy
 
@@ -123,8 +170,8 @@ if __name__ == "__main__":
     # Doesn't preserve order otherwise - can't guarantee they will be run in the input order
 
     galaxies = MockResolvedGalaxy.init_all_field_from_h5(
-        mock_field, galaxies_dir, save_out=True, n_jobs = n_jobs)
-    
+        mock_field, galaxies_dir, save_out=True, n_jobs=n_jobs
+    )
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
 
@@ -161,13 +208,13 @@ if __name__ == "__main__":
     )
 
     for dicts in [
-        #continuity_bursty_dicts,
-        #continuity_dicts,
-        #delayed_dicts,
-        #dpl_dicts,
-        #lognorm_dicts,
+        # continuity_bursty_dicts,
+        # continuity_dicts,
+        # delayed_dicts,
+        # dpl_dicts,
+        # lognorm_dicts,
         resolved_dicts_cnst,
-        #resolved_dicts_bursty,
+        # resolved_dicts_bursty,
     ]:
         multiple_galaxies.run_bagpipes_parallel(
             dicts,

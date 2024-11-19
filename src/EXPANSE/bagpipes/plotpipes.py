@@ -208,6 +208,159 @@ def colormap(
     return color
 
 
+class PipesFitNoLoad:
+    """
+    This object is used to load a bagpipes fit directly from the .h5 without reinitializing the galaxy object. Will only work if Bagpipes was run with my modified version of Bagpipes.
+
+    """
+
+    def __init__(
+        self,
+        galaxy_id,
+        field,
+        h5_path,
+        filter_path=bagpipes_filter_dir,
+        bands=None,
+        data_func=None,
+        **kwargs,
+    ):
+        self.galaxy_id = galaxy_id
+        self.field = field
+        self.h5_path = h5_path
+        self.bands = bands
+        self.data_func = data_func
+        self.filter_path = filter_path
+
+    def _load_item_from_h5(self, item):
+        with h5py.File(self.h5_path, "r") as data:
+            if item in data.keys():
+                return data[item]
+            elif item in data["basic_quantities"].keys():
+                return data["basic_quantities"][item]
+            elif item in data["advanced_quantities"].keys():
+                return data["advanced_quantities"][item]
+            else:
+                raise KeyError(f"{item} not found in h5 file.")
+
+    def _list_items(self):
+        items = []
+        with h5py.File(self.h5_path, "r") as data:
+            for key in data.keys():
+                if type(data[key]) == h5py._hl.group.Group:
+                    for sub_key in data[key].keys():
+                        items.append(f"{key}/{sub_key}")
+                else:
+                    items.append(key)
+        return items
+
+    def _load_spectrum(self):
+        with h5py.File(self.h5_path, "r") as data:
+            spectrum = data["spectrum"]
+            return spectrum
+
+    def plot_corner_plot(
+        self,
+        show=False,
+        save=True,
+        bins=25,
+        type="fit_params",
+        fig=None,
+        color="black",
+        facecolor="white",
+    ):
+        pass
+
+    def plot_corner_plot(
+        self,
+        show=False,
+        save=True,
+        bins=25,
+        type="fit_params",
+        fig=None,
+        color="black",
+        facecolor="white",
+    ):
+        pass
+
+    def plot_sfh(
+        self,
+        ax,
+        colour="black",
+        modify_ax=True,
+        add_zaxis=True,
+        timescale="Myr",
+        plottype="lookback",
+        logify=False,
+        cosmo=None,
+        return_sfh=False,
+        **kwargs,
+    ):
+        pass
+
+    def plot_best_photometry(
+        self,
+        ax,
+        colour="black",
+        wav_units=u.um,
+        flux_units=u.ABmag,
+        zorder=4,
+        y_scale=None,
+        skip_no_obs=False,
+        background_spectrum=False,
+        **kwargs,
+    ):
+        pass
+
+    def plot_best_fit(
+        self,
+        ax,
+        colour="black",
+        wav_units=u.um,
+        flux_units=u.ABmag,
+        lw=1,
+        fill_uncertainty=False,
+        zorder=5,
+        label=None,
+        return_flux=False,
+        **kwargs,
+    ):
+        pass
+
+    def plot_sed(
+        self,
+        ax,
+        colour="black",
+        wav_units=u.um,
+        flux_units=u.ABmag,
+        x_ticks=None,
+        zorder=4,
+        ptsize=40,
+        y_scale=None,
+        lw=1.0,
+        skip_no_obs=False,
+        fcolour="blue",
+        label=None,
+        marker="o",
+        rerun_fluxes=False,
+        **kwargs,
+    ):
+        pass
+
+    def plot_pdf(
+        self,
+        ax,
+        parameter,
+        colour="black",
+        fill_between=False,
+        alpha=1,
+        return_samples=False,
+        linelabel="",
+        norm_height=False,
+        **kwargs,
+    ):
+        pass
+
+
 class PipesFit:
     def __init__(
         self,
@@ -225,6 +378,7 @@ class PipesFit:
         catalogue_flux_unit=u.MJy / u.sr,
         bands=None,
         data_func=None,
+        attempt_to_load_direct_h5=False,
     ):
         time.time()
         # Manually loading the .h5 file with deepdish
@@ -284,152 +438,169 @@ class PipesFit:
 
         # Only import after we check the config
 
-        # Reload the module if it's already been imported
-        if "bagpipes" in sys.modules:
-            import importlib
+        if not attempt_to_load_direct_h5:
+            # Reload the module if it's already been imported
+            if "bagpipes" in sys.modules:
+                import importlib
 
-            importlib.reload(sys.modules["bagpipes"])
-            from bagpipes import config, fit, galaxy
+                importlib.reload(sys.modules["bagpipes"])
+                from bagpipes import config, fit, galaxy
 
-        else:
-            # import run_bagpipes
-            from bagpipes import config, fit, galaxy
+            else:
+                # import run_bagpipes
+                from bagpipes import config, fit, galaxy
 
-        if self.config_used is not None:
-            assert (
-                config.stellar_file == self.config_used["stellar_file"]
-            ), f'{config.stellar_file} != {self.config_used["stellar_file"]}'
-            assert (
-                config.neb_line_file == self.config_used["neb_line_file"]
-            ), f'{config.neb_line_file} != {self.config_used["neb_line_file"]}'
-            assert (
-                config.neb_cont_file == self.config_used["neb_cont_file"]
-            ), f'{config.neb_cont_file} != {self.config_used["neb_cont_file"]}'
+            if self.config_used is not None:
+                assert (
+                    config.stellar_file == self.config_used["stellar_file"]
+                ), f'{config.stellar_file} != {self.config_used["stellar_file"]}'
+                assert (
+                    config.neb_line_file == self.config_used["neb_line_file"]
+                ), f'{config.neb_line_file} != {self.config_used["neb_line_file"]}'
+                assert (
+                    config.neb_cont_file == self.config_used["neb_cont_file"]
+                ), f'{config.neb_cont_file} != {self.config_used["neb_cont_file"]}'
 
-        # fit_instructions = data['fit_instructions']
-        if type(fit_instructions) in [str, np.str_]:
-            fit_instructions = ast.literal_eval(fit_instructions)
+            # fit_instructions = data['fit_instructions']
+            if type(fit_instructions) in [str, np.str_]:
+                fit_instructions = ast.literal_eval(fit_instructions)
 
-        """samples = data['samples2d']
-        basic_quantities = data['basic_quantities']
-        lnz = data['lnz']
-        median = data['median']
-        """
+            """samples = data['samples2d']
+            basic_quantities = data['basic_quantities']
+            lnz = data['lnz']
+            median = data['median']
+            """
 
-        # out_subdir = path.relative_to(f'{pipes_path}/posterior/')
+            # out_subdir = path.relative_to(f'{pipes_path}/posterior/')
 
-        # Copy .h5 and rename
-        if not os.path.exists(f"{pipes_path}/posterior/plot_temp/"):
-            os.makedirs(f"{pipes_path}/posterior/plot_temp/")
-        if not os.path.exists(f"{pipes_path}/plots/plot_temp/"):
-            os.makedirs(f"{pipes_path}/plots/plot_temp/")
+            # Copy .h5 and rename
+            if not os.path.exists(f"{pipes_path}/posterior/plot_temp/"):
+                os.makedirs(f"{pipes_path}/posterior/plot_temp/")
+            if not os.path.exists(f"{pipes_path}/plots/plot_temp/"):
+                os.makedirs(f"{pipes_path}/plots/plot_temp/")
 
-        temp_file = Path(f"{pipes_path}/posterior/plot_temp/{galaxy_id}.h5")
-
-        print(f"temp, {pipes_path}/posterior/plot_temp/{galaxy_id}.h5")
-
-        shutil.copy(path, temp_file)
-        out_subdir = temp_file.relative_to(f"{pipes_path}/posterior/").parent
-
-        if "excluded" in str(h5_path):
-            self.excluded_bands = h5_path.split("excluded")[-1].split("/")[0]
-        else:
-            self.excluded_bands = ""
-
-        os.environ["excluded_bands"] = self.excluded_bands
-        # Recreating the galaxy object
-
-        if (
-            "noise" in fit_instructions.keys()
-            or "veldisp" in fit_instructions.keys()
-        ):
-            self.fitted_type = "spec"
-        else:
-            self.fitted_type = "phot"
-
-        if self.fitted_type == "phot":
-            if self.data_func is None:
-                self.data_func = run_bagpipes.load_fits
-            os.environ["input_unit"] = self.catalogue_flux_unit.to_string()
-            if self.bands is None:
-                self.bands = run_bagpipes.load_fits(
-                    galaxy_id, return_bands=True, verbose=False
-                )
-            # Get filter paths
-            self.filts = [
-                f"{filter_path}/{filt}_LePhare.txt" for filt in self.bands
-            ]
-            spectrum_exists = False
-            photometry_exists = True
-
-        if self.fitted_type == "spec":
-            if self.data_func is None:
-                self.data_func = run_bagpipes.load_spectra
-            if self.bands is None:
-                self.bands = None
-            spectrum_exists = True
-            photometry_exists = False
-            self.filts = None
-
-        try:
-            self.galaxy = galaxy(
-                galaxy_id,
-                self.data_func,
-                filt_list=self.filts,
-                spectrum_exists=spectrum_exists,
-                photometry_exists=photometry_exists,
+            temp_file = Path(
+                f"{pipes_path}/posterior/plot_temp/{galaxy_id}.h5"
             )
 
-        except Exception as e:
-            print(f"Error in {galaxy_id}")
-            raise e
+            print(f"temp, {pipes_path}/posterior/plot_temp/{galaxy_id}.h5")
 
-        # Recreating the posterior object
-        # print(self.h5_path)
-        try:
-            self.fit = fit(self.galaxy, fit_instructions, run=str(out_subdir))
-            self.fit.fit(verbose=True)
-        except KeyError:
-            raise Exception(f"Couldn't recreate {self.h5_path}. Skipping")
+            shutil.copy(path, temp_file)
+            out_subdir = temp_file.relative_to(
+                f"{pipes_path}/posterior/"
+            ).parent
 
-        # Get quantities
-        self.fit.posterior.get_basic_quantities()
+            if "excluded" in str(h5_path):
+                self.excluded_bands = h5_path.split("excluded")[-1].split("/")[
+                    0
+                ]
+            else:
+                self.excluded_bands = ""
 
-        if get_advanced_quantities:
-            self.fit.posterior.get_advanced_quantities()
+            os.environ["excluded_bands"] = self.excluded_bands
+            # Recreating the galaxy object
 
-        dust = fit_instructions["dust"]["type"]
-        try:
-            dust_prior = fit_instructions["dust"][
-                "Av_prior"
-            ]  # Some may not have this
-        except KeyError:
-            dust_prior = "uniform"
-        # redshift = fit_instructions.get('redshift', False) # This is range of redshift allowed to fit
-        self.stellar_mass_16, self.stellar_mass_50, self.stellar_mass_84 = (
-            np.percentile(
+            if (
+                "noise" in fit_instructions.keys()
+                or "veldisp" in fit_instructions.keys()
+            ):
+                self.fitted_type = "spec"
+            else:
+                self.fitted_type = "phot"
+
+            if self.fitted_type == "phot":
+                if self.data_func is None:
+                    self.data_func = run_bagpipes.load_fits
+                os.environ["input_unit"] = self.catalogue_flux_unit.to_string()
+                if self.bands is None:
+                    self.bands = run_bagpipes.load_fits(
+                        galaxy_id, return_bands=True, verbose=False
+                    )
+                # Get filter paths
+                self.filts = [
+                    f"{filter_path}/{filt}_LePhare.txt" for filt in self.bands
+                ]
+                spectrum_exists = False
+                photometry_exists = True
+
+            if self.fitted_type == "spec":
+                if self.data_func is None:
+                    self.data_func = run_bagpipes.load_spectra
+                if self.bands is None:
+                    self.bands = None
+                spectrum_exists = True
+                photometry_exists = False
+                self.filts = None
+
+            try:
+                self.galaxy = galaxy(
+                    galaxy_id,
+                    self.data_func,
+                    filt_list=self.filts,
+                    spectrum_exists=spectrum_exists,
+                    photometry_exists=photometry_exists,
+                )
+
+            except Exception as e:
+                print(f"Error in {galaxy_id}")
+                raise e
+
+            # Recreating the posterior object
+            # print(self.h5_path)
+            try:
+                self.fit = fit(
+                    self.galaxy, fit_instructions, run=str(out_subdir)
+                )
+                self.fit.fit(verbose=True)
+            except KeyError:
+                raise Exception(f"Couldn't recreate {self.h5_path}. Skipping")
+
+            # Get quantities
+            self.fit.posterior.get_basic_quantities()
+
+            if get_advanced_quantities:
+                self.fit.posterior.get_advanced_quantities()
+
+            dust = fit_instructions["dust"]["type"]
+            try:
+                dust_prior = fit_instructions["dust"][
+                    "Av_prior"
+                ]  # Some may not have this
+            except KeyError:
+                dust_prior = "uniform"
+            # redshift = fit_instructions.get('redshift', False) # This is range of redshift allowed to fit
+            (
+                self.stellar_mass_16,
+                self.stellar_mass_50,
+                self.stellar_mass_84,
+            ) = np.percentile(
                 self.fit.posterior.samples["stellar_mass"], (16, 50, 84)
             )
-        )
 
-        if "redshift" in self.fit.fitted_model.params:
-            if fit_instructions.get("redshift_prior_sigma", False):
-                self.zphot = np.median(self.fit.posterior.samples["redshift"])
-                self.zphot_16 = f'-{self.zphot - np.percentile(self.fit.posterior.samples["redshift"], 16):.1f}'
-                self.zphot_84 = f'+{np.percentile(self.fit.posterior.samples["redshift"], 84)-self.zphot:.1f}'
+            if "redshift" in self.fit.fitted_model.params:
+                if fit_instructions.get("redshift_prior_sigma", False):
+                    self.zphot = np.median(
+                        self.fit.posterior.samples["redshift"]
+                    )
+                    self.zphot_16 = f'-{self.zphot - np.percentile(self.fit.posterior.samples["redshift"], 16):.1f}'
+                    self.zphot_84 = f'+{np.percentile(self.fit.posterior.samples["redshift"], 84)-self.zphot:.1f}'
 
+            else:
+                # print(self.fit.fitted_model.model_components.keys())
+                self.zphot = self.fit.fitted_model.model_components["redshift"]
+                self.zphot_16 = ""
+                self.zphot_84 = ""
+            # print('zphot', self.zphot)
+
+            sfh = [
+                x.split(":")[0]
+                for x in self.fit.fitted_model.params
+                if x.split(":")[-1] == "massformed"
+            ][0]
         else:
-            # print(self.fit.fitted_model.model_components.keys())
-            self.zphot = self.fit.fitted_model.model_components["redshift"]
-            self.zphot_16 = ""
-            self.zphot_84 = ""
-        # print('zphot', self.zphot)
-
-        sfh = [
-            x.split(":")[0]
-            for x in self.fit.fitted_model.params
-            if x.split(":")[-1] == "massformed"
-        ][0]
+            # need to set zphot, sfh name
+            # need to set self.fit, self.galaxy and load quantities.
+            raise NotImplementedError
 
         if "bin_edges" in fit_instructions[sfh].keys():
             age_prior = ""  #    continuity prior
@@ -665,7 +836,7 @@ class PipesFit:
                 ax.set_xlabel(
                     f"$\\mathbf{{\\mathrm{{Age\\ of\\ Universe \\ ({timescale})}}}}$",
                     fontsize="small",
-                    patheffects=[
+                    path_effects=[
                         pe.withStroke(linewidth=2, foreground="white")
                     ],
                 )

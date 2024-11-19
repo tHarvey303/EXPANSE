@@ -3,6 +3,7 @@ import numpy as np
 from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM
 from unyt import Msun, Myr, unyt_array, yr
+import copy
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
@@ -76,7 +77,10 @@ def get_spectra_in_mask(
     aperture_mask_radii=None,
     pixel_mask=None,
     pixel_scale=0.03 * u.arcsecond,
+    pixel_mask_value=None,
 ):
+    pixel_mask = copy.deepcopy(pixel_mask)
+
     if aperture_mask_radii is not None and pixel_mask is not None:
         raise ValueError(
             "Must provide only one of aperture_mask or pixel_mask"
@@ -103,7 +107,42 @@ def get_spectra_in_mask(
         mask = coords[:, 0] ** 2 + coords[:, 1] ** 2 < aperture_mask_radii**2
 
     if pixel_mask is not None:
+        if pixel_mask_value is not None:
+            print("Applying pixel mask with value", pixel_mask_value)
+            # if only 0 and 1s, just use 1
+            if np.all(np.unique(pixel_mask) == [0, 1]):
+                print("Boolean mask... using 1 as True.")
+                pixel_mask[pixel_mask == 1] = True
+                pixel_mask[pixel_mask == 0] = False
+
+            elif pixel_mask_value == "center":
+                # This option is for e.g. a segmentation map with multiple regions.
+                # Get value at the center of the mask
+                center = np.array(pixel_mask.shape) / 2
+                center_val = pixel_mask[int(center[0]), int(center[1])]
+                # Create boolean mask first, then assign values
+                mask = pixel_mask == center_val
+                pixel_mask = mask.astype(bool)
+                print(
+                    "Center value:",
+                    center_val,
+                    "with",
+                    np.sum(pixel_mask),
+                    "unmasked pixels",
+                )
+
+            elif type(pixel_mask_value) in [int, float]:
+                pixel_mask[pixel_mask == pixel_mask_value] = True
+                pixel_mask[pixel_mask != pixel_mask_value] = False
+            else:
+                raise ValueError(
+                    "pixel_mask_value must be 'center' or a number"
+                )
+
         mask = apply_pixel_coordinate_mask(gal, pixel_mask)
+
+        if np.sum(mask) == 0:
+            print("WARNING! Mask is all False.")
 
     spectra_mask = gal.stars.particle_spectra["total"].fnu[mask]
     spectra_mask_total = np.sum(spectra_mask, axis=0)
@@ -151,3 +190,85 @@ def calculate_sfh(galaxy, binw=10 * Myr, pixel_mask=None, plot=False):
     binc *= Myr
 
     return binc, sfr
+
+
+def plot_particle_sed(
+    gal,
+    spec_type="total",
+    filters=[],
+    fig=None,
+    ylim=(30, 26),
+    xlim=(0, 52000),
+):
+    from unyt import nJy
+
+    if fig is None:
+        fig, ax = plt.subplots(
+            nrows=2, ncols=1, height_ratios=[3, 1], dpi=200, facecolor="white"
+        )
+        ax, ax_filt = ax
+
+    else:
+        gs = fig.add_gridspec(2, 1, height_ratios=[3, 1])
+        ax = fig.add_subplot(gs[0])
+        ax_filt = fig.add_subplot(gs[1])
+
+    if spec_type == "all":
+        spec_type = gal.stars.spectra.keys()
+    elif type(spec_type) == str:
+        spec_type = [spec_type]
+    for s in spec_type:
+        sed = gal.stars.spectra[s]
+        phot = gal.stars.photo_fnu[s]
+        ax.plot(sed.obslam, -2.5 * np.log10(sed.fnu) + 31.40, label=s)
+        ax.scatter(
+            filters.pivot_lams.ndarray_view(),
+            -2.5 * np.log10(phot.photo_fnu.to(nJy)) + 31.40,
+            marker="o",
+            color="black",
+            facecolors="none",
+            zorder=10,
+        )
+
+    ax.set_xlim(xlim[0], xlim[1])
+    ax_filt.set_xlim(xlim[0], xlim[1])
+
+    ax.set_xticks([])
+    ax.set_ylim(ylim[0], ylim[1])
+
+    filters.plot_transmission_curves(ax=ax_filt)
+    ax_filt.set_xlabel("Wavelength (Angstrom)")
+    ax.set_ylabel("Flux (AB mag)")
+    # Remove upper and right axes
+    ax_filt.spines["top"].set_visible(False)
+    ax.spines["bottom"].set_alpha(0.2)
+
+    fig.subplots_adjust(hspace=0.01)
+    # No legends
+    ax_filt.legend().remove()
+    ax_filt.set_ylim(0.01, None)
+    ax_filt.set_yticklabels("")
+    ax_filt.set_yticks([])
+
+    text = "\n".join(
+        (
+            f"$z = {gal.redshift:.2f}$",
+            f"$M_* = $ {gal.stellar_mass.value:.2e} ${gal.stellar_mass.units.latex_repr}$",
+            f"Age = {gal.stellar_mass_weighted_age:.2e}",
+            rf"$\overline{{\tau_V}} = ${gal.tau_v.mean():.2e}",
+        )
+    )
+    props = dict(boxstyle="square", facecolor="lightgrey", alpha=0.5)
+    ax.text(
+        0.01,
+        0.96,
+        text,
+        transform=ax.transAxes,
+        fontsize=7,
+        verticalalignment="top",
+        bbox=props,
+    )
+
+    if len(spec_type) > 1:
+        ax.legend(frameon=False)
+    return fig

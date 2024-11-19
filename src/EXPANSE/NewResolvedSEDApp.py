@@ -22,6 +22,7 @@ from holoviews import opts, streams
 from matplotlib.colors import Normalize
 import param
 import functools
+import tempfile
 import inspect
 import copy
 
@@ -33,6 +34,77 @@ galaxies_dir = os.path.join(
     ),
     "galaxies",
 )
+
+MAXIMIZE_CSS = """
+.plot-container .bk-btn {
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    z-index: 100;
+    background-color: rgba(255,255,255,0.8);
+    border: 1px solid #ccc;
+}
+
+.plot-container {
+    position: relative;
+}
+"""
+# buttons have class='bk-btn bk-btn-default'
+NO_BUTTON_BORDER = """
+button {
+    border: none;
+}
+.bk-btn {
+    border: none;
+}
+:host(.outline) .bk-btn.bk-btn-default {
+    border: none;
+}
+"""
+
+INVISIBLE_TEXT = """
+.bk-btn a {
+    font-size: 0px;
+}
+"""
+
+
+def notify_on_error(func):
+    """
+    Decorator that catches any exceptions and displays them as panel notifications.
+    Also preserves the docstring and name of the decorated function.
+
+    Args:
+        func: Function to decorate
+
+    Returns:
+        Wrapped function that displays errors as notifications
+    """
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            # Get full traceback
+            import traceback
+
+            tb = traceback.format_exc()
+
+            # Show short error in notification
+            pn.state.notifications.error(
+                f"Error in {func.__name__}: {str(e)}", duration=5000
+            )
+
+            # Print full traceback to console for debugging
+            print(f"Full traceback from {func.__name__}:")
+            print(tb)
+
+            # Return empty pane instead of None
+            return pn.pane.Markdown(f"Error occurred in {func.__name__}")
+
+    return wrapper
 
 
 def custom_depends(*dependencies, watch=False):
@@ -64,9 +136,9 @@ def check_dependencies(cache_attr="_cache"):
                 o.name
                 for o in self.param.method_dependencies(current_function)
             ]
-            print(
-                f"Current function: {current_function}, Dependencies: {dependencies}"
-            )
+            # print(
+            #    f"Current function: {current_function}, Dependencies: {dependencies}"
+            # )
 
             # Get the current values of the dependencies
             current_args = [
@@ -79,7 +151,7 @@ def check_dependencies(cache_attr="_cache"):
             cache = getattr(self, cache_attr)
 
             if current_function not in cache:
-                print("First time running")
+                # print("First time running")
                 result = func(self, *args, **kwargs)
                 cache[current_function] = {
                     "args": current_args,
@@ -89,13 +161,13 @@ def check_dependencies(cache_attr="_cache"):
 
             # Check if any of the arguments have changed
             if current_args != cache[current_function]["args"]:
-                print("Arguments have changed")
+                # print("Arguments have changed")
                 result = func(self, *args, **kwargs)
                 cache[current_function]["args"] = current_args
                 cache[current_function]["result"] = result
                 return result
             else:
-                print("Arguments have not changed")
+                # print("Arguments have not changed")
                 return cache[current_function]["result"]
 
         return wrapper
@@ -158,6 +230,36 @@ class GalaxyTab(param.Parameterized):
         default=None, allow_None=True, doc="Maximum y-axis value for SED plot"
     )
 
+    sfh_time_axis = param.Selector(
+        default="lookback", objects=["lookback", "absolute"]
+    )
+
+    sfh_y_max = param.Number(
+        default=None, allow_None=True, doc="Maximum y-axis value for SFH plot"
+    )
+
+    sfh_y_min = param.Number(
+        default=None, allow_None=True, doc="Minimum y-axis value for SFH plot"
+    )
+
+    sfh_x_max = param.Number(
+        default=None, allow_None=True, doc="Maximum x-axis value for SFH plot"
+    )
+
+    sfh_x_min = param.Number(
+        default=None, allow_None=True, doc="Minimum x-axis value for SFH plot"
+    )
+
+    sfh_log_y = param.Boolean(
+        default=False, doc="Use logarithmic y-axis for SFH plot"
+    )
+
+    sfh_log_x = param.Boolean(
+        default=False, doc="Use logarithmic x-axis for SFH plot"
+    )
+
+    sfh_time_unit = param.Selector(default="Gyr", objects=["Gyr", "Myr", "yr"])
+
     # Parameters for cutouts tab
     red_channel = param.List(default=["F444W"])
     green_channel = param.List(default=["F277W"])
@@ -192,6 +294,7 @@ class GalaxyTab(param.Parameterized):
         "RESOLVED": "red",
     }
 
+    @notify_on_error
     @param.depends()
     def __init__(self, resolved_galaxy, facecolor="#f7f7f7", **params):
         galaxy_id = resolved_galaxy.galaxy_id
@@ -210,6 +313,7 @@ class GalaxyTab(param.Parameterized):
         self.setup_streams()
         self.setup_tabs()
 
+    @notify_on_error
     @param.depends()
     def setup_widgets(self):
         self.which_map_widget = pn.widgets.RadioButtonGroup(
@@ -245,7 +349,7 @@ class GalaxyTab(param.Parameterized):
         )
 
         self.total_fit_options_widget = pn.widgets.MultiChoice(
-            name="Aperture Fits",
+            name="Integrated Photometry Fits",
             options=[
                 "TOTAL_BIN",
                 "MAG_AUTO",
@@ -403,6 +507,7 @@ class GalaxyTab(param.Parameterized):
             ],
             value=self.other_plot_select,
         )
+
         self.other_plot_select_widget.link(self, value="other_plot_select")
 
         self.sed_log_x_widget = pn.widgets.Checkbox(
@@ -414,22 +519,64 @@ class GalaxyTab(param.Parameterized):
         self.sed_x_min_widget = pn.widgets.FloatInput(
             name="X-axis Min",
             value=self.sed_x_min,
-            width=145,
+            width=140,
         )
         self.sed_x_max_widget = pn.widgets.FloatInput(
             name="X-axis Max",
             value=self.sed_x_max,
-            width=145,
+            width=140,
         )
         self.sed_y_min_widget = pn.widgets.FloatInput(
             name="Y-axis Min",
             value=self.sed_y_min,
-            width=145,
+            width=140,
         )
         self.sed_y_max_widget = pn.widgets.FloatInput(
             name="Y-axis Max",
             value=self.sed_y_max,
-            width=145,
+            width=140,
+        )
+
+        self.time_axis_widget = pn.widgets.Select(
+            name="Time Axis",
+            options=["lookback", "absolute"],
+            value=self.sfh_time_axis,
+            width=90,
+        )
+
+        self.sfh_time_unit_widget = pn.widgets.Select(
+            name="Time Unit",
+            options=["Gyr", "Myr", "yr"],
+            value="Gyr",
+            width=90,
+        )
+
+        self.sfh_log_x_widget = pn.widgets.Checkbox(
+            name="Log X-axis", value=self.sfh_log_x
+        )
+        self.sfh_log_y_widget = pn.widgets.Checkbox(
+            name="Log Y-axis", value=self.sfh_log_y
+        )
+
+        self.sfh_x_min_widget = pn.widgets.FloatInput(
+            name="X-axis Min",
+            value=self.sfh_x_min,
+            width=140,
+        )
+        self.sfh_x_max_widget = pn.widgets.FloatInput(
+            name="X-axis Max",
+            value=self.sfh_x_max,
+            width=140,
+        )
+        self.sfh_y_min_widget = pn.widgets.FloatInput(
+            name="Y-axis Min",
+            value=self.sfh_y_min,
+            width=140,
+        )
+        self.sfh_y_max_widget = pn.widgets.FloatInput(
+            name="Y-axis Max",
+            value=self.sfh_y_max,
+            width=140,
         )
 
         self.sed_log_x_widget.link(self, value="sed_log_x")
@@ -438,6 +585,15 @@ class GalaxyTab(param.Parameterized):
         self.sed_x_max_widget.link(self, value="sed_x_max")
         self.sed_y_min_widget.link(self, value="sed_y_min")
         self.sed_y_max_widget.link(self, value="sed_y_max")
+
+        self.sfh_log_x_widget.link(self, value="sfh_log_x")
+        self.sfh_log_y_widget.link(self, value="sfh_log_y")
+        self.sfh_x_min_widget.link(self, value="sfh_x_min")
+        self.sfh_x_max_widget.link(self, value="sfh_x_max")
+        self.sfh_y_min_widget.link(self, value="sfh_y_min")
+        self.sfh_y_max_widget.link(self, value="sfh_y_max")
+        self.time_axis_widget.link(self, value="sfh_time_axis")
+        self.sfh_time_unit_widget.link(self, value="sfh_time_unit")
 
         self.sed_plot_controls = pn.Accordion(
             (
@@ -448,7 +604,20 @@ class GalaxyTab(param.Parameterized):
                     pn.Row(self.sed_y_min_widget, self.sed_y_max_widget),
                 ),
             ),
-            active=[0],  # Open by default
+            active=[1],  # Open by default
+        )
+
+        self.sfh_plot_controls = pn.Accordion(
+            (
+                "SFH Plot Controls",
+                pn.Column(
+                    pn.Row(self.time_axis_widget, self.sfh_time_unit_widget),
+                    pn.Row(self.sfh_log_x_widget, self.sfh_log_y_widget),
+                    pn.Row(self.sfh_x_min_widget, self.sfh_x_max_widget),
+                    pn.Row(self.sfh_y_min_widget, self.sfh_y_max_widget),
+                ),
+            ),
+            active=[1],  # Open by default
         )
 
         self.interactive_photometry_button = pn.widgets.Button(
@@ -500,6 +669,7 @@ class GalaxyTab(param.Parameterized):
             self, value="interactive_aperture_radius"
         )
 
+    @notify_on_error
     @param.depends("point_selector.point")
     def update_selected_bins(self):
         if self.point_selector.point:
@@ -524,6 +694,7 @@ class GalaxyTab(param.Parameterized):
             # Update the widget
             self.multi_choice_bins_widget.value = self.multi_choice_bins
 
+    @notify_on_error
     @param.depends(
         # "resolved_galaxy",
         "which_map",
@@ -549,14 +720,19 @@ class GalaxyTab(param.Parameterized):
 
             if sed_results_plot is not None:
                 plt.close(sed_results_plot)
-                sed_results = pn.Row(
-                    pn.pane.Matplotlib(
-                        sed_results_plot,
-                        dpi=144,
-                        tight=True,
-                        format="svg",
-                        sizing_mode="scale_both",
-                    )
+                sed_results = pn.pane.Matplotlib(
+                    sed_results_plot,
+                    dpi=144,
+                    tight=True,
+                    format="svg",
+                    sizing_mode="scale_both",
+                )
+
+                sed_results = self.wrap_plot_with_maximize(
+                    sed_results,
+                    name="stellar_mass_sfr_maps",
+                    right_pos="40px",
+                    top_pos="222px",
                 )
             else:
                 sed_results = pn.pane.Markdown("No Bagpipes results found.")
@@ -565,6 +741,7 @@ class GalaxyTab(param.Parameterized):
 
         return sed_results
 
+    @notify_on_error
     @param.depends()
     def plot_bagpipes_table(self):
         table_pd = self.resolved_galaxy.compose_bagpipes_pandas_table()
@@ -622,6 +799,7 @@ class GalaxyTab(param.Parameterized):
 
         return table
 
+    @notify_on_error
     @param.depends()
     def create_sed_results_tab(self):
         sed_results_grid = pn.Column(sizing_mode="stretch_both")
@@ -675,6 +853,7 @@ class GalaxyTab(param.Parameterized):
 
         return sed_results_grid
 
+    @notify_on_error
     @param.depends()
     def update_active_tab(self, event):
         self.active_tab = event.new
@@ -685,6 +864,7 @@ class GalaxyTab(param.Parameterized):
             print("No app attribute")
             print("Warning: No app attribute found. Cannot update sidebar.")
 
+    @notify_on_error
     @param.depends()
     def setup_streams(self):
         self.point_selector = hv.streams.Tap(
@@ -692,6 +872,7 @@ class GalaxyTab(param.Parameterized):
         )
         # self.point_selector = hv.streams.PointSelector(
 
+    @notify_on_error
     @param.depends()
     def setup_tabs(self):
         self.cutouts_tab = pn.param.ParamMethod(
@@ -724,9 +905,123 @@ class GalaxyTab(param.Parameterized):
                 self.create_synthesizer_tab, loading_indicator=True
             )
             self.info_tabs.append(("Synthesizer", self.synthesizer_tab))
+        else:
+            pass
 
         self.info_tabs.param.watch(self.update_active_tab, "active")
 
+    @notify_on_error
+    def wrap_plot_with_maximize(
+        self, plot_pane, name="Plot", right_pos="70px", top_pos="10px"
+    ):
+        """
+        Wraps a plot pane with a maximize button that opens the plot in the template modal.
+
+        Args:
+            plot_pane (pn.pane): Panel pane containing the plot
+            name (str): Name/title for the modal window
+
+        Returns:
+            pn.Column: Column containing the plot and maximize button
+        """
+        # Create maximize button
+        max_button = pn.widgets.Button(
+            icon="arrows-maximize",
+            sizing_mode="fixed",
+            icon_size="20px",
+            button_style="outline",
+            align="start",
+            margin=(0, 0, 0, 0),
+            styles={
+                "position": "absolute",
+                "right": right_pos,
+                "top": top_pos,
+                "z-index": "100",
+                "background-color": "rgba(255,255,255,0.0)",
+                "border": "none",
+            },
+            stylesheets=[NO_BUTTON_BORDER],
+        )
+
+        def save_func():
+            # make a temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False)
+            path = f"{temp_file.name}.png"
+            if type(plot_pane) == pn.pane.Matplotlib:
+                fig = plot_pane.object.figure
+                fig.savefig(path, dpi=144, bbox_inches="tight")
+            else:
+                plot_pane.save(path)
+            temp_file.close()
+            return path
+
+        download_button = pn.widgets.FileDownload(
+            filename=f"{self.resolved_galaxy.galaxy_id}_{name}.png",
+            button_type="default",
+            button_style="outline",
+            label="",
+            name="",
+            icon="download",
+            icon_size="20px",
+            margin=(0, 0, 0, 0),
+            callback=save_func,
+            styles={
+                "position": "absolute",
+                "right": f"{int(right_pos.split('px')[0])+17}px",
+                "top": f"{int(top_pos.split('px')[0])+5}px",
+                "z-index": "100",
+                "background-color": "rgba(255,255,255,0.0)",
+                "border": "none",
+            },
+            stylesheets=[INVISIBLE_TEXT, NO_BUTTON_BORDER],
+        )
+
+        # Define button click behavior
+        def maximize(event):
+            # Create a larger version of the plot for the modal
+            modal_figure = plot_pane.clone(sizing_mode="stretch_both")
+            # make interactive
+            # Adjust figure size
+            # Get size of the current figure
+            size = modal_figure.object.figure.get_size_inches()
+            if size[0] < 12:
+                modal_figure.object.figure.set_size_inches(12, 7)
+
+            # Change background color to white
+            modal_figure.object.figure.patch.set_facecolor("white")
+
+            # trigger the figure to update
+            modal_figure.param.trigger("object")
+
+            # self.app.panel.modal is a Row - remove all existing content
+            modal_plot = pn.Column(
+                "### " + name,
+                modal_figure,
+                sizing_mode="stretch_both",
+                max_width=1100,
+                max_height=800,
+                min_height=500,
+                min_width=500,
+            )
+            self.app.modal.clear()
+
+            self.app.modal.append(modal_plot)
+
+            # self.app.panel.modal.title = name
+            self.app.panel.open_modal()
+
+        max_button.on_click(maximize)
+
+        # Create layout with plot and button
+        return pn.Row(
+            plot_pane,
+            download_button,
+            max_button,
+            # css_classes=['plot-container']
+            # stylesheets=[MAXIMIZE_CSS]
+        )
+
+    @notify_on_error
     @param.depends()
     def create_cutouts_tab(self):
         cutout_grid = pn.Column(scroll=True, sizing_mode="stretch_width")
@@ -767,6 +1062,7 @@ class GalaxyTab(param.Parameterized):
 
         return cutout_grid
 
+    @notify_on_error
     @param.depends("band_select")
     @check_dependencies()
     def do_snr_plot(self):
@@ -778,6 +1074,7 @@ class GalaxyTab(param.Parameterized):
             fig, dpi=144, tight=True, format="svg", width=300, height=300
         )
 
+    @notify_on_error
     @param.depends("other_plot_select")
     @check_dependencies()
     def do_other_plot(self):
@@ -794,6 +1091,7 @@ class GalaxyTab(param.Parameterized):
                 fig = self.resolved_galaxy.pixedfit_plot_radial_SNR()
         except Exception as e:
             print(e)
+            pn.state.notifications.error(f"Error: {e}", duration=5000)
             fig = plt.figure()
 
         plt.close(fig)
@@ -806,6 +1104,7 @@ class GalaxyTab(param.Parameterized):
             sizing_mode="stretch_both",
         )
 
+    @notify_on_error
     @param.depends(
         # "resolved_galaxy",
         "which_map",
@@ -905,6 +1204,7 @@ class GalaxyTab(param.Parameterized):
         else:
             return pn.pane.Markdown("No Bagpipes results found.")
 
+    @notify_on_error
     @param.depends()
     def create_photometric_properties_tab(self):
         phot_prop_page = pn.Column(
@@ -940,6 +1240,7 @@ class GalaxyTab(param.Parameterized):
 
         return phot_prop_page
 
+    @notify_on_error
     @param.depends()
     def create_interactive_tab(self):
         interactive_plot = self.create_interactive_plot()
@@ -1012,6 +1313,7 @@ class GalaxyTab(param.Parameterized):
             ),
         )
 
+    @notify_on_error
     @param.depends("interactive_band", "drawn_shapes")
     def create_interactive_plot(self):
         image_data = self.resolved_galaxy.phot_imgs[self.interactive_band]
@@ -1114,6 +1416,7 @@ class GalaxyTab(param.Parameterized):
 
         return self.interactive_plot
 
+    @notify_on_error
     @param.depends("which_interactive_sed_fitter")
     def interactive_sed_fitting_options(self):
         if self.which_interactive_sed_fitter == "EAZY-py":
@@ -1153,6 +1456,7 @@ class GalaxyTab(param.Parameterized):
                 value="BC03",
             )
 
+    @notify_on_error
     @param.depends()
     def photometry_from_shapes(self, event, flux_unit=u.ABmag):
         # Label the drawn shapes on the bokeh plot
@@ -1445,6 +1749,7 @@ class GalaxyTab(param.Parameterized):
 
             self.interactive_sed_plot.object = newfig
 
+    @notify_on_error
     @param.depends()
     def convert_regions_to_shapes(self, regions):
         from regions import (
@@ -1504,6 +1809,7 @@ class GalaxyTab(param.Parameterized):
 
         return shapes
 
+    @notify_on_error
     @param.depends()
     def convert_shapes_to_regions(self):
         from regions import (
@@ -1627,7 +1933,7 @@ class GalaxyTab(param.Parameterized):
         return regions, region_labels
 
     # @lru_cache(maxsize=None)
-
+    @notify_on_error
     @param.depends()
     def update_sidebar(self):
         sidebar = pn.Column(
@@ -1670,6 +1976,7 @@ class GalaxyTab(param.Parameterized):
                     self.multi_choice_bins_widget,
                     self.total_fit_options_widget,
                     self.sed_plot_controls,
+                    self.sfh_plot_controls,
                 ]
             )
         elif self.active_tab == 2:  # Photometric Properties
@@ -1705,6 +2012,7 @@ class GalaxyTab(param.Parameterized):
 
         return sidebar
 
+    @notify_on_error
     @param.depends(
         # "resolved_galaxy",
         "red_channel",
@@ -1783,7 +2091,7 @@ class GalaxyTab(param.Parameterized):
         return pn.pane.HoloViews(rgb_img, height=400, width=430)
 
     # @lru_cache(maxsize=None)
-
+    @notify_on_error
     @param.depends(
         "which_map",
         "show_galaxy",
@@ -1915,6 +2223,7 @@ class GalaxyTab(param.Parameterized):
         return bin_map
 
     # @lru_cache(maxsize=None)
+    @notify_on_error
     @param.depends("psf_mode")
     @check_dependencies()
     def plot_cutouts(self, psf_type="star_stack"):
@@ -1944,6 +2253,7 @@ class GalaxyTab(param.Parameterized):
             sizing_mode="scale_width",
         )
 
+    @notify_on_error
     def possible_runs_select(self, sed_fitting_tool):
         """
         Update the available SED fitting runs based on the selected tool.
@@ -1991,6 +2301,7 @@ class GalaxyTab(param.Parameterized):
             self.which_run_resolved_widget, self.which_run_aperture_widget
         )
 
+    @notify_on_error
     @param.depends(
         # "resolved_galaxy",
         "which_map",
@@ -2016,6 +2327,12 @@ class GalaxyTab(param.Parameterized):
             ):
                 if self.which_map == "pixedfit":
                     map = self.resolved_galaxy.pixedfit_map
+                elif self.which_map == "voronoi":
+                    map = self.resolved_galaxy.voronoi_map
+                else:
+                    map = getattr(
+                        self.resolved_galaxy, f"{self.which_map}_map"
+                    )
 
                 norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
 
@@ -2080,6 +2397,7 @@ class GalaxyTab(param.Parameterized):
                 f"Not implemented for {self.which_sed_fitter}."
             )
 
+    @notify_on_error
     @param.depends(
         # "resolved_galaxy",
         "which_map",
@@ -2337,11 +2655,20 @@ class GalaxyTab(param.Parameterized):
 
         if self.sed_y_min is not None or self.sed_y_max is not None:
             ax.set_ylim(self.sed_y_min, self.sed_y_max)
+        elif ax.get_ylim()[0] < 0:
+            ax.set_ylim(0, ax.get_ylim()[1])
 
         ax.legend(loc="upper left", frameon=False, fontsize="small")
 
-        self.sed_plot = pn.pane.Matplotlib(
-            fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both"
+        self.sed_plot = self.wrap_plot_with_maximize(
+            pn.pane.Matplotlib(
+                fig,
+                dpi=144,
+                tight=True,
+                format="svg",
+                sizing_mode="scale_both",
+            ),
+            name="SED Plot",
         )
 
         # self.key_sed_plot_params = {'x_unit': copy.copy(x_unit), 'y_unit': copy.copy(y_unit), 'show_sed_photometry': copy.copy(show_sed_photometry)},
@@ -2349,6 +2676,7 @@ class GalaxyTab(param.Parameterized):
         # plt.close(fig)
         return self.sed_plot
 
+    @notify_on_error
     @param.depends(
         # "resolved_galaxy",
         "which_map",
@@ -2420,7 +2748,7 @@ class GalaxyTab(param.Parameterized):
                 )
 
             plt.close(fig)
-            return pn.pane.Matplotlib(
+            pane = pn.pane.Matplotlib(
                 fig,
                 dpi=144,
                 tight=True,
@@ -2429,11 +2757,15 @@ class GalaxyTab(param.Parameterized):
                 max_width=800,
                 min_width=500,
             )
+            return self.wrap_plot_with_maximize(
+                pane, name="Corner Plot", top_pos="200px"
+            )
         else:
             return pn.pane.Markdown(
                 f"Corner plot not implemented for {self.which_sed_fitter}."
             )
 
+    @notify_on_error
     @param.depends(
         "which_map",
         "which_sed_fitter",
@@ -2441,6 +2773,14 @@ class GalaxyTab(param.Parameterized):
         "which_run_aperture",
         "which_run_resolved",
         "total_fit_options",
+        "sfh_time_axis",
+        "sfh_log_y",
+        "sfh_y_min",
+        "sfh_y_max",
+        "sfh_x_min",
+        "sfh_x_max",
+        "sfh_log_x",
+        "sfh_time_unit",
     )
     def plot_sfh(self):
         """
@@ -2482,7 +2822,8 @@ class GalaxyTab(param.Parameterized):
                     save=False,
                     facecolor=self.facecolor,
                     marker_colors=colors_bins,
-                    time_unit="Gyr",
+                    plottype=self.sfh_time_axis,
+                    time_unit=self.sfh_time_unit,
                     run_dir="pipes/",
                     fig=fig,
                     axes=ax,
@@ -2495,7 +2836,8 @@ class GalaxyTab(param.Parameterized):
                     save=False,
                     facecolor=self.facecolor,
                     marker_colors=colors_total,
-                    time_unit="Gyr",
+                    time_unit=self.sfh_time_unit,
+                    plottype=self.sfh_time_axis,
                     run_dir="pipes/",
                     fig=fig,
                     axes=ax,
@@ -2508,27 +2850,59 @@ class GalaxyTab(param.Parameterized):
                     "No Bagpipes results found for SFH plot."
                 )
 
-            ax.set_xlabel("Lookback Time (Gyr)", fontsize="large")
-            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)", fontsize="large")
-            # set tick label size
+            if self.sfh_time_axis == "lookback":
+                ax.set_xlabel(
+                    f"Lookback Time ({self.sfh_time_unit})", fontsize="large"
+                )
+            else:
+                ax.set_xlabel(
+                    f"Age of the Universe ({self.sfh_time_unit})",
+                    fontsize="large",
+                )
+
             ax.tick_params(axis="both", which="major", labelsize="medium")
-            ax.set_yscale("log")
-            ax.set_ylim(0.1, None)
-            ax.legend(loc="upper right", fontsize="medium")
+
+            if self.sfh_log_y:
+                ax.set_yscale("log")
+                ax.set_ylim(0.1, None)
+                yaxis = r"$\log_{10}$"
+            else:
+                yaxis = ""
+
+            ax.set_ylabel(
+                rf"SFR ({yaxis} M$_{{\odot}}$ yr$^{{-1}}$)", fontsize="large"
+            )
+            # set tick label size
+
+            if self.sfh_log_x:
+                ax.set_xscale("log")
+
+            if self.sfh_x_min is not None or self.sfh_x_max is not None:
+                ax.set_xlim(self.sfh_x_min, self.sfh_x_max)
+
+            if self.sfh_y_min is not None or self.sfh_y_max is not None:
+                ax.set_ylim(self.sfh_y_min, self.sfh_y_max)
+
+            ax.legend(loc="upper right", fontsize="medium", frameon=False)
 
             plt.close(fig)
-            return pn.pane.Matplotlib(
+
+            pane = pn.pane.Matplotlib(
                 fig,
                 dpi=144,
                 tight=True,
                 format="svg",
                 sizing_mode="scale_both",
             )
+            return self.wrap_plot_with_maximize(
+                pane, name="SFH Plot", top_pos="210px", right_pos="8px"
+            )
         else:
             return pn.pane.Markdown(
                 f"SFH plotting not implemented for {self.which_sed_fitter}."
             )
 
+    @notify_on_error
     @param.depends()
     def create_synthesizer_tab(self):
         synthesizer_page = pn.Column()
@@ -2582,6 +2956,7 @@ class GalaxyTab(param.Parameterized):
 
         return synthesizer_page
 
+    @notify_on_error
     @param.depends()
     def plot_map_with_controls(self, map_array, label="", unit=""):
         range_slider = pn.widgets.RangeSlider(
@@ -2597,6 +2972,7 @@ class GalaxyTab(param.Parameterized):
         )
         log_scale = pn.widgets.Checkbox(name="Log Scale", value=True)
 
+        @notify_on_error
         @pn.depends(
             range_slider.param.value,
             colormap_choice.param.value,
@@ -2642,6 +3018,7 @@ class GalaxyTab(param.Parameterized):
 
         return pn.Column(plot_pane, accordion)
 
+    @notify_on_error
     @param.depends()
     def plot_mock_spectra(self, components):
         fig, ax = plt.subplots(figsize=(8, 4.5), facecolor="white")
@@ -2679,6 +3056,7 @@ class ResolvedSEDApp(param.Parameterized):
     galaxies_dir = galaxies_dir
     active_galaxy_tab = param.Integer(0)
 
+    @notify_on_error
     def __init__(self, **params):
         super().__init__(**params)
         self.sidebar = self.create_sidebar()
@@ -2686,7 +3064,9 @@ class ResolvedSEDApp(param.Parameterized):
             closable=True, dynamic=True, scroll=False, min_height=2000
         )
         self.tabs.param.watch(self.update_active_galaxy_tab, "active")
+        self.modal = pn.Column(width=1300, height=700)
 
+    @notify_on_error
     def create_sidebar(self):
         self.file_input = pn.widgets.FileInput(accept=".h5")
         self.choose_file_input = pn.widgets.Select(
@@ -2718,23 +3098,35 @@ class ResolvedSEDApp(param.Parameterized):
             "### Upload .h5", self.file_input, "### or", self.choose_file_input
         )
 
-    def handle_file_upload(self, value):
+    @notify_on_error
+    def handle_file_upload(self, value, local=False, path=None):
         # Process uploaded file and create new GalaxyTab
         file = BytesIO(value)
         hfile = h5.File(file, "r")
 
-        # ... Process file and create ResolvedGalaxy or MockResolvedGalaxy ...
-        file = BytesIO(value)
-
-        hfile = h5.File(file, "r")
         # what is the filename
         mtype = "mock" if "mock_galaxy" in hfile.keys() else "resolved"
         hfile.close()
 
-        if mtype == "mock":
-            resolved_galaxy = MockResolvedGalaxy.init_from_h5(file)
+        if path is not None:
+            h5_folder = os.path.dirname(path)
+            if mtype == "mock":
+                resolved_galaxy = MockResolvedGalaxy.init_from_h5(
+                    file, save_out=local, h5_folder=h5_folder
+                )
+            else:
+                resolved_galaxy = ResolvedGalaxy.init_from_h5(
+                    file, save_out=local, h5_folder=h5_folder
+                )
         else:
-            resolved_galaxy = ResolvedGalaxy.init_from_h5(file)
+            if mtype == "mock":
+                resolved_galaxy = MockResolvedGalaxy.init_from_h5(
+                    file, save_out=local
+                )
+            else:
+                resolved_galaxy = ResolvedGalaxy.init_from_h5(
+                    file, save_out=local
+                )
 
         galaxy_tab = GalaxyTab(resolved_galaxy)
 
@@ -2749,28 +3141,35 @@ class ResolvedSEDApp(param.Parameterized):
         )
         self.update_sidebar()
 
+    @notify_on_error
     def choose_file(self, value):
         # Load file from galaxies_dir and call handle_file_upload
         path = f"{galaxies_dir}/{value}"
         if os.path.exists(path):
             with open(path, "rb") as f:
                 value = f.read()
-            self.handle_file_upload(value)
+            self.handle_file_upload(value, local=True, path=path)
         else:
             raise FileNotFoundError(f"File {path} not found.")
 
+    @notify_on_error
     def get_panel(self):
-        return pn.template.FastListTemplate(
+        self.panel = pn.template.FastListTemplate(
             title="EXPANSE - Resolved SED Viewer",
             sidebar=[self.sidebar],
             main=[self.tabs],
+            modal=[self.modal],
             accent=ACCENT,
         )
 
+        return self.panel
+
+    @notify_on_error
     def update_active_galaxy_tab(self, event):
         self.update_sidebar()
         self.active_galaxy_tab = event.new
 
+    @notify_on_error
     def update_sidebar(self):
         if self.galaxy_tabs:
             active_galaxy = self.galaxy_tabs[self.active_galaxy_tab]
@@ -2819,6 +3218,9 @@ def expanse_viewer_class(
 
     hv.extension("bokeh", logo=False)
     pn.extension("mathjax")
+    pn.extension(notifications=True)
+    # Add CSS for maximize buttons
+    # pn.extension(raw_css=[MAXIMIZE_CSS])
     pn.extension("tabulator")
 
     initial_galaxy = copy.copy(galaxy)
