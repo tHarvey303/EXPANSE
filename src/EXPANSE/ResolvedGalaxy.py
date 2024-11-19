@@ -5612,13 +5612,16 @@ class ResolvedGalaxy:
             )
             fit_photometry = meta["fit_photometry"]
 
-        print(f"Fitting photometry: {fit_photometry}")
+        print(
+            f"Fitting photometry: {fit_photometry} with run_name {meta.get('run_name', 'default')}"
+        )
 
         fit_instructions = bagpipes_config.get("fit_instructions", {})
 
         use_bpass = meta.get("use_bpass", False)
         os.environ["use_bpass"] = str(int(use_bpass))
         run_name = meta.get("run_name", "default")
+
         redshift = meta.get(
             "redshift", self.redshift
         )  # PLACEHOLDER for self.redshift
@@ -12464,7 +12467,9 @@ class ResolvedGalaxies(np.ndarray):
             if (
                 all(
                     [
-                        run_name in galaxy.sed_fitting_table["bagpipes"].keys()
+                        "bagpipes" in galaxy.sed_fitting_table.keys()
+                        and run_name
+                        in galaxy.sed_fitting_table["bagpipes"].keys()
                         for galaxy in self.galaxies
                     ]
                 )
@@ -12750,7 +12755,7 @@ class ResolvedGalaxies(np.ndarray):
                             f"Could not load resolved properties for {run_name}"
                         )
         except Exception as e:
-            print(f"Error in {galaxy_id}: {e}")
+            print(f"Error!: {e}")
             print(traceback.format_exc())
             if alert:
                 from .utils import send_email

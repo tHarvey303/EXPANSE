@@ -333,7 +333,7 @@ def create_dicts(
 ):
     dict = copy.deepcopy(dict)
     if override_meta:
-        if "name_append" in override_meta:
+        if "name_append" in override_meta.keys():
             dict["meta"]["run_name"] += override_meta["name_append"]
             override_meta.pop("name_append")
 
