@@ -4,6 +4,7 @@ from .pipes_models import (
     continuity_bursty_dict,
     dpl_dict,
     lognorm_dict,
+    cnst_dict,
     resolved_dict_cnst,
     resolved_dict_bursty,
     create_dicts,
