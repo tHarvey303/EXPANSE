@@ -191,6 +191,36 @@ overall_dict = {"meta": meta_dpl, "fit_instructions": fit_instructions_dpl}
 
 dpl_dict = copy.deepcopy(overall_dict)
 
+
+# -------------------------------------------------------------------------------------
+# Constant SFH fit to match resolved
+
+sfh = {}
+sfh_type = "constant"
+
+sfh["age"] = (0.01, 2.5)  # Gyr
+sfh["massformed"] = (5.0, 12.0)  # Log_10 total stellar mass formed: M_Solar
+sfh["metallicity"] = (1e-3, 2.5)
+sfh["age_prior"] = "uniform"
+sfh["metallicity_prior"] = "uniform"
+
+fit_instructions_cnst = {
+    "t_bc": 0.01,
+    sfh_type: sfh,
+    "nebular": nebular,
+    "dust": dust,
+}
+
+meta_cnst = {
+    "run_name": "photoz_cnst",
+    "redshift": "self",
+    "redshift_sigma": "min",
+    "min_redshift_sigma": 0.5,
+    "fit_photometry": "TOTAL_BIN",
+    "sampler": "multinest",
+}
+
+
 # -------------------------------------------------------------------------------------
 # Fourth fit
 # Log normal SFH
@@ -296,6 +326,10 @@ def create_dicts(
 ):
     dict = copy.deepcopy(dict)
     if override_meta:
+        if "name_append" in override_meta:
+            dict["meta"]["run_name"] += override_meta["name_append"]
+            override_meta.pop("name_append")
+
         dict["meta"].update(override_meta)
     results = [copy.deepcopy(dict) for i in range(num)]
     if (

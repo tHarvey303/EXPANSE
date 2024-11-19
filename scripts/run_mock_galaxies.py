@@ -42,7 +42,7 @@ elif computer == "singularity":
 if __name__ == "__main__":
     mock_field = "JOF_psfmatched"
     overwrite = True
-    bagpipes_only = False  # This is for running Bagpipes only if the galaxies have already been created
+    bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
     load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
     only_new = (
         False  # This is whether to skip initial running of existing .h5 files.
@@ -89,7 +89,7 @@ if __name__ == "__main__":
                     print(
                         f"Doing {redshift_code} region {region}, galaxy {gal_id}"
                     )
-
+                    """
                     if start_now or (
                         redshift_code == "010_z005p000"
                         and region == "10"
@@ -99,6 +99,7 @@ if __name__ == "__main__":
                         start_now = True
                     else:
                         continue
+                    """
 
                     if only_new and os.path.exists(
                         os.path.join(
@@ -175,11 +176,27 @@ if __name__ == "__main__":
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
 
-    override_meta = {"use_bpass": True, "redshift": "eazy"}
+    override_meta = {
+        "use_bpass": True,
+        "redshift": "self",
+        "min_redshift_sigma": 0,
+        "redshift_sigma": 0,
+        "name_append": "_zfix",
+    }
     override_cont_meta = {
         "use_bpass": True,
-        "redshift": "eazy",
+        "redshift": "self",
+        "name_append": "_zfix",
         "update_cont_bins": True,
+        "min_redshift_sigma": 0,
+        "redshift_sigma": 0,
+    }
+    resolved_meta = {
+        "use_bpass": True,
+        "redshift": "self",
+        "name_append": "_zfix",
+        "min_redshift_sigma": 0,
+        "redshift_sigma": 0,
     }
     # Different meta to allow different SFH bins per galaxy
     continuity_dicts = create_dicts(
@@ -200,21 +217,22 @@ if __name__ == "__main__":
         lognorm_dict, len(galaxies), override_meta=override_meta
     )
     resolved_dicts_cnst = create_dicts(
-        resolved_dict_cnst, len(galaxies), override_meta={"use_bpass": True}
+        resolved_dict_cnst, len(galaxies), override_meta=resolved_meta
     )
 
     resolved_dicts_bursty = create_dicts(
-        resolved_dict_bursty, len(galaxies), override_meta={"use_bpass": True}
+        resolved_dict_bursty, len(galaxies), override_meta=resolved_meta
     )
 
     for dicts in [
-        # continuity_bursty_dicts,
-        # continuity_dicts,
-        # delayed_dicts,
-        # dpl_dicts,
-        # lognorm_dicts,
+        lognorm_dicts,
+        cnst_dicts,
         resolved_dicts_cnst,
-        # resolved_dicts_bursty,
+        continuity_dicts,
+        delayed_dicts,
+        continuity_bursty_dicts,
+        resolved_dicts_bursty,
+        dpl_dicts,
     ]:
         multiple_galaxies.run_bagpipes_parallel(
             dicts,
