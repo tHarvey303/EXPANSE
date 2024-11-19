@@ -220,6 +220,13 @@ meta_cnst = {
     "sampler": "multinest",
 }
 
+overall_dict = {
+    "meta": meta_cnst,
+    "fit_instructions": fit_instructions_cnst,
+}
+
+cnst_dict = copy.deepcopy(overall_dict)
+
 
 # -------------------------------------------------------------------------------------
 # Fourth fit

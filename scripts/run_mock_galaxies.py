@@ -15,6 +15,7 @@ from EXPANSE.bagpipes import (
     create_dicts,
     delayed_dict,
     dpl_dict,
+    cnst_dict,
     lognorm_dict,
     resolved_dict_cnst,
     resolved_dict_bursty,
@@ -205,6 +206,10 @@ if __name__ == "__main__":
 
     continuity_bursty_dicts = create_dicts(
         continuity_bursty_dict, len(galaxies), override_meta=override_cont_meta
+    )
+
+    cnst_dicts = create_dicts(
+        cnst_dict, len(galaxies), override_meta=override_meta
     )
 
     delayed_dicts = create_dicts(
