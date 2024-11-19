@@ -12408,6 +12408,7 @@ class ResolvedGalaxies(np.ndarray):
         out_subdir_name="parallel_temp",
         load_only=False,  # If set to true, will force reloading of properties and skip running
         properties_to_load=["stellar_mass", "sfr", "sfr_10myr"],
+        alert=True,  # If crash, email me!
         **kwargs,
     ):
         """
@@ -12429,307 +12430,336 @@ class ResolvedGalaxies(np.ndarray):
         import subprocess
         import os
 
-        assert all(
-            bagpipes_configs[0]["meta"]["run_name"]
-            == config["meta"]["run_name"]
-            for config in bagpipes_configs
-        ), "All bagpipes configs must have the same run_name (and therefore same overall model)"
+        try:
+            assert all(
+                bagpipes_configs[0]["meta"]["run_name"]
+                == config["meta"]["run_name"]
+                for config in bagpipes_configs
+            ), "All bagpipes configs must have the same run_name (and therefore same overall model)"
 
-        run_name = bagpipes_configs[0]["meta"]["run_name"]
+            run_name = bagpipes_configs[0]["meta"]["run_name"]
 
-        if type(bagpipes_configs) is dict:
-            bagpipes_configs = [
-                copy.deepcopy(bagpipes_configs)
-                for _ in range(len(self.galaxies))
-            ]
+            if type(bagpipes_configs) is dict:
+                bagpipes_configs = [
+                    copy.deepcopy(bagpipes_configs)
+                    for _ in range(len(self.galaxies))
+                ]
 
-        configs = {
-            galaxy.galaxy_id: galaxy.run_bagpipes(
-                bagpipes_config,
-                filt_dir=filt_dir,
-                fit_photometry=fit_photometry,
-                run_dir=run_dir,
-                return_run_args=True,
-                **kwargs,
+            configs = {
+                galaxy.galaxy_id: galaxy.run_bagpipes(
+                    bagpipes_config,
+                    filt_dir=filt_dir,
+                    fit_photometry=fit_photometry,
+                    run_dir=run_dir,
+                    return_run_args=True,
+                    **kwargs,
+                )
+                for galaxy, bagpipes_config in zip(
+                    self.galaxies, bagpipes_configs
+                )
+            }
+
+            # Check if all outputs exist in SED fitting table
+
+            if (
+                all(
+                    [
+                        run_name in galaxy.sed_fitting_table["bagpipes"].keys()
+                        for galaxy in self.galaxies
+                    ]
+                )
+                and not load_only
+            ):
+                print("All galaxies already run, skipping.")
+                return
+
+            assert all(
+                type(config) is dict for config in configs.values()
+            ), f"All configs must be dictionaries, got {[type(config) for config in configs.values()]}"
+            # Dump configs to json
+
+            file = tempfile.NamedTemporaryFile(delete=False)
+            file_path = file.name
+
+            with open(file_path, "w") as f:
+                json.dump(configs, f)
+
+            # Run the mpirun script
+
+            # Get path of script
+
+            script_path = os.path.abspath(__file__).replace(
+                "ResolvedGalaxy.py", "bagpipes/run_bagpipes_parallel.py"
             )
-            for galaxy, bagpipes_config in zip(self.galaxies, bagpipes_configs)
-        }
+            # get path of 'python' executable
 
-        # Check if all outputs exist in SED fitting table
+            run_dir = os.path.abspath(run_dir)  # .replace("pipes", "")
 
-        if (
-            all(
+            # cd to run_dir
+            os.chdir(os.path.dirname(run_dir))
+
+            # Check if already run
+            # If seperate configs exist or if a single catalogue exists, then it is done
+            done = all(
                 [
-                    run_name in galaxy.sed_fitting_table["bagpipes"].keys()
-                    for galaxy in self.galaxies
+                    os.path.exists(
+                        f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}/{galaxy_id}.fits"
+                    )
+                    for galaxy_id, config in configs.items()
+                ]
+            ) or os.path.exists(
+                os.path.join(run_dir, f"cats/{out_subdir_name}.fits")
+            )
+            # also check if .h5 files exist in either location
+
+            for galaxy_id, config in configs.items():
+                # Check all IDs and see if .h5 exists in either new or old location
+                cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
+                for cat_id, gal_id in zip(cat_ids, config["ids"]):
+                    new_path = os.path.join(
+                        run_dir, config["out_dir"], f"{gal_id}.h5"
+                    )
+                    old_path = os.path.join(
+                        run_dir, f"posterior/{out_subdir_name}/{cat_id}.h5"
+                    )
+
+                    if not (
+                        os.path.exists(old_path) or os.path.exists(new_path)
+                    ):
+                        done = False
+                        print(f"Missing .h5 file for {cat_id}")
+                        print(new_path)
+                        print(old_path)
+                        break
+
+            n_fits = int(
+                np.sum(
+                    np.ones(len(configs))
+                    * np.array(
+                        [len(config["ids"]) for config in configs.values()]
+                    )
+                )
+            )
+
+            if not load_only and not done:
+                print(f"Starting mpi process with {n_jobs} cores.")
+                print(f"Run directory: {run_dir}")
+
+                process_args = [
+                    "mpirun",
+                    "-n",
+                    str(n_jobs),
+                    "python",
+                    script_path,
+                    file_path,
+                    out_subdir_name,
+                ]
+                print(" ".join(process_args))
+                # Run and block until finished, check for errors
+
+                process = subprocess.Popen(
+                    process_args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                    env=os.environ,
+                )
+
+                for line in iter(process.stdout.readline, ""):
+                    print(
+                        line, end="", flush=True
+                    )  # end='' because the line already contains a newline
+                    sys.stdout.flush()  # Ensure output is printed immediately
+
+                process.stdout.close()
+                return_code = process.wait()
+
+                if return_code != 0:
+                    raise subprocess.CalledProcessError(
+                        return_code, process_args
+                    )
+
+            else:
+                print("Already run, skipping.")
+            # Folder for posteriors is config[galaxy]['out_dir']
+
+            # Current folder will be run_dir /pipes/parallel_temp
+
+            current_posterior_folder = os.path.join(
+                run_dir, f"posterior/{out_subdir_name}"
+            )
+
+            # Move all files back to where they should be and rename - currently gal_id_bin.h5, should be bin.h5 only
+
+            output_catalogue = os.path.join(
+                run_dir, f"cats/{out_subdir_name}.fits"
+            )
+            done = False
+
+            print(
+                [
+                    f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
+                    for galaxy_id, config in configs.items()
                 ]
             )
-            and not load_only
-        ):
-            print("All galaxies already run, skipping.")
-            return
 
-        assert all(
-            type(config) is dict for config in configs.values()
-        ), f"All configs must be dictionaries, got {[type(config) for config in configs.values()]}"
-        # Dump configs to json
+            if all(
+                [
+                    os.path.exists(
+                        f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
+                    )
+                    for galaxy_id, config in configs.items()
+                ]
+            ):
+                print("Individual galaxy catalogues found. Skipping.")
+                done = True
 
-        file = tempfile.NamedTemporaryFile(delete=False)
-        file_path = file.name
-
-        with open(file_path, "w") as f:
-            json.dump(configs, f)
-
-        # Run the mpirun script
-
-        # Get path of script
-
-        script_path = os.path.abspath(__file__).replace(
-            "ResolvedGalaxy.py", "bagpipes/run_bagpipes_parallel.py"
-        )
-        # get path of 'python' executable
-
-        run_dir = os.path.abspath(run_dir)  # .replace("pipes", "")
-
-        # cd to run_dir
-        os.chdir(os.path.dirname(run_dir))
-
-        # Check if already run
-        # If seperate configs exist or if a single catalogue exists, then it is done
-        done = all(
-            [
-                os.path.exists(
-                    f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}/{galaxy_id}.fits"
-                )
-                for galaxy_id, config in configs.items()
-            ]
-        ) or os.path.exists(
-            os.path.join(run_dir, f"cats/{out_subdir_name}.fits")
-        )
-        # also check if .h5 files exist in either location
-
-        for galaxy_id, config in configs.items():
-            # Check all IDs and see if .h5 exists in either new or old location
-            cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
-            for cat_id, gal_id in zip(cat_ids, config["ids"]):
-                new_path = os.path.join(
-                    run_dir, config["out_dir"], f"{gal_id}.h5"
-                )
-                old_path = os.path.join(
-                    run_dir, f"posterior/{out_subdir_name}/{cat_id}.h5"
-                )
-
-                if not (os.path.exists(old_path) or os.path.exists(new_path)):
-                    done = False
-                    print(f"Missing .h5 file for {cat_id}")
-                    print(new_path)
-                    print(old_path)
-                    break
-
-        n_fits = int(
-            np.sum(
-                np.ones(len(configs))
-                * np.array([len(config["ids"]) for config in configs.values()])
-            )
-        )
-
-        if not load_only and not done:
-            print(f"Starting mpi process with {n_jobs} cores.")
-            print(f"Run directory: {run_dir}")
-
-            process_args = [
-                "mpirun",
-                "-n",
-                str(n_jobs),
-                "python",
-                script_path,
-                file_path,
-                out_subdir_name,
-            ]
-            print(" ".join(process_args))
-            # Run and block until finished, check for errors
-
-            process = subprocess.Popen(
-                process_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-                env=os.environ,
-            )
-
-            for line in iter(process.stdout.readline, ""):
-                print(
-                    line, end="", flush=True
-                )  # end='' because the line already contains a newline
-                sys.stdout.flush()  # Ensure output is printed immediately
-
-            process.stdout.close()
-            return_code = process.wait()
-
-            if return_code != 0:
-                raise subprocess.CalledProcessError(return_code, process_args)
-
-        else:
-            print("Already run, skipping.")
-        # Folder for posteriors is config[galaxy]['out_dir']
-
-        # Current folder will be run_dir /pipes/parallel_temp
-
-        current_posterior_folder = os.path.join(
-            run_dir, f"posterior/{out_subdir_name}"
-        )
-
-        # Move all files back to where they should be and rename - currently gal_id_bin.h5, should be bin.h5 only
-
-        output_catalogue = os.path.join(
-            run_dir, f"cats/{out_subdir_name}.fits"
-        )
-        done = False
-
-        print(
-            [
-                f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
-                for galaxy_id, config in configs.items()
-            ]
-        )
-
-        if all(
-            [
-                os.path.exists(
-                    f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
-                )
-                for galaxy_id, config in configs.items()
-            ]
-        ):
-            print("Individual galaxy catalogues found. Skipping.")
-            done = True
-
-        elif os.path.exists(output_catalogue):
-            output_catalogue = Table.read(output_catalogue)
-            assert (
-                len(output_catalogue) == n_fits
-            ), f"Catalogue length mismatch - {len(output_catalogue)} vs {n_fits}"
-        else:
-            raise FileNotFoundError(
-                f"Could not find output catalogue at {output_catalogue}"
-            )
-
-        if not done:
-            for galaxy_id, config in configs.items():
-                new_dir = os.path.join(run_dir, config["out_dir"])
-                new_cat_dir = os.path.dirname(
-                    new_dir.replace("posterior", "cats")
-                )
-
-                if not os.path.exists(new_dir):
-                    os.makedirs(new_dir)
-
-                cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
-
-                mask = [id in cat_ids for id in output_catalogue["#ID"]]
-                mask = np.array(mask)
-                gal_cat = copy.deepcopy(output_catalogue[mask])
-
+            elif os.path.exists(output_catalogue):
+                output_catalogue = Table.read(output_catalogue)
                 assert (
-                    len(gal_cat) == len(cat_ids)
-                ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
-
-                for id in config["ids"]:
-                    old_path = os.path.join(
-                        current_posterior_folder, f"{galaxy_id}_{id}.h5"
-                    )
-                    new_path = os.path.join(new_dir, f"{id}.h5")
-
-                    if not os.path.exists(old_path) and not os.path.exists(
-                        new_path
-                    ):
-                        raise FileNotFoundError(
-                            f"Could not find .h5 file for {id} at {old_path} or {new_path}"
-                        )
-
-                    if os.path.exists(old_path):
-                        file = h5.File(old_path, "r")
-                        fit_instructions = copy.deepcopy(
-                            file.attrs["fit_instructions"]
-                        )
-                        file.close()
-                        # Parse as dict
-                        import ast
-
-                        fit_instructions = ast.literal_eval(fit_instructions)
-                        # Check if the fit instructions are the same
-
-                        if "redshift" in fit_instructions:
-                            fit_instructions.pop("redshift")
-
-                        # Convert all lists to np arrays
-                        for key, value in fit_instructions.items():
-                            if type(value) is list:
-                                fit_instructions[key] = np.array(value)
-                            if type(value) is dict:
-                                for k, v in value.items():
-                                    if type(v) is list:
-                                        value[k] = np.array(v)
-
-                        assert list(fit_instructions.keys()) == list(
-                            config["fit_instructions"].keys()
-                        ), f"Fit instructions do not match for {id}."
-                        ## Work out what is different
-                        # diff = {k: v for k, v in fit_instructions.items() if v != config['fit_instructions'].get(k, None)}
-                        # raise ValueError(f"Fit instructions do not match for {id}. {diff}")
-                    if not os.path.exists(os.path.dirname(new_path)):
-                        os.makedirs(os.path.dirname(new_path))
-
-                    if not os.path.exists(old_path) and os.path.exists(
-                        new_path
-                    ):
-                        print(
-                            f"Output .h5 found in new location for {id}. Skipping."
-                        )
-                        continue
-
-                    os.rename(old_path, new_path)
-
-                gal_cat["#ID"] = config["ids"]
-                print("New cat dir:", new_cat_dir)
-                if not os.path.exists(new_cat_dir):
-                    os.makedirs(new_cat_dir)
-
-                gal_cat.write(
-                    f"{new_cat_dir}/{galaxy_id}.fits",
-                    overwrite=True,
+                    len(output_catalogue) == n_fits
+                ), f"Catalogue length mismatch - {len(output_catalogue)} vs {n_fits}"
+            else:
+                raise FileNotFoundError(
+                    f"Could not find output catalogue at {output_catalogue}"
                 )
 
-            # Now rename the bulk catalgoue - just add current time to it as a backup
-            os.rename(
-                os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
-                os.path.join(
-                    run_dir,
-                    f"cats/{out_subdir_name}_{time.strftime('%Y%m%d_%H%M%S')}.fits",
-                ),
-            )
-
-        print("Moving on to loading properties into galaxies.")
-
-        for galaxy, config in zip(self.galaxies, bagpipes_configs):
-            run_name = config["meta"]["run_name"]
-            bins_to_show = config["meta"]["fit_photometry"]
-            galaxy.load_bagpipes_results(run_name)
-            if bins_to_show == "bin" or "RESOLVED" in run_name:
-                print(f"Loading resolved properties for {run_name}")
-                # galaxy.get_resolved_bagpipes_sed(run_name)
-                # Save the resolved SFH
-                # fig, _ = galaxy.plot_bagpipes_sfh(
-                #    run_name, bins_to_show=['RESOLVED'])
-                # plt.close(fig)
-                # Save the resolved properties
-                for prop in properties_to_load:
-                    galaxy.get_total_resolved_property(
-                        run_name, property=prop, log=prop == "stellar_mass"
+            if not done:
+                for galaxy_id, config in configs.items():
+                    new_dir = os.path.join(run_dir, config["out_dir"])
+                    new_cat_dir = os.path.dirname(
+                        new_dir.replace("posterior", "cats")
                     )
 
+                    if not os.path.exists(new_dir):
+                        os.makedirs(new_dir)
+
+                    cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
+
+                    mask = [id in cat_ids for id in output_catalogue["#ID"]]
+                    mask = np.array(mask)
+                    gal_cat = copy.deepcopy(output_catalogue[mask])
+
+                    assert (
+                        len(gal_cat) == len(cat_ids)
+                    ), f"Catalogue length mismatch - {len(gal_cat)} vs {len(cat_ids)}"
+
+                    for id in config["ids"]:
+                        old_path = os.path.join(
+                            current_posterior_folder, f"{galaxy_id}_{id}.h5"
+                        )
+                        new_path = os.path.join(new_dir, f"{id}.h5")
+
+                        if not os.path.exists(old_path) and not os.path.exists(
+                            new_path
+                        ):
+                            raise FileNotFoundError(
+                                f"Could not find .h5 file for {id} at {old_path} or {new_path}"
+                            )
+
+                        if os.path.exists(old_path):
+                            file = h5.File(old_path, "r")
+                            fit_instructions = copy.deepcopy(
+                                file.attrs["fit_instructions"]
+                            )
+                            file.close()
+                            # Parse as dict
+                            import ast
+
+                            fit_instructions = ast.literal_eval(
+                                fit_instructions
+                            )
+                            # Check if the fit instructions are the same
+
+                            if "redshift" in fit_instructions:
+                                fit_instructions.pop("redshift")
+
+                            # Convert all lists to np arrays
+                            for key, value in fit_instructions.items():
+                                if type(value) is list:
+                                    fit_instructions[key] = np.array(value)
+                                if type(value) is dict:
+                                    for k, v in value.items():
+                                        if type(v) is list:
+                                            value[k] = np.array(v)
+
+                            assert list(fit_instructions.keys()) == list(
+                                config["fit_instructions"].keys()
+                            ), f"Fit instructions do not match for {id}."
+                            ## Work out what is different
+                            # diff = {k: v for k, v in fit_instructions.items() if v != config['fit_instructions'].get(k, None)}
+                            # raise ValueError(f"Fit instructions do not match for {id}. {diff}")
+                        if not os.path.exists(os.path.dirname(new_path)):
+                            os.makedirs(os.path.dirname(new_path))
+
+                        if not os.path.exists(old_path) and os.path.exists(
+                            new_path
+                        ):
+                            print(
+                                f"Output .h5 found in new location for {id}. Skipping."
+                            )
+                            continue
+
+                        os.rename(old_path, new_path)
+
+                    gal_cat["#ID"] = config["ids"]
+                    print("New cat dir:", new_cat_dir)
+                    if not os.path.exists(new_cat_dir):
+                        os.makedirs(new_cat_dir)
+
+                    gal_cat.write(
+                        f"{new_cat_dir}/{galaxy_id}.fits",
+                        overwrite=True,
+                    )
+
+                # Now rename the bulk catalgoue - just add current time to it as a backup
+                os.rename(
+                    os.path.join(run_dir, f"cats/{out_subdir_name}.fits"),
+                    os.path.join(
+                        run_dir,
+                        f"cats/{out_subdir_name}_{time.strftime('%Y%m%d_%H%M%S')}.fits",
+                    ),
+                )
+
+            print("Moving on to loading properties into galaxies.")
+
+            for galaxy, config in zip(self.galaxies, bagpipes_configs):
+                run_name = config["meta"]["run_name"]
+                bins_to_show = config["meta"]["fit_photometry"]
+                galaxy.load_bagpipes_results(run_name)
+                if bins_to_show == "bin" or "RESOLVED" in run_name:
+                    try:
+                        print(f"Loading resolved properties for {run_name}")
+                        galaxy.get_resolved_bagpipes_sed(run_name)
+                        # Save the resolved SFH
+                        fig, _ = galaxy.plot_bagpipes_sfh(
+                            run_name, bins_to_show=["RESOLVED"]
+                        )
+                        plt.close(fig)
+                        # Save the resolved properties
+                        for prop in properties_to_load:
+                            galaxy.get_total_resolved_property(
+                                run_name,
+                                property=prop,
+                                log=prop == "stellar_mass",
+                            )
+                    except Exception as e:
+                        print(
+                            f"Could not load resolved properties for {run_name}"
+                        )
+        except Exception as e:
+            print(f"Error in {galaxy_id}: {e}")
+            print(traceback.format_exc())
+            if alert:
+                from .utils import send_email
+
+                ctime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+                send_email(
+                    contents=f"Crash \n {e} \n {traceback.format_exc()}",
+                    subject=f"{sys.argv[0]} crash at {ctime} on {computer}",
+                )
         # When it has run, need to move and rename posterior files for each galaxy, and
         # split catalogues back out again.
 

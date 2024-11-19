@@ -390,9 +390,20 @@ def send_email(contents, subject="", address="tharvey303@gmail.com"):
     """
     import yagmail
 
+    if computer == "morgan":
+        oauth2_file = (
+            "/nvme/scratch/work/tharvey/scripts/testing/client_secret.json"
+        )
+    elif computer == "singularity":
+        oauth2_file = glob.glob("/home/scripts/client_secret_*.json")[0]
+    else:
+        print("No oauth2 file found, skipping email.")
+        print(contents)
+        return
+
     yagmail.SMTP(
         "tcharvey303",
-        oauth2_file="/nvme/scratch/work/tharvey/scripts/testing/client_secret.json",
+        oauth2_file=oauth2_file,
     ).send(address, subject, contents)
     print("Sent email.")
 
