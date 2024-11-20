@@ -270,16 +270,105 @@ class PipesFitNoLoad:
     ):
         pass
 
-    def plot_corner_plot(
+    def plot_best_photometry(
         self,
-        show=False,
-        save=True,
-        bins=25,
-        type="fit_params",
-        fig=None,
-        color="black",
-        facecolor="white",
+        ax,
+        colour="black",
+        wav_units=u.um,
+        flux_units=u.ABmag,
+        zorder=4,
+        y_scale=None,
+        skip_no_obs=False,
+        background_spectrum=False,
+        **kwargs,
     ):
+        pass
+
+    def _get_redshift(self):
+        if "redshift" in self._list_items():
+            return np.median(self._load_item_from_h5("redshift")[:])
+        elif "redshift" in self.fit_instructions.keys():
+            return self.fit_instructions["redshift"]
+
+    def plot_best_fit(
+        self,
+        ax,
+        colour="black",
+        wav_units=u.um,
+        flux_units=u.ABmag,
+        lw=1,
+        fill_uncertainty=False,
+        zorder=5,
+        label=None,
+        return_flux=False,
+        **kwargs,
+    ):
+        """Plot the best-fit SED with optional uncertainties.
+
+        Args:
+            ax: Matplotlib axis to plot on
+            colour: Color of the line
+            wav_units: Units for wavelength axis
+            flux_units: Units for flux axis
+            lw: Line width
+            fill_uncertainty: Whether to show uncertainty bands
+            zorder: Plot z-order
+            label: Legend label
+            return_flux: If True, return wavelength and flux arrays instead of plotting
+            **kwargs: Additional keywords passed to plot
+        """
+        # Get wavelength array and best-fit spectrum samples
+        # wavelengths = self._load_item_from_h5('wavelengths')[()]
+        spectrum_samples = self._load_item_from_h5("spectrum_full")[:]
+        wav = self._recreate_bagpipes_wave_grid()
+
+        redshift = self._get_redshift()
+
+        # Get observer frame wavelengths
+        wavs = wavelengths * (1 + redshift) * u.AA
+
+        # Calculate percentiles of spectrum samples
+        spec_percentiles = np.percentile(
+            spectrum_samples, [16, 50, 84], axis=0
+        ).T
+
+        # Convert to flux units
+        flux_lambda = spec_percentiles * u.erg / (u.s * u.cm**2 * u.AA)
+        wavs_3 = np.vstack([wavs, wavs, wavs]).T
+        flux = flux_lambda.to(
+            flux_units, equivalencies=u.spectral_density(wavs_3)
+        )
+
+        if return_flux:
+            return wavs.to(wav_units).value, flux[:, 1]
+
+        # Plot median spectrum
+        ax.plot(
+            wavs.to(wav_units).value,
+            flux[:, 1],
+            lw=lw,
+            color=colour,
+            alpha=0.7,
+            zorder=zorder,
+            label=label if label else self.galaxy_id,
+            **kwargs,
+        )
+
+        if fill_uncertainty:
+            ax.fill_between(
+                wavs.to(wav_units).value,
+                flux[:, 0],
+                flux[:, 2],
+                alpha=0.5,
+                color=colour,
+                lw=0,
+                zorder=zorder,
+            )
+
+    def _recrate_bagpipes_time_grid(self):
+        pass
+
+    def _recreate_bagpipes_wave_grid(self):
         pass
 
     def plot_sfh(
@@ -295,36 +384,84 @@ class PipesFitNoLoad:
         return_sfh=False,
         **kwargs,
     ):
-        pass
+        """Plot star formation history from posterior samples.
 
-    def plot_best_photometry(
-        self,
-        ax,
-        colour="black",
-        wav_units=u.um,
-        flux_units=u.ABmag,
-        zorder=4,
-        y_scale=None,
-        skip_no_obs=False,
-        background_spectrum=False,
-        **kwargs,
-    ):
-        pass
+        Args:
+            ax: Matplotlib axis
+            colour: Line color
+            modify_ax: Whether to modify axis labels/ticks
+            add_zaxis: Add redshift axis
+            timescale: Time unit for x-axis
+            plottype: 'lookback' or 'absolute' time
+            logify: Use log scale for y-axis
+            cosmo: Astropy cosmology object
+            return_sfh: Return SFH arrays instead of plotting
+        """
+        # Load SFH data
+        sfh_samples = self._load_item_from_h5("sfh")[:]
+        sfh_times = self._recrate_bagpipes_time_grid()
+        redshift = self._get_redshift()
 
-    def plot_best_fit(
-        self,
-        ax,
-        colour="black",
-        wav_units=u.um,
-        flux_units=u.ABmag,
-        lw=1,
-        fill_uncertainty=False,
-        zorder=5,
-        label=None,
-        return_flux=False,
-        **kwargs,
-    ):
-        pass
+        # Convert times based on plottype
+        times = sfh_times * u.yr
+        if plottype == "lookback":
+            if cosmo is None:
+                cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
+            lookback_time = cosmo.lookback_time(redshift)
+            times = lookback_time - times
+
+        # Calculate percentiles
+        sfh_percentiles = np.percentile(sfh_samples, [16, 50, 84], axis=0)
+
+        if return_sfh:
+            return np.column_stack(
+                (times.to(timescale).value, *sfh_percentiles)
+            )
+
+        # Plot median SFH
+        ax.plot(
+            times.to(timescale).value,
+            sfh_percentiles[1],
+            color=colour,
+            zorder=3,
+        )
+
+        ax.fill_between(
+            times.to(timescale).value,
+            sfh_percentiles[0],
+            sfh_percentiles[2],
+            color=colour,
+            alpha=0.3,
+            zorder=2,
+        )
+
+        if modify_ax:
+            ax.set_xlabel(
+                f"{'Lookback ' if plottype=='lookback' else ''} Time ({timescale})"
+            )
+            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)")
+
+        if logify:
+            ax.set_yscale("log")
+
+        if add_zaxis:
+            # Add redshift axis based on lookback times
+            ax2 = ax.twiny()
+            # Calculate redshifts corresponding to lookback times
+            # Set ticks and labels
+            time_range = ax.get_xlim()
+        z_times = np.linspace(*time_range, 6) * u.Unit(timescale)
+        if plottype == "lookback":
+            redshifts = cosmo.z_at_value(
+                cosmo.lookback_time, lookback_time - z_times
+            )
+        else:
+            redshifts = cosmo.z_at_value(cosmo.age, z_times)
+
+        ax2.set_xlim(ax.get_xlim())
+        ax2.set_xticks(z_times.value)
+        ax2.set_xticklabels([f"{z:.1f}" for z in redshifts])
+        ax2.set_xlabel("Redshift", fontsize="small")
 
     def plot_sed(
         self,
@@ -344,7 +481,79 @@ class PipesFitNoLoad:
         rerun_fluxes=False,
         **kwargs,
     ):
-        pass
+        """Plot observed photometry.
+
+        Args:
+            ax: Matplotlib axis
+            colour: Marker edge color
+            wav_units: Wavelength axis units
+            flux_units: Flux axis units
+            zorder: Plot z-order
+            ptsize: Point size
+            fcolour: Marker face color
+            label: Legend label
+            marker: Marker style
+        """
+        # Load observed photometry
+        wavelengths = self._load_item_from_h5("obs_wavelengths")[:]
+        fluxes = self._load_item_from_h5("obs_fluxes")[:]
+        flux_errors = self._load_item_from_h5("obs_flux_errors")[:]
+
+        # Convert to desired units
+        wav = wavelengths * u.AA
+        flambda = (
+            np.vstack([fluxes, flux_errors]).T * u.erg / (u.s * u.cm**2 * u.AA)
+        )
+
+        # Convert to f_nu
+        wavs_2 = np.vstack([wav, wav]).T
+        fnu = flambda * wavs_2**2 / c.c
+        fnu_jy = fnu[:, 0].to(u.Jy)
+        fnu_jy_err = fnu[:, 1].to(u.Jy)
+
+        # Convert to requested flux units
+        if flux_units == u.ABmag:
+            plot_fnu = fnu[:, 0].to(u.ABmag).value
+            # Calculate asymmetric errors in magnitudes
+            inner = fnu_jy / (fnu_jy - fnu_jy_err)
+            err_up = 2.5 * np.log10(inner)
+            err_low = 2.5 * np.log10(1 + (fnu_jy_err / fnu_jy))
+        else:
+            plot_fnu = fnu[:, 0].to(flux_units).value
+            err_up = fnu_jy_err.to(flux_units).value
+            err_low = fnu_jy_err.to(flux_units).value
+
+        wav = wav.to(wav_units).value
+
+        # Plot photometry points
+        mask = ~np.isnan(plot_fnu)
+        if skip_no_obs:
+            mask &= plot_fnu != 0
+
+        ax.errorbar(
+            wav[mask],
+            plot_fnu[mask],
+            yerr=[err_low[mask], err_up[mask]],
+            lw=lw,
+            linestyle=" ",
+            capsize=3,
+            capthick=lw,
+            zorder=zorder - 1,
+            color=colour,
+        )
+
+        ax.scatter(
+            wav[mask],
+            plot_fnu[mask],
+            color=colour,
+            s=ptsize,
+            zorder=zorder,
+            linewidth=lw,
+            facecolor=fcolour,
+            edgecolor=colour,
+            marker=marker,
+            label=label,
+        )
 
     def plot_pdf(
         self,
@@ -356,9 +565,58 @@ class PipesFitNoLoad:
         return_samples=False,
         linelabel="",
         norm_height=False,
-        **kwargs,
     ):
-        pass
+        """Plot posterior PDF for a parameter.
+
+        Args:
+            ax: Matplotlib axis
+            parameter: Parameter name to plot
+            colour: Line color
+            fill_between: Fill between line and zero
+            alpha: Line opacity
+            return_samples: Return raw samples instead of plotting
+            linelabel: Legend label
+            norm_height: Normalize peak height to 1
+        """
+        # Load parameter samples
+        samples = self._load_item_from_h5(f"samples/{parameter}")[:]
+
+        # Special handling for some parameters
+        if parameter == "sfr" or parameter == "formed_mass":
+            samples = np.log10(samples)
+            label = rf"$\log_{{10}}({parameter})$"
+        else:
+            label = parameter
+
+        if return_samples:
+            return samples
+
+        # Calculate smoothed histogram
+        from scipy.stats import gaussian_kde
+
+        kde = gaussian_kde(samples[~np.isnan(samples)])
+        x_plot = np.linspace(np.min(samples), np.max(samples), 100)
+        y = kde(x_plot)
+
+        if norm_height:
+            y = y / np.max(y)
+
+        # Plot PDF
+        ax.plot(x_plot, y, color=colour, alpha=alpha, label=linelabel)
+
+        if fill_between:
+            ax.fill_between(x_plot, y, color=colour, alpha=0.3)
+
+        ax.set_xlabel(label, fontsize="small", fontweight="bold")
+
+        # Remove y ticks since PDF height is arbitrary
+        ax.set_yticks([])
+
+        # Auto x ticks
+        from matplotlib.ticker import MaxNLocator
+
+        ax.xaxis.set_major_locator(MaxNLocator(3))
+        ax.tick_params(axis="both", which="major", labelsize="medium")
 
 
 class PipesFit:
