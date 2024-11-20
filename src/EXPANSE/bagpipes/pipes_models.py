@@ -198,7 +198,9 @@ dpl_dict = copy.deepcopy(overall_dict)
 sfh = {}
 sfh_type = "constant"
 
-sfh["age"] = (0.01, 2.5)  # Gyr
+
+sfh["age_max"] = (0.01, 2.5)  # Gyr
+sfh["age_min"] = (0, 2.5)  # Gyr
 sfh["massformed"] = (5.0, 12.0)  # Log_10 total stellar mass formed: M_Solar
 sfh["metallicity"] = (1e-3, 2.5)
 sfh["age_prior"] = "uniform"
@@ -333,7 +335,7 @@ def create_dicts(
 ):
     dict = copy.deepcopy(dict)
     override_meta = copy.deepcopy(override_meta)
-    
+
     if override_meta:
         if "name_append" in override_meta.keys():
             dict["meta"]["run_name"] += override_meta["name_append"]
