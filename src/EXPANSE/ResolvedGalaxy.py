@@ -12516,7 +12516,6 @@ class ResolvedGalaxies(np.ndarray):
                 os.path.join(run_dir, f"cats/{out_subdir_name}.fits")
             )
             # also check if .h5 files exist in either location
-
             for galaxy_id, config in configs.items():
                 # Check all IDs and see if .h5 exists in either new or old location
                 cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
@@ -12690,12 +12689,22 @@ class ResolvedGalaxies(np.ndarray):
                                         if type(v) is list:
                                             value[k] = np.array(v)
 
+                            from .utils import find_dict_differences
+
+                            # Find and print differences
+                            diff = find_dict_differences(fit_instructions, config["fit_instructions"])
+                            
+                            if diff['added'] != {}:
+                                print("Added:", diff['added'])
+                            if diff['removed'] != {}:
+                                print("Removed:", diff['removed'])
+                            if diff['modified'] != {}:
+                                print("Modified:", diff['modified'])
+
+
                             assert list(fit_instructions.keys()) == list(
                                 config["fit_instructions"].keys()
-                            ), f"Fit instructions do not match for {id}."
-                            ## Work out what is different
-                            # diff = {k: v for k, v in fit_instructions.items() if v != config['fit_instructions'].get(k, None)}
-                            # raise ValueError(f"Fit instructions do not match for {id}. {diff}")
+                            ), f"Fit instructions do not match for {id}. - {fit_instructions.keys()} vs {config['fit_instructions'].keys()}"
                         if not os.path.exists(os.path.dirname(new_path)):
                             os.makedirs(os.path.dirname(new_path))
 

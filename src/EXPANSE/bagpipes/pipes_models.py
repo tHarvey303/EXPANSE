@@ -332,6 +332,8 @@ def create_dicts(
     second_bin=None,
 ):
     dict = copy.deepcopy(dict)
+    override_meta = copy.deepcopy(override_meta)
+    
     if override_meta:
         if "name_append" in override_meta.keys():
             dict["meta"]["run_name"] += override_meta["name_append"]

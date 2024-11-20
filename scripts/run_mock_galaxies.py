@@ -176,6 +176,7 @@ if __name__ == "__main__":
     )
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
+    
 
     override_meta = {
         "use_bpass": True,
@@ -230,7 +231,7 @@ if __name__ == "__main__":
     )
 
     for dicts in [
-        lognorm_dicts,
+        #lognorm_dicts,
         cnst_dicts,
         resolved_dicts_cnst,
         continuity_dicts,
