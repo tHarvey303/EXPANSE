@@ -15,7 +15,8 @@ from .plotpipes import (calculate_bins,
                        five_sig_depth_to_n_sig_depth,
                        colormap,
                        PipesFit,
-                       PlotPipes)
+                       PlotPipes,
+                       PipesFitNoLoad)
 
 
 __all__ = ['calculate_bins', 'combine_bands', 'five_sig_depth_to_n_sig_depth', 'colormap', 'PipesFit', 'PlotPipes', 

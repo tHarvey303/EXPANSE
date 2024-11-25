@@ -6538,12 +6538,11 @@ class ResolvedGalaxy:
             self.load_bagpipes_results(run_name)
         table = self.sed_fitting_table["bagpipes"][run_name]
         if fig is None:
-            fig, axes = plt.subplots(
-                1,
-                1,
+            fig = plt.figure(
                 figsize=(6, 3),
                 constrained_layout=True,
                 facecolor=facecolor,
+                dpi=200,
             )
         if axes is None:
             axes = fig.add_subplot(111)
@@ -7816,7 +7815,7 @@ class ResolvedGalaxy:
                 pass
 
         output = {}
-        from .bagpipes.plotpipes import PipesFit
+        from .bagpipes.plotpipes import PipesFit, PipesFitNoLoad
 
         found = False
         if cache is not None:
@@ -7871,7 +7870,7 @@ class ResolvedGalaxy:
                 params_b.append(param)
 
             pipes_objs = Parallel(n_jobs=n_cores)(
-                delayed(PipesFit)(**param) for param in params_b
+                delayed(PipesFitNoLoad)(**param) for param in params_b
             )
 
             for obj, b in zip(pipes_objs, still_to_load):
@@ -9400,7 +9399,7 @@ class ResolvedGalaxy:
                     label=rbin if pos in other_count else "",
                 )
                 # Plot photometry
-                pipes_obj.plot_sed(
+                """pipes_obj.plot_sed(
                     ax_sed,
                     colour=color[str(rbin)],
                     wav_units=u.um,
@@ -9408,7 +9407,7 @@ class ResolvedGalaxy:
                     zorder=6,
                     fcolour=color[str(rbin)],
                     ptsize=15,
-                )
+                )"""
                 try:
                     float(rbin)
                     # find CoM of pixels in map
@@ -11826,7 +11825,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         # E.g. this should be able to get the stellar mass in a mask, or the SFR in a mask, or average age in a mask etc.
         if property not in self.property_images.keys():
-            if getattr(self, synthesizer_galaxy) is None:
+            if getattr(self, "synthesizer_galaxy") is None:
                 self.regenerate_synthesizer_galaxy()
             print("Don't have property map. Generating from synthesizer.")
 
@@ -11957,10 +11956,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         cmap="viridis",
         plotpipes_dir="pipes_scripts/",
         run_dir="pipes/",
+        plottype="lookback",
         cache=None,
         fig=None,
         axes=None,
         add_true=True,
+        mask="pixedfit",
     ):
         # Call parent method
 
@@ -11974,6 +11975,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             cmap=cmap,
             plotpipes_dir=plotpipes_dir,
             run_dir=run_dir,
+            plottype="lookback",
             cache=cache,
             fig=fig,
             axes=axes,
@@ -11990,7 +11992,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                         ax=axes,
                         fig=fig,
                         time_unit=time_unit,
-                        mask_str="pixedfit",
+                        plottype=plottype,
+                        mask_str=mask,
                     )
 
         return fig, cache
@@ -12002,6 +12005,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         fig=None,
         mask_str=None,
         time_unit="Gyr",
+        plottype="lookback",
         overwrite=False,
     ):
         if self.sfh is not None and not overwrite:
@@ -12027,7 +12031,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
             time, sfh = calculate_sfh(self.synthesizer_galaxy, pixel_mask=mask)
 
-            time = time.to_astropy().to(time_unit).value
+            time = time.to_astropy().to(u.Gyr).value
             sfh = sfh.to_astropy().to(u.Msun / u.yr).value
 
             # add to h5
@@ -12042,6 +12046,13 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 self.sfh = {}
 
             self.sfh[mask_str] = savedata
+
+        if plottype == "absolute":
+            # Convert time to absolute time given looking back from self.redshift
+            time = cosmo.lookback_time(self.redshift).to(u.Gyr).value - time
+
+        time *= u.Gyr
+        time = time.to(time_unit).value
 
         if fig is None:
             fig, ax = plt.subplots(
@@ -12692,18 +12703,20 @@ class ResolvedGalaxies(np.ndarray):
                             from .utils import find_dict_differences
 
                             # Find and print differences
-                            diff = find_dict_differences(fit_instructions, config["fit_instructions"])
-                            
-                            if diff['added'] != {}:
-                                print("Added:", diff['added'])
-                            if diff['removed'] != {}:
-                                print("Removed:", diff['removed'])
-                            if diff['modified'] != {}:
-                                print("Modified:", diff['modified'])
+                            diff = find_dict_differences(
+                                fit_instructions, config["fit_instructions"]
+                            )
 
+                            if diff["added"] != {}:
+                                print("Added:", diff["added"])
+                            if diff["removed"] != {}:
+                                print("Removed:", diff["removed"])
+                            if diff["modified"] != {}:
+                                print("Modified:", diff["modified"])
 
-                            assert list(fit_instructions.keys()) == list(
-                                config["fit_instructions"].keys()
+                            assert (
+                                list(fit_instructions.keys())
+                                == list(config["fit_instructions"].keys())
                             ), f"Fit instructions do not match for {id}. - {fit_instructions.keys()} vs {config['fit_instructions'].keys()}"
                         if not os.path.exists(os.path.dirname(new_path)):
                             os.makedirs(os.path.dirname(new_path))

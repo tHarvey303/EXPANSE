@@ -3,7 +3,7 @@ import pytest
 import threading
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
+import time
 
 # getcurrent dir
 import os
@@ -36,13 +36,6 @@ def init_from_h5(obj, path):
     assert (
         initial_size >= final_size
     ), "Memory leak! File size should not increase just by opening it"
-
-
-import asyncio
-import threading
-import time
-import os
-from concurrent.futures import ThreadPoolExecutor
 
 
 def run_server(gal_path, tab="Cutouts"):

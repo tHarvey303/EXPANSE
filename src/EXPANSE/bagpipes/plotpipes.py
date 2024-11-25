@@ -33,6 +33,7 @@ from matplotlib.ticker import AutoMinorLocator
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from tqdm import tqdm
+from corner import corner
 
 # Bye warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -210,9 +211,48 @@ def colormap(
 
 class PipesFitNoLoad:
     """
-    This object is used to load a bagpipes fit directly from the .h5 without reinitializing the galaxy object. Will only work if Bagpipes was run with my modified version of Bagpipes.
-
+    This object is used to load a bagpipes fit directly from the .h5 without reinitializing the galaxy object.
+    Will only work if Bagpipes was run with my modified version of Bagpipes.
     """
+
+    def __new__(
+        cls,
+        galaxy_id,
+        field,
+        h5_path,
+        filter_path=bagpipes_filter_dir,
+        bands=None,
+        data_func=None,
+        **kwargs,
+    ):
+        # Create a temporary instance to check compatibility
+        instance = super().__new__(cls)
+        instance.galaxy_id = galaxy_id
+        instance.field = field
+        instance.h5_path = h5_path
+        instance.filter_path = filter_path
+        instance.bands = bands
+        instance.data_func = data_func
+        instance.has_advanced_quantities = True
+
+        # Check compatibility
+        instance._check_compatibility()
+
+        # If advanced quantities are not present, return a PipesFit instance instead
+        if not instance.has_advanced_quantities:
+            print("Falling back to old method.")
+            return PipesFit(
+                galaxy_id,
+                field,
+                h5_path,
+                filter_path=filter_path,
+                bands=bands,
+                data_func=data_func,
+                **kwargs,
+            )
+
+        # Otherwise, return the PipesFitNoLoad instance
+        return instance
 
     def __init__(
         self,
@@ -224,23 +264,70 @@ class PipesFitNoLoad:
         data_func=None,
         **kwargs,
     ):
+        # Only initialize if we're actually creating a PipesFitNoLoad instance
         self.galaxy_id = galaxy_id
         self.field = field
         self.h5_path = h5_path
         self.bands = bands
         self.data_func = data_func
         self.filter_path = filter_path
+        self.wav = None
+        self.fit_instructions = None
+        self.time_grid = None
+        self.dof = None
+        self.fitted_params = None
+        self.has_advanced_quantities = True
 
-    def _load_item_from_h5(self, item):
+        self._get_fit_instructions()
+        if (
+            "noise" in self.fit_instructions.keys()
+            or "veldisp" in self.fit_instructions.keys()
+        ):
+            self.fitted_type = "spec"
+        else:
+            self.fitted_type = "phot"
+
+    def _check_compatibility(self):
         with h5py.File(self.h5_path, "r") as data:
-            if item in data.keys():
-                return data[item]
-            elif item in data["basic_quantities"].keys():
-                return data["basic_quantities"][item]
-            elif item in data["advanced_quantities"].keys():
-                return data["advanced_quantities"][item]
-            else:
-                raise KeyError(f"{item} not found in h5 file.")
+            if "fit_instructions" not in data.attrs.keys():
+                raise KeyError("fit_instructions not found in h5 file.")
+
+            if "advanced_quantities" not in data.keys():
+                self.has_advanced_quantities = False
+
+    def _load_item_from_h5(
+        self, items, percentiles=False, perc=(16, 50, 84), transpose=False
+    ):
+        if type(items) == str:
+            items = [items]
+        return_items = []
+        with h5py.File(self.h5_path, "r") as data:
+            print(self.h5_path)
+            for item in items:
+                if item in data.keys():
+                    return_items.append(data[item][()])
+                elif item in data["basic_quantities"].keys():
+                    return_items.append(data["basic_quantities"][item][()])
+                elif (
+                    "advanced_quantities" in data.keys()
+                    and item in data["advanced_quantities"].keys()
+                ):
+                    return_items.append(data["advanced_quantities"][item][()])
+                else:
+                    raise KeyError(f"{item} not found in h5 file.")
+
+        if percentiles:
+            return_items = [
+                np.percentile(item, perc, axis=0) for item in return_items
+            ]
+
+        if transpose:
+            return_items = [np.transpose(item) for item in return_items]
+
+        if len(return_items) == 1:
+            return return_items[0]
+        else:
+            return return_items
 
     def _list_items(self):
         items = []
@@ -248,7 +335,7 @@ class PipesFitNoLoad:
             for key in data.keys():
                 if type(data[key]) == h5py._hl.group.Group:
                     for sub_key in data[key].keys():
-                        items.append(f"{key}/{sub_key}")
+                        items.append(f"{sub_key}")
                 else:
                     items.append(key)
         return items
@@ -267,8 +354,121 @@ class PipesFitNoLoad:
         fig=None,
         color="black",
         facecolor="white",
+        extra_samples=["sfr"],
     ):
-        pass
+        self.calculate_dof()
+
+        samples = self._load_item_from_h5(self.fitted_params + extra_samples)
+
+        labels = [f"{param}" for param in self.fitted_params + extra_samples]
+
+        samples = np.array(samples).T
+        # Make the corner plot
+        fig = corner(
+            samples,
+            labels=labels,
+            quantiles=[0.16, 0.5, 0.84],
+            show_titles=True,
+            title_kwargs={"fontsize": 13},
+            smooth=1.0,
+            smooth1d=1.0,
+            bins=bins,
+            fig=fig,
+            color=color,
+            facecolor=facecolor,
+        )
+
+        return fig
+
+    def calculate_dof(self):
+        if self.dof is None:
+            self.len_photometry = len(self._load_item_from_h5("photometry"))
+            # Loop over fit_instructions and count parameters which are length two lists or
+            params = []
+            for key, value in self.fit_instructions.items():
+                if type(value) == dict:
+                    for sub_key, sub_value in value.items():
+                        if (
+                            type(sub_value) in [list, tuple, np.ndarray]
+                            and len(sub_value) == 2
+                        ):
+                            params.append(f"{key}:{sub_key}")
+                elif (
+                    type(value) in [list, tuple, np.ndarray]
+                    and len(value) == 2
+                ):
+                    params.append(key)
+
+            self.fitted_params = params
+
+            self.dof = self.len_photometry - len(params)
+
+    def calculate_bic(self):
+        dof = self.calculate_dof()
+        ln_evidence = self._load_item_from_h5("lnz")[()]
+        return -2 * ln_evidence + dof * np.log(self.len_photometry)
+
+    def _get_fit_instructions(self):
+        with h5py.File(self.h5_path, "r") as data:
+            if "fit_instructions" in data.attrs.keys():
+                self.fit_instructions = ast.literal_eval(
+                    data.attrs["fit_instructions"]
+                )
+            else:
+                raise KeyError("fit_instructions not found in h5 file.")
+
+    def _recalculate_bagpipes_wavelength_array(
+        self,
+        bands=None,
+        bagpipes_filter_dir=bagpipes_filter_dir,
+        use_bpass=False,
+    ):
+        if bands is None:
+            bands = self.bands
+
+        if bands is None:
+            raise ValueError("No bands provided or stored in object.")
+
+        paths = [
+            glob.glob(f"{bagpipes_filter_dir}/*{band}*")[0] for band in bands
+        ]
+        if use_bpass:
+            from bagpipes import config_bpass as config
+        else:
+            from bagpipes import config
+
+        from bagpipes.filters import filter_set
+
+        ft = filter_set(paths)
+        min_wav = ft.min_phot_wav
+        max_wav = ft.max_phot_wav
+        max_z = config.max_redshift
+
+        max_wavs = [(min_wav / (1.0 + max_z)), 1.01 * max_wav, 10**8]
+
+        x = [1.0]
+
+        R = [config.R_other, config.R_phot, config.R_other]
+
+        for i in range(len(R)):
+            if i == len(R) - 1 or R[i] > R[i + 1]:
+                while x[-1] < max_wavs[i]:
+                    x.append(x[-1] * (1.0 + 0.5 / R[i]))
+
+            else:
+                while x[-1] * (1.0 + 0.5 / R[i]) < max_wavs[i]:
+                    x.append(x[-1] * (1.0 + 0.5 / R[i]))
+
+        self.wav = np.array(x)
+
+    def _recreate_filter_set(self):
+        from bagpipes.filters import filter_set
+
+        filter_paths = [
+            glob.glob(f"{self.filter_path}/*{band}*")[0] for band in self.bands
+        ]
+
+        self.filter_set = filter_set(filter_paths)
 
     def plot_best_photometry(
         self,
@@ -276,17 +476,107 @@ class PipesFitNoLoad:
         colour="black",
         wav_units=u.um,
         flux_units=u.ABmag,
+        photometry=None,
         zorder=4,
         y_scale=None,
         skip_no_obs=False,
         background_spectrum=False,
         **kwargs,
     ):
-        pass
+        """Plots best-fitting photometry from fitting
+
+        Args:
+            ax (_type_): matplotlib axis object to plot onto.
+            colour (str, optional): marker color. Defaults to 'black'.
+            wav_units (astropy unit, optional): wavelength units. Defaults to u.um.
+            flux_units (astropy unit, optional): flux unit. Defaults to u.ABmag.
+            zorder (int, optional): zorder to plot markers on. Defaults to 4.
+            y_scale (_type_, optional): _description_. Defaults to None.
+            skip_no_obs (bool, optional): _description_. Defaults to False.
+            background_spectrum (bool, optional): _description_. Defaults to False.
+        """
+        if self.fitted_type in ["phot", "both"]:
+            if photometry is not None:
+                mask = photometry[:, 1] > 0.0
+                upper_lims = photometry[:, 1] + photometry[:, 2]
+                ymax = 1.05 * np.max(upper_lims[mask])
+
+            else:
+                photometry_temp = self._load_item_from_h5(
+                    "photometry", percentiles=True, transpose=True
+                )
+                ymax = 1.05 * np.max(photometry_temp[:, 2])
+
+            if not y_scale:
+                y_scale = int(np.log10(ymax)) - 1
+
+            redshift = self._get_redshift()
+
+            self._recalculate_bagpipes_wavelength_array()
+            self._recreate_filter_set()
+
+            wavs = self.wav * (1.0 + redshift) * u.AA
+            eff_wavs = self.filter_set.eff_wavs * u.AA
+            # Convert to desired units.
+            wavs_plot = wavs.to(wav_units).value
+            eff_wavs.to(wav_units).value
+
+            if background_spectrum:
+                spectrum_full = self._load_item_from_h5("spectrum_full")[:]
+
+                spec_post = (
+                    np.percentile(
+                        spectrum_full,
+                        (16, 50, 84),
+                        axis=0,
+                    ).T
+                    * u.erg
+                    / (u.cm**2 * u.s * u.AA)
+                )
+
+                spec_post = spec_post.astype(
+                    float
+                )  # fixes weird isfinite error
+
+                flux_nu = spec_post.to(
+                    flux_units, equivalencies=u.spectral_density(wavs)
+                )
+
+                ax.plot(
+                    wavs_plot, flux_nu[:, 1], color="black", zorder=zorder - 1
+                )
+
+                ax.fill_between(
+                    wavs_plot,
+                    flux_nu[:, 0],
+                    flux_nu[:, 2],
+                    zorder=zorder - 1,
+                    color="navajowhite",
+                    linewidth=0,
+                )
+
+            bestfit_photometry = self._load_item_from_h5(
+                "photometry", percentiles=True, transpose=True
+            )
+            bestfit_photometry *= u.erg / (u.cm**2 * u.s * u.AA)
+
+            bestfit_photometry = bestfit_photometry[:, 1].to(
+                flux_units, equivalencies=u.spectral_density(eff_wavs)
+            )
+
+            ax.scatter(
+                eff_wavs.to(wav_units).value,
+                bestfit_photometry.value,
+                color=colour,
+                zorder=zorder,
+                alpha=0.05,
+                s=40,
+                rasterized=True,
+            )
 
     def _get_redshift(self):
         if "redshift" in self._list_items():
-            return np.median(self._load_item_from_h5("redshift")[:])
+            return np.median(self._load_item_from_h5("redshift"))
         elif "redshift" in self.fit_instructions.keys():
             return self.fit_instructions["redshift"]
 
@@ -320,9 +610,14 @@ class PipesFitNoLoad:
         # Get wavelength array and best-fit spectrum samples
         # wavelengths = self._load_item_from_h5('wavelengths')[()]
         spectrum_samples = self._load_item_from_h5("spectrum_full")[:]
-        wav = self._recreate_bagpipes_wave_grid()
+
+        if self.wav is None:
+            self._recalculate_bagpipes_wavelength_array()
+
+        wavelengths = self.wav
 
         redshift = self._get_redshift()
+        print(redshift)
 
         # Get observer frame wavelengths
         wavs = wavelengths * (1 + redshift) * u.AA
@@ -365,11 +660,22 @@ class PipesFitNoLoad:
                 zorder=zorder,
             )
 
-    def _recrate_bagpipes_time_grid(self):
-        pass
+    def _recrate_bagpipes_time_grid(self, log_sampling=0.0025, cosmo=None):
+        if cosmo is None:
+            cosmo = FlatLambdaCDM(H0=70.0, Om0=0.3)
 
-    def _recreate_bagpipes_wave_grid(self):
-        pass
+        self.cosmo = cosmo
+
+        self.z_array = np.arange(0.0, 100.0, 0.01)
+        self.age_at_z = cosmo.age(self.z_array).value
+        # ldist_at_z = cosmo.luminosity_distance(z_array).value
+
+        self.hubble_time = self.age_at_z[self.z_array == 0.0]
+
+        # Set up the age sampling for internal SFH calculations.
+        log_age_max = np.log10(self.hubble_time) + 9.0 + 2 * log_sampling
+        self.ages = np.arange(6.0, log_age_max, log_sampling)
+        self.ages = 10**self.ages * u.yr
 
     def plot_sfh(
         self,
@@ -399,16 +705,22 @@ class PipesFitNoLoad:
         """
         # Load SFH data
         sfh_samples = self._load_item_from_h5("sfh")[:]
-        sfh_times = self._recrate_bagpipes_time_grid()
+
+        self._recrate_bagpipes_time_grid()
         redshift = self._get_redshift()
 
-        # Convert times based on plottype
-        times = sfh_times * u.yr
+        age_of_universe = (
+            np.interp(redshift, self.z_array, self.age_at_z) * u.yr
+        )
+
+        if cosmo is None:
+            cosmo = self.cosmo
+
         if plottype == "lookback":
-            if cosmo is None:
-                cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
-            lookback_time = cosmo.lookback_time(redshift)
-            times = lookback_time - times
+            times = self.ages
+        elif plottype == "absolute":
+            times = age_of_universe - self.ages
+        # Convert times based on plottype
 
         # Calculate percentiles
         sfh_percentiles = np.percentile(sfh_samples, [16, 50, 84], axis=0)
@@ -444,24 +756,19 @@ class PipesFitNoLoad:
         if logify:
             ax.set_yscale("log")
 
-        if add_zaxis:
+        if add_zaxis and plottype == "absolute":
             # Add redshift axis based on lookback times
             ax2 = ax.twiny()
             # Calculate redshifts corresponding to lookback times
             # Set ticks and labels
             time_range = ax.get_xlim()
-        z_times = np.linspace(*time_range, 6) * u.Unit(timescale)
-        if plottype == "lookback":
-            redshifts = cosmo.z_at_value(
-                cosmo.lookback_time, lookback_time - z_times
+            # Convert time_range to match unit of age_at_z
+            z_times = np.linspace(*time_range, 6) * u.Unit(timescale)
+            ax2.set_xticks(
+                np.interp(z_times.to(u.yr).value, self.z_array, self.age_at_z)
             )
-        else:
-            redshifts = cosmo.z_at_value(cosmo.age, z_times)
-
-        ax2.set_xlim(ax.get_xlim())
-        ax2.set_xticks(z_times.value)
-        ax2.set_xticklabels([f"{z:.1f}" for z in redshifts])
-        ax2.set_xlabel("Redshift", fontsize="small")
+            ax2.set_xlim(time_range)
+            ax2.set_xlabel("Redshift", fontsize="small")
 
     def plot_sed(
         self,
@@ -481,7 +788,7 @@ class PipesFitNoLoad:
         rerun_fluxes=False,
         **kwargs,
     ):
-        """Plot observed photometry.
+        """Plot observed photometry - SPEC not working yet.
 
         Args:
             ax: Matplotlib axis
@@ -579,7 +886,7 @@ class PipesFitNoLoad:
             norm_height: Normalize peak height to 1
         """
         # Load parameter samples
-        samples = self._load_item_from_h5(f"samples/{parameter}")[:]
+        samples = self._load_item_from_h5(parameter)[:]
 
         # Special handling for some parameters
         if parameter == "sfr" or parameter == "formed_mass":
@@ -2828,82 +3135,4 @@ def main(id, field):
 
 
 if __name__ == "__main__":
-    # Use Prospector environment if including Prospector runs. Doesn't have multinest but can load bagpipes runs
-    """for id in [14392, 14337, 14334, 28936, 14330, 6998, 21733, 28954, 28956, 21745, 7034, 36330, 14375, 7044, 36337, 21771]:
-        PlotPipes(f'{id}_PRIMIRI', 'PRIMIRI', catalog_path="/raid/scratch/work/austind/GALFIND_WORK/Catalogues/simulated/MIRI+NIRCam+ACS_WFC/JAGUAR-PRIMIRI-444/JAGUAR_SimDepth_PRIMIRI_v9_half_10pc_EAZY_matched_selection_fixed.fits",
-    mixed_cat=False, field_col='FIELDNAME', overall_field=None, robust_col='final_sample_highz', eazy_template='fsps_larson', redshift_col='zbest', catalogue_flux_unit=u.nJy, simulated_cat=True)
-    """
-    """
-
-    ids = [7463, 7520, 9149, 36222, 1516, 3187, 15249, 4970, 8453, 10760, 4842, 1080, 7538, 1005, 1516, 5116, 9075, 12513, 6381, 9420, 35688, 6525, 11955, 6079, 5825, 2883]
-    fields = ['CEERSP1', 'CEERSP5', 'CEERSP2', 'JADES-Deep-GS', 'CEERSP2', 'CEERSP10', 'NEP-2', 'SMACS-0723', 'NEP-2', 'NEP-3', 'CEERSP6', 'CEERSP9', 'GLASS', 'CEERSP2', 'CEERSP2', 'El-Gordo','JADES-Deep-GS', 'NEP-1', 'CEERSP2', 'CEERSP6', 'JADES-Deep-GS', 'NGDEEP', 'NEP-4', 'MACS-0416', 'GLASS', 'CEERSP1']
-
-    ids = [36222, 7463, 11955, 5825, 9075, 6381]
-    fields = ['JADES-Deep-GS', 'CEERSP1', 'NEP-4', 'GLASS','JADES-Deep-GS', 'CEERSP2']
-
-    # Honor's galaxies
-    ids = [8462, 1475, 5929, 1919,  267, 9687, 1787, 1843, 8182, 6572, 5514,  182,
-    	6081, 7100, 8195, 2825, 2507, 4026, 5418, 8934, 2107, 8538, 9463,  466,
-    	2131, 6384, 6900, 9708,  774, 8021, 8205, 9644, 4089, 6417, 5917, 5424,
-    	8922, 6241]
-
-    fields = ['CEERSP2', 'CEERSP2', 'CEERSP2', 'CEERSP2', 'CEERSP3', 'CEERSP3', 'CEERSP3',
-            'CEERSP3', 'CEERSP3', 'CEERSP3', 'CEERSP5', 'CEERSP5', 'CEERSP5', 'CEERSP5',
-            'CEERSP6', 'CEERSP6', 'CEERSP7', 'CEERSP7', 'CEERSP7', 'CEERSP7', 'CEERSP7',
-            'CEERSP7', 'CEERSP7', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8',
-            'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP8', 'CEERSP9', 'CEERSP9',
-            'CEERSP9', 'CEERSP9', 'CEERSP10']
-
-
-    #id = 3184
-
-    #field = 'NEP-3'
-    Parallel(n_jobs=1)(delayed(main)(id, field) for id, field in zip(ids, fields))
-
-
-
-    """
-
-    # JOF
-
-    """
-
-
-    overwrite = True
-    for field in ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4', 'NGDEEP', 'MACS-0416',  'SMACS-0723', 'El-Gordo', 'CLIO', 'GLASS', 'CEERS']: #CEERS
-        overall_field = field
-        if field == 'CEERS':
-            catalog_path = f"/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v9/ACS_WFC+NIRCam/Combined/{field}_MASTER_Sel-f277W+f356W+f444W_v9_loc_depth_masked_10pc_EAZY_matched_selection.fits"
-
-            catalog = Table.read(catalog_path)
-            catalog = catalog[catalog['final_sample_highz_fsps_larson'] == True]
-
-            for id, field in zip(catalog['NUMBER'], catalog['FIELDNAME']):
-                if not Path(f'/nvme/scratch/work/tharvey/bagpipes/pipes/plots/{field}/{id}_{field}.png').is_file() or overwrite:
-                    try:
-                        PlotPipes(f'{id}_{field}', field, catalog_path=catalog_path, mixed_cat=True, field_col='FIELDNAME', overall_field=overall_field, robust_col='final_sample_highz', eazy_template='fsps_larson', redshift_col='zbest')
-                    except Exception as e:
-                        print(e)
-                        pass
-
-        if field in ['JADES-Deep-GS', 'NEP-1', 'NEP-2', 'NEP-3', 'NEP-4', 'NGDEEP', 'MACS-0416']:
-            catalog_path = f"/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v9/ACS_WFC+NIRCam/{field}/{field}_MASTER_Sel-f277W+f356W+f444W_v9_loc_depth_masked_10pc_EAZY_matched_selection.fits"
-        # For CEERS
-        if field in ['SMACS-0723', 'El-Gordo', 'CLIO', 'GLASS']:
-            catalog_path = f"/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v9/NIRCam/{field}/{field}_MASTER_Sel-f277W+f356W+f444W_v9_loc_depth_masked_10pc_EAZY_matched_selection.fits"
-
-        catalog = Table.read(catalog_path)
-        catalog = catalog[catalog['final_sample_highz_fsps_larson'] == True]
-        #catalog = catalog[(catalog['zbest_fsps_larson'] > 8.3) & (catalog['zbest_fsps_larson'] < 13.5)]
-        #for id in catalog['NUMBER']:
-        # for CEERS
-        for id in catalog['NUMBER']:
-            if not Path(f'/nvme/scratch/work/tharvey/bagpipes/pipes/plots/{field}/{id}_{field}.png').is_file() or overwrite:
-                try:
-                    PlotPipes(f'{id}_{field}', field, catalog_path=catalog_path, mixed_cat=True, field_col='FIELDNAME',
-                    overall_field=overall_field, robust_col='final_sample_highz', eazy_template='fsps_larson',
-                    redshift_col='zbest', add_prospector=False)
-                except FileExistsError as e:
-                    print(e)
-                    pass
-    """
+    "/nvme/scratch/work/tharvey/EXPANSE/pipes/posterior/photoz_cnst_zfix/JOF_psfmatched/005_z010p000_00_104_mock/TOTAL_BIN.h5"

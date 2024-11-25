@@ -1142,9 +1142,7 @@ class GalaxyTab(param.Parameterized):
         ]
         actual_options = [i.replace("_50", "") for i in options]
         dist_options = [i for i in options if i.endswith("50")]
-        self.pdf_param_property_widget.options = [
-            i.replace("_50", "") for i in dist_options
-        ]
+        self.pdf_param_property = [i.replace("_50", "") for i in dist_options]
         # self.pdf_param_property.object = dist_options
 
         self.other_bagpipes_properties_widget.options = actual_options
@@ -2296,6 +2294,8 @@ class GalaxyTab(param.Parameterized):
             self.which_run_resolved = options_resolved[0]
         if len(options_aperture) > 0:
             self.which_run_aperture = options_aperture[0]
+        print("resolved")
+        print(self.which_run_resolved)
 
         return pn.Column(
             self.which_run_resolved_widget, self.which_run_aperture_widget
@@ -3055,6 +3055,7 @@ class ResolvedSEDApp(param.Parameterized):
     galaxy_tabs = param.List()
     galaxies_dir = galaxies_dir
     active_galaxy_tab = param.Integer(0)
+    current_tabs = param.List()
 
     @notify_on_error
     def __init__(self, **params):
@@ -3139,7 +3140,18 @@ class ResolvedSEDApp(param.Parameterized):
                 galaxy_tab.info_tabs,
             )
         )
+        self.current_tabs.append(galaxy_tab.galaxy_id)
         self.update_sidebar()
+
+    # Make a function which watches self.tabs and deletes the tab from memory if it is closed
+    @pn.depends("tabs.active")
+    def update_tabs(self):
+        current_tab_ids = [tab.galaxy_id for tab in self.galaxy_tabs]
+        for pos, tab_id in enumerate(self.current_tabs):
+            if tab_id not in current_tab_ids:
+                self.current_tabs.pop(pos)
+                print(f"Removed tab {tab_id} from memory.")
+                del self.galaxy_tabs[pos]
 
     @notify_on_error
     def choose_file(self, value):
