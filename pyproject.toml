@@ -92,6 +92,7 @@ dependencies = [
   "tqdm",
   "requests",
   "pandas",
+  "corner",
 ]
 
 # Optional dependencies for specific use cases

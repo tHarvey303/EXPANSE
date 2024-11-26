@@ -12961,8 +12961,9 @@ class ResolvedGalaxies(np.ndarray):
                             )
                             # Check if the fit instructions are the same
 
-                            if "redshift" in fit_instructions:
-                                fit_instructions.pop("redshift")
+                            for instruction in fit_instructions:
+                                if "redshift" in instruction:
+                                    fit_instructions.pop(instruction)
 
                             # Convert all lists to np arrays
                             for key, value in fit_instructions.items():
