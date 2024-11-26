@@ -3180,6 +3180,32 @@ class ResolvedGalaxy:
 
         os.remove(f"{dir}/{psf_type}_a.fits")
 
+    def add_det_galaxy_region(self, force=False, overwrite=False):
+        if self.det_data is not None:
+            det_galaxy_region = copy.copy(self.det_data["seg"])
+            # Value of segmap in center
+            center = int(self.cutout_size // 2)
+            possible_vals = np.unique(det_galaxy_region)
+            if len(possible_vals) == 2:
+                det_gal_mask = det_galaxy_region == 1
+            elif len(possible_vals) > 2:
+                center_val = det_galaxy_region[center, center]
+                mask = det_galaxy_region == center_val
+                det_gal_mask = np.zeros_like(det_galaxy_region)
+                det_gal_mask[mask] = True
+
+            det_gal_mask = det_gal_mask.astype(int)
+
+            self.gal_region["detection"] = det_gal_mask
+
+            self.add_to_h5(
+                det_gal_mask,
+                "galaxy_region",
+                "detection",
+                force=force,
+                overwrite=overwrite,
+            )
+
     def plot_lupton_rgb(
         self,
         red=[],
@@ -3363,7 +3389,7 @@ class ResolvedGalaxy:
                 color="white",
                 frameon=False,
                 size_vertical=1,
-                fontproperties=FontProperties(size=18),
+                fontproperties=FontProperties(size=text_fontsize),
             )
             ax.add_artist(scalebar)
             # Plot scalebar with physical size
@@ -3376,7 +3402,7 @@ class ResolvedGalaxy:
                 color="white",
                 frameon=False,
                 size_vertical=1,
-                fontproperties=FontProperties(size=18),
+                fontproperties=FontProperties(size=text_fontsize),
             )
             scalebar.set(
                 path_effects=[
@@ -3573,7 +3599,7 @@ class ResolvedGalaxy:
             self.gal_region = {}
         galaxy_region = img_process.galaxy_region(segm_maps_ids=segm_maps_ids)
 
-        self.gal_region["pixedfit"] = galaxy_region
+        self.gal_region[gal_region_use] = galaxy_region
 
         if self.det_data is not None:
             det_galaxy_region = copy.copy(self.det_data["seg"])
@@ -3631,17 +3657,26 @@ class ResolvedGalaxy:
             "gal_region_use": gal_region_use,
         }
 
-        self.add_to_h5(
-            galaxy_region,
-            "galaxy_region",
-            "pixedfit",
-            meta=meta_dict,
-            overwrite=overwrite,
-        )
+        if gal_region_use == "pixedfit":
+            self.add_to_h5(
+                galaxy_region,
+                "galaxy_region",
+                "pixedfit",
+                meta=meta_dict,
+                overwrite=overwrite,
+            )
+        else:
+            self.add_to_h5(
+                galaxy_region,
+                "galaxy_region",
+                gal_region_use,
+                meta=meta_dict,
+                overwrite=overwrite,
+            )
 
         ## What I have named 'galaxy_region' is actually flux_map_fits
         self.add_to_h5(
-            flux_maps_fits, "flux_map", "pixedfit", overwrite=overwrite
+            flux_maps_fits, "flux_map", gal_region_use, overwrite=overwrite
         )
 
         # Copy flux map to h5 file - TODO
@@ -3707,30 +3742,206 @@ class ResolvedGalaxy:
         # plt.show()
 
     def voronoi_binning(
-        self, SNR_reqs=10, ref_band="F277W", plot=True, override_psf_type=None
+        self,
+        galaxy_region,
+        SNR_reqs=10,
+        ref_band="combined",
+        plot=True,
+        override_psf_type=None,
+        overwrite=False,
+        wvt=True,
+        cvt=True,
+        quiet=True,
+        min_band="auto",
+        band_instrument="NIRCam",
+        min_snr_wav=1216 * u.AA,
+        redshift="self",
+        use_only_widebands=False,
     ):
+        """
+        Perform Voronoi binning on the galaxy region.
+
+        Parameters
+        ----------
+        galaxy_region : str or np.ndarray
+            If str, must be a key in self.gal_region. If np.ndarray, must be a 2D array with 1s for galaxy pixels and 0s for background pixels.
+        SNR_reqs : float, optional
+            SNR/pixel required for binning, by default 10
+        ref_band : str or List[str], optional
+            Band(s) to use as reference for SNR calculation. If list, will sum the bands.
+            If 'combined_min', will use the band with the lowest SNR for each pixel. If 'combined_sum', will sum the bands.
+        plot : bool, optional
+            Whether to plot the SNR map, by default True
+        override_psf_type : str, optional
+            If not None, will use this PSF type instead of self.use_psf_type, by default None
+        overwrite : bool, optional
+            If True, will overwrite existing Voronoi map, by default False
+        wvt : bool, optional
+            If True, will use wavelet transform to calculate SNR, by default True
+        cvt : bool, optional
+            If True, will use curvelet transform to calculate SNR, by default True
+        quiet : bool, optional
+            If True, will suppress output from voronoi_2d_binning, by default True
+        min_band : str, optional
+            If 'ref_band' starts with 'combined', will use this band to calculate SNR, by default 'auto'
+        band_instrument : str, optional
+            if 'min_band' is 'auto', will use this instrument only to calculate bands to include in SNR, by default 'NIRCam'
+        min_snr_wav : Quantity, optional
+            if 'min_band' is 'auto', will use this wavelength to calculate bands to include in SNR, by default 1216*u.AA
+        redshift : float or str, optional
+            If 'min_band' is 'auto', will use this redshift to calculate bands to include in SNR, by default 'self'
+        use_only_widebands : bool, optional
+            If True, will only use widebands in SNR calculation, by default False
+
+        """
+
         if hasattr(self, "use_psf_type") and override_psf_type is None:
             psf_type = self.use_psf_type
         else:
             psf_type = override_psf_type
 
+        if hasattr(self, "voronoi_map") and not overwrite:
+            print("Voronoi map already exists. Set overwrite=True to re-run")
+            return
+
         from vorbin.voronoi_2d_binning import voronoi_2d_binning
 
-        # x - x coordinates of pixels
-        # y - y coordinates of pixels
-        # signal - fluxes of pixels
-        # noise -
-        # target SN -
+        if type(galaxy_region) is str:
+            if galaxy_region not in self.gal_region.keys():
+                raise ValueError(
+                    f"Galaxy region {galaxy_region} not found. Available regions: {self.gal_region.keys()}"
+                )
+            galaxy_region = self.gal_region[galaxy_region]
 
         x = np.arange(self.cutout_size)
         y = np.arange(self.cutout_size)
         x, y = np.meshgrid(x, y)
+        # appy galaxy region mask to remove background pixels
+        x = x[galaxy_region == 1]
+        y = y[galaxy_region == 1]
+
         x = x.flatten()
         y = y.flatten()
 
-        signal = self.psf_matched_data[psf_type][ref_band].flatten()
-        noise = self.psf_matched_rms_err[psf_type][ref_band].flatten()
+        if ref_band.startswith("combined"):
+            print(f"start {self.bands[-1]}")
+            if ref_band.endswith("min"):
+                signal = self.psf_matched_data[psf_type][self.bands[-1]]
+                noise = self.psf_matched_rms_err[psf_type][self.bands[-1]]
+            elif ref_band.endswith("sum"):
+                signal = np.zeros_like(
+                    self.psf_matched_data[psf_type][self.bands[-1]]
+                )
+                noise = np.zeros_like(
+                    self.psf_matched_rms_err[psf_type][self.bands[-1]]
+                )
+            elif ref_band.endswith("average"):
+                signal = []
+                noise = []
 
+            if redshift == "self":
+                z = self.redshift
+            elif type(redshift) in [float, int]:
+                z = redshift
+            else:
+                raise ValueError(f"Redshift {redshift} not understood.")
+
+            no_use_bins = self._calculate_min_wav_band(
+                min_snr_wav=min_snr_wav,
+                only_snr_instrument=band_instrument,
+                redshift=z,
+            )
+            print("No use bins:", no_use_bins)
+            count = 1
+            for band in self.bands:
+                if band in no_use_bins:
+                    continue
+                elif band.endswith("M") and use_only_widebands:
+                    continue
+                else:
+                    count += 1
+                    print(f"Using {band}")
+                    if ref_band.endswith("min"):
+                        # Take signal and noise from lowest SNR for each pixel.
+                        snr = signal / noise
+                        snr_band = (
+                            self.psf_matched_data[psf_type][band]
+                            / self.psf_matched_rms_err[psf_type][band]
+                        )
+                        mask = snr_band < snr
+                        signal[mask] = self.psf_matched_data[psf_type][band][
+                            mask
+                        ]
+                        noise[mask] = self.psf_matched_rms_err[psf_type][band][
+                            mask
+                        ]
+                    elif ref_band.endswith("sum"):
+                        signal += self.psf_matched_data[psf_type][band]
+                        noise += self.psf_matched_rms_err[psf_type][band] ** 2
+                    elif ref_band.endswith("average"):
+                        signal.append(self.psf_matched_data[psf_type][band])
+                        noise.append(self.psf_matched_rms_err[psf_type][band])
+
+            if ref_band.endswith("average"):
+                signal = np.nanmean(signal, axis=0)
+                noise = np.nanmean(noise, axis=0)
+
+            if ref_band.endswith("sum"):
+                noise = np.sqrt(noise)
+
+        elif type(ref_band) is list:
+            signal = np.zeros_like(
+                self.psf_matched_data[psf_type][self.bands[-1]]
+            )
+            noise = np.zeros_like(
+                self.psf_matched_rms_err[psf_type][self.bands[-1]]
+            )
+
+            for band in ref_band:
+                signal += self.psf_matched_data[psf_type][band]
+                noise += self.psf_matched_rms_err[psf_type][band]
+
+            ref_band = "+".join(ref_band)
+
+        else:
+            signal = self.psf_matched_data[psf_type][ref_band]
+            noise = self.psf_matched_rms_err[psf_type][ref_band]
+
+        if plot:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+            mappable = ax.imshow(
+                signal / noise,
+                origin="lower",
+                interpolation="none",
+                cmap="nipy_spectral_r",
+            )
+            fig.colorbar(mappable, ax=ax)
+            ax.set_title(f"SNR Map (ref: {ref_band})")
+            # Plot galaxy region
+            ax.imshow(galaxy_region, origin="lower", alpha=0.5, cmap="Greys")
+            plt.show()
+
+        signal = signal[galaxy_region == 1].flatten()
+        noise = noise[galaxy_region == 1].flatten()
+
+        total_snr = np.sum(signal) / np.sqrt(np.sum(noise**2))
+
+        if total_snr < SNR_reqs:
+            raise ValueError(
+                f"Total SNR of input image within mask: {total_snr} is less than required SNR: {SNR_reqs}"
+            )
+
+        if np.all(signal / noise > SNR_reqs):
+            print(f"All pixels have SNR > {SNR_reqs}, no binning required.")
+            return
+
+        print(f"Total SNR of input image: {total_snr}")
+
+        assert (
+            len(x) == len(signal) == len(noise) == len(y)
+        ), f"Lengths of x, y, signal, noise not equal: {len(x)}, {len(y)}, {len(signal)}, {len(noise)}"
+
+        print(f"Number of pixels: {len(x)}")
         # sn_func = lambda index, flux, flux_err: print(index) #flux[index] / flux_err[index]
         bin_number, x_gen, y_gen, x_bar, y_bar, sn, nPixels, scale = (
             voronoi_2d_binning(
@@ -3739,22 +3950,81 @@ class ResolvedGalaxy:
                 signal,
                 noise,
                 SNR_reqs,
-                # pixelsize = self.im_pixel_scales[ref_band].to(u.arcsec).value,
+                cvt=cvt,
+                wvt=wvt,
+                pixelsize=1,  # self.im_pixel_scales[ref_band].to(u.arcsec).value,
                 plot=plot,
+                quiet=quiet,
             )
         )  # sn_func = sn_func)
+        # move from 0 to n-1 bins to 1 to n bins
+        bin_number += 1
 
-        # Reshape bin_number to 2D
-        bin_number = bin_number.reshape(self.cutout_size, self.cutout_size)
-        self.voronoi_map = bin_number
-        meta_dict = {"ref_band": ref_band, "SNR_reqs": SNR_reqs}
+        # Reshape bin_number to 2D given the galaxy region mask
+        bin_number_2d = np.zeros_like(galaxy_region)
+        # bin_number_2d[galaxy_region != 1] =
+        for i, (xi, yi, bin) in enumerate(zip(x, y, bin_number)):
+            bin_number_2d[yi, xi] = int(bin)
+
+        self.maps.append("voronoi")
+
+        meta_dict = {
+            "ref_band": ref_band,
+            "SNR_reqs": SNR_reqs,
+            "psf_type": psf_type,
+            "wvt": wvt,
+            "cvt": cvt,
+            "use_only_widebands": use_only_widebands,
+            "min_band": min_band,
+            "band_instrument": band_instrument,
+            "min_snr_wav": min_snr_wav,
+            "no_use_bins": no_use_bins,
+        }
         self.add_to_h5(
-            bin_number,
+            bin_number_2d,
             "bin_maps",
             "voronoi",
             setattr_gal="voronoi_map",
             meta=meta_dict,
+            overwrite=overwrite,
         )
+
+        if plot:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+            mappable = ax.imshow(
+                bin_number_2d,
+                origin="lower",
+                interpolation="none",
+                cmap="nipy_spectral_r",
+            )
+            fig.colorbar(mappable, ax=ax)
+            ax.set_title(f"Voronoi Map (SNR > {SNR_reqs}, ref: {ref_band})")
+            plt.show()
+
+    def _calculate_min_wav_band(
+        self, redshift, min_snr_wav=1216 * u.AA, only_snr_instrument=None
+    ):
+        self.get_filter_wavs()
+        min_snr_wav_obs = min_snr_wav * (1 + redshift)
+        delta_wav = 1e10 * u.AA
+        no_SNR_requirement = []
+        for band in self.bands:
+            instrument = self.filter_instruments[band]
+            if (
+                only_snr_instrument is not None
+                and instrument != only_snr_instrument
+            ):
+                # print(f'Skipping {band} as it is not in {only_snr_instrument}')
+                no_SNR_requirement.append(band)
+
+            if self.filter_ranges[band][1] < min_snr_wav_obs:
+                no_SNR_requirement.append(band)
+            """
+            if self.filter_ranges[band][1] > min_snr_wav_obs and self.filter_ranges[band][1] - min_snr_wav_obs < delta_wav:
+                min_band = band
+                delta_wav = self.filter_ranges[band][1] - min_snr_wav_obs 
+            """
+        return no_SNR_requirement
 
     def pixedfit_binning(
         self,
@@ -3769,6 +4039,7 @@ class ResolvedGalaxy:
         only_snr_instrument="NIRCam",
         save_out=True,
         remove_files=True,
+        redshift="self",
         name_out="pixedfit",  # Allows you to override the name of the output maps
     ):
         """
@@ -3793,30 +4064,24 @@ class ResolvedGalaxy:
             return
 
         # ref_band_pos = np.argwhere(np.array([band == ref_band for band in self.bands])).flatten()[0]
-        no_SNR_requirement = []
+
         # Should calculate SNR requirements intelligently based on redshift
         if min_band is not None:
             if min_band == "auto":
-                self.get_filter_wavs()
-                min_snr_wav_obs = min_snr_wav * (1 + self.redshift)
-                delta_wav = 1e10 * u.AA
-                for band in self.bands:
-                    instrument = self.filter_instruments[band]
-                    if (
-                        only_snr_instrument is not None
-                        and instrument != only_snr_instrument
-                    ):
-                        # print(f'Skipping {band} as it is not in {only_snr_instrument}')
-                        no_SNR_requirement.append(band)
+                if redshift == "self":
+                    redshift = self.redshift
+                elif type(redshift) in [int, float]:
+                    redshift = redshift
+                else:
+                    raise ValueError(
+                        f"Redshift must be a float or int, not {type(redshift)}"
+                    )
 
-                    if self.filter_ranges[band][1] < min_snr_wav_obs:
-                        no_SNR_requirement.append(band)
-                    """
-                    if self.filter_ranges[band][1] > min_snr_wav_obs and self.filter_ranges[band][1] - min_snr_wav_obs < delta_wav:
-                        min_band = band
-                        delta_wav = self.filter_ranges[band][1] - min_snr_wav_obs 
-                    """
-                # print(f'Auto-selected minimum band for SNR: {min_band}')
+                no_SNR_requirement = self._calculate_min_wav_band(
+                    min_snr_wav=min_snr_wav,
+                    only_snr_instrument=only_snr_instrument,
+                    redshift=z,
+                )
 
         name_out_fits = f"{self.dir_images}/{self.survey}_{self.galaxy_id}_{name_out}_binned.fits"
 
@@ -10413,6 +10678,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
         gal.stars.get_particle_spectra(emission_model)
         models = gal.stars.particle_spectra.keys()
+        print(models)
         for model in models:
             # Generate spectra for each particle for each model component
             gal.stars.particle_spectra[model].get_fnu(
@@ -10421,6 +10687,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             # Need this for making luminosity images only
             gal.stars.particle_spectra[model].get_photo_lnu(filters)
 
+        # gal.get_observed_spectra(cosmo)
         # Combines the spectra of all the particles
         gal.stars.integrate_particle_spectra()
 
@@ -10528,7 +10795,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             resolution_physical,
             fov=fov,
             img_type=img_type,
-            limit_to=spectra_type,
             kernel=kernel_data,
             kernel_threshold=1,
             emission_model=emission_model,

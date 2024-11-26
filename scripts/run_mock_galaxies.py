@@ -43,7 +43,7 @@ elif computer == "singularity":
 if __name__ == "__main__":
     mock_field = "JOF_psfmatched"
     overwrite = True
-    bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
+    bagpipes_only = False  # This is for running Bagpipes only if the galaxies have already been created
     load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
     only_new = (
         False  # This is whether to skip initial running of existing .h5 files.
@@ -176,7 +176,6 @@ if __name__ == "__main__":
     )
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
-    
 
     override_meta = {
         "use_bpass": True,
@@ -231,7 +230,7 @@ if __name__ == "__main__":
     )
 
     for dicts in [
-        #lognorm_dicts,
+        # lognorm_dicts,
         cnst_dicts,
         resolved_dicts_cnst,
         continuity_dicts,

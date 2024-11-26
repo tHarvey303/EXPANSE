@@ -70,6 +70,7 @@ table = galaxies.save_to_fits(save=False)
 
 
 delta_masses = {}
+masses = {}
 
 for bagpipes_run in bagpipes_runs:
     if bagpipes_run == "photoz_dpl":
@@ -80,20 +81,24 @@ for bagpipes_run in bagpipes_runs:
         - table[f"{bagpipes_run}_stellar_mass_50"]
     )
     delta_masses[bagpipes_run] = delta_mass
+    masses[bagpipes_run] = table[f"{bagpipes_run}_stellar_mass_50"]
 
 # Select outshined galaxies
 
 # select photoz_lognorm which have delta_masses > 0.2 dex
 
 select_pos = np.zeros(len(galaxies), dtype=bool)
+select_pos2 = np.zeros(len(galaxies), dtype=bool)
 
 for key in delta_masses.keys():
     select_pos = select_pos | (delta_masses[key] > 0.2)
+    select_pos2 = select_pos | (masses[key] < 8 & delta_masses[key] < 0.2)
 
+# Remove overlap with select_pos2
 
-print(np.sum(select_pos))
+select_pos2 = select_pos2 & ~select_pos
 
-galaxy_ids = table["galaxy_id"][select_pos]
+galaxy_ids = table["galaxy_id"][select_pos2]
 
 galaxies_outshined = ResolvedGalaxies(
     [galaxy for galaxy in galaxies if galaxy.galaxy_id in galaxy_ids]

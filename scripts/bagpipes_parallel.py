@@ -5,6 +5,7 @@ from EXPANSE.bagpipes.pipes_models import (
     create_dicts,
     delayed_dict,
     dpl_dict,
+    cnst_dict,
     lognorm_dict,
     resolved_dict_cnst,
     resolved_dict_bursty,
@@ -30,7 +31,7 @@ except:
     n_jobs = 4
 
 field = "JOF_psfmatched"
-load_only = True
+load_only = False
 
 if computer == "morgan":
     galaxies_dir = "/nvme/scratch/work/tharvey/EXPANSE/galaxies/"
@@ -40,9 +41,18 @@ elif computer == "singularity":
     run_dir = "/mnt/pipes/"
 
 fit_photometry = "TOTAL_BIN"
-model = resolved_dict_cnst  # This is the model we are using
+model = cnst_dict  # This is the model we are using
 meta = {"use_bpass": True}
-model["meta"]["run_name"] = "CNST_SFH_RESOLVED_P"
+
+dicts = create_dicts(model, len(multiple_galaxies), override_meta=meta)
+
+second_model = continuity_bursty_dict
+
+continuity_bursty_dicts = create_dicts(
+    second_model,
+    len(multiple_galaxies),
+    override_meta={"use_bpass": True, "update_cont_bins": True},
+)
 
 galaxies = ResolvedGalaxy.init_all_field_from_h5(
     field, galaxies_dir, save_out=False
@@ -50,10 +60,17 @@ galaxies = ResolvedGalaxy.init_all_field_from_h5(
 
 multiple_galaxies = ResolvedGalaxies(galaxies)
 
-dicts = create_dicts(model, len(multiple_galaxies), override_meta=meta)
 
 multiple_galaxies.run_bagpipes_parallel(
     dicts,
+    n_jobs=n_jobs,
+    fit_photometry=fit_photometry,
+    run_dir=run_dir,
+    load_only=load_only,
+)
+
+multiple_galaxies.run_bagpipes_parallel(
+    continuity_bursty_dicts,
     n_jobs=n_jobs,
     fit_photometry=fit_photometry,
     run_dir=run_dir,
