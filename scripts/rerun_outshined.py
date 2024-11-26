@@ -92,7 +92,7 @@ select_pos2 = np.zeros(len(galaxies), dtype=bool)
 
 for key in delta_masses.keys():
     select_pos = select_pos | (delta_masses[key] > 0.2)
-    select_pos2 = select_pos | (masses[key] < 8 & delta_masses[key] < 0.2)
+    select_pos2 = select_pos | ((masses[key] < 8) & (delta_masses[key] < 0.2))
 
 # Remove overlap with select_pos2
 

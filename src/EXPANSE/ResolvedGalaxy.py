@@ -3425,6 +3425,7 @@ class ResolvedGalaxy:
         override_psf_type=None,
         use_all_pixels=False,
         overwrite=False,
+        load_anyway=True,  # Won't overwrite, but will create the object.
     ):
         if hasattr(self, "use_psf_type") and override_psf_type is None:
             psf_type = self.use_psf_type
@@ -3433,7 +3434,7 @@ class ResolvedGalaxy:
 
         from piXedfit.piXedfit_images import images_processing
 
-        if (
+        if not load_anyway and (
             self.gal_region is not None
             and gal_region_use in self.gal_region.keys()
             and not overwrite
@@ -3607,7 +3608,9 @@ class ResolvedGalaxy:
             center = int(self.cutout_size // 2)
             possible_vals = np.unique(det_galaxy_region)
             if len(possible_vals) == 2:
-                det_gal_mask = det_galaxy_region == 1
+                det_gal_mask = det_galaxy_region == np.max(
+                    possible_vals
+                )  # Since 0 is background
             elif len(possible_vals) > 2:
                 center_val = det_galaxy_region[center, center]
                 mask = det_galaxy_region == center_val
@@ -3633,9 +3636,13 @@ class ResolvedGalaxy:
             np.shape(self.gal_region[gal_region_use])
             == (self.cutout_size, self.cutout_size)
         ), f"Galaxy region shape {np.shape(self.gal_region[gal_region_use])} not same as cutout size {self.cutout_size}"
+        mmap = copy.copy(self.gal_region[gal_region_use])
+        assert (
+            len(np.unique(mmap)) > 1
+        ), f"Galaxy region is not binary {np.unique(mmap)}"
 
         img_process.flux_map(
-            self.gal_region[gal_region_use],
+            mmap,
             Gal_EBV=Gal_EBV,
             name_out_fits=flux_maps_fits,
         )
@@ -4080,7 +4087,7 @@ class ResolvedGalaxy:
                 no_SNR_requirement = self._calculate_min_wav_band(
                     min_snr_wav=min_snr_wav,
                     only_snr_instrument=only_snr_instrument,
-                    redshift=z,
+                    redshift=redshift,
                 )
 
         name_out_fits = f"{self.dir_images}/{self.survey}_{self.galaxy_id}_{name_out}_binned.fits"
