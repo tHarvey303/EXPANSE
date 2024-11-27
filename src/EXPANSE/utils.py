@@ -7,7 +7,11 @@ import time
 import matplotlib as mpl
 import numpy as np
 from astropy import units as u
-from photutils.aperture import EllipticalAperture, aperture_photometry
+from photutils.aperture import (
+    EllipticalAperture,
+    aperture_photometry,
+    CircularAperture,
+)
 from astropy.wcs import WCS
 from astropy.io import fits
 import glob
@@ -15,6 +19,7 @@ from matplotlib.patches import Arrow, FancyArrow
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from scipy.interpolate import interp1d
+
 
 file_path = os.path.abspath(__file__)
 
@@ -1093,71 +1098,79 @@ plt.show()
 def find_dict_differences(dict1, dict2, path=""):
     """
     Compare two nested dictionaries and return their differences.
-    
+
     Args:
         dict1: First dictionary to compare
         dict2: Second dictionary to compare
         path: Current path in the nested structure (used for recursion)
-        
+
     Returns:
         dict: Dictionary containing three keys:
             - 'added': Keys present in dict2 but not in dict1
             - 'removed': Keys present in dict1 but not in dict2
             - 'modified': Keys present in both but with different values
     """
-    differences = {
-        'added': {},
-        'removed': {},
-        'modified': {}
-    }
-    
+    differences = {"added": {}, "removed": {}, "modified": {}}
+
     # Handle cases where either input is None
     if dict1 is None:
         if dict2 is not None:
-            differences['added'] = dict2
+            differences["added"] = dict2
         return differences
     if dict2 is None:
-        differences['removed'] = dict1
+        differences["removed"] = dict1
         return differences
-    
+
     # Compare keys in both dictionaries
     all_keys = set(dict1.keys()) | set(dict2.keys())
-    
+
     for key in all_keys:
         current_path = f"{path}.{key}" if path else key
-        
+
         # Key only in dict2
         if key not in dict1:
-            differences['added'][current_path] = dict2[key]
+            differences["added"][current_path] = dict2[key]
             continue
-            
+
         # Key only in dict1
         if key not in dict2:
-            differences['removed'][current_path] = dict1[key]
+            differences["removed"][current_path] = dict1[key]
             continue
-            
+
         # If both values are dictionaries, recurse
         if isinstance(dict1[key], dict) and isinstance(dict2[key], dict):
-            nested_diff = find_dict_differences(dict1[key], dict2[key], current_path)
-            
+            nested_diff = find_dict_differences(
+                dict1[key], dict2[key], current_path
+            )
+
             # Merge nested differences with current level
-            for diff_type in ['added', 'removed', 'modified']:
+            for diff_type in ["added", "removed", "modified"]:
                 differences[diff_type].update(nested_diff[diff_type])
-                
+
         # If values are list or numpy array, compare element-wise
         elif type(dict1[key]) in [list, np.ndarray, tuple]:
             if not np.array_equal(dict1[key], dict2[key]):
-                differences['modified'][current_path] = {
-                    'old': dict1[key],
-                    'new': dict2[key]
+                differences["modified"][current_path] = {
+                    "old": dict1[key],
+                    "new": dict2[key],
                 }
-        elif dict1[key] != dict2[key]:       
-            differences['modified'][current_path] = {
-                'old': dict1[key],
-                'new': dict2[key]
+        elif dict1[key] != dict2[key]:
+            differences["modified"][current_path] = {
+                "old": dict1[key],
+                "new": dict2[key],
             }
-            
+
     return differences
 
-    
-    
+
+def measure_cog(sci_cutout, pos, nradii=20, minrad=1, maxrad=10):
+    """Measure the curve of growth of the galaxy in the cutout image"""
+    # make COG by apertures
+
+    radii = np.linspace(minrad, maxrad, nradii)
+
+    apertures = [CircularAperture(pos, r) for r in radii]
+    phot_tab = aperture_photometry(sci_cutout, apertures)
+    cog = np.array([[phot_tab[coln][0] for coln in phot_tab.colnames[3:]]][0])
+
+    return radii, cog

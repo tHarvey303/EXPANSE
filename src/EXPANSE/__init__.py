@@ -9,7 +9,7 @@ from .synthesizer_functions import (convert_coordinates,
                                    calculate_sfh,
                                    plot_particle_sed)
 
-from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli, PhotometryBandInfo, FieldInfo, compass
+from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli, PhotometryBandInfo, FieldInfo, compass, measure_cog
 
 from .bagpipes.plotpipes import (calculate_bins, PlotPipes, PipesFit)
 

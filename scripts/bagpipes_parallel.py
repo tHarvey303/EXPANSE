@@ -44,15 +44,9 @@ fit_photometry = "TOTAL_BIN"
 model = cnst_dict  # This is the model we are using
 meta = {"use_bpass": True}
 
-dicts = create_dicts(model, len(multiple_galaxies), override_meta=meta)
 
 second_model = continuity_bursty_dict
 
-continuity_bursty_dicts = create_dicts(
-    second_model,
-    len(multiple_galaxies),
-    override_meta={"use_bpass": True, "update_cont_bins": True},
-)
 
 galaxies = ResolvedGalaxy.init_all_field_from_h5(
     field, galaxies_dir, save_out=False
@@ -60,6 +54,13 @@ galaxies = ResolvedGalaxy.init_all_field_from_h5(
 
 multiple_galaxies = ResolvedGalaxies(galaxies)
 
+dicts = create_dicts(model, len(multiple_galaxies), override_meta=meta)
+
+continuity_bursty_dicts = create_dicts(
+    second_model,
+    len(multiple_galaxies),
+    override_meta={"use_bpass": True, "update_cont_bins": True},
+)
 
 multiple_galaxies.run_bagpipes_parallel(
     dicts,

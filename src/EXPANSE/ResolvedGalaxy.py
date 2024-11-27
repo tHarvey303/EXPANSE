@@ -5435,6 +5435,8 @@ class ResolvedGalaxy:
         n_jobs=4,
         binmap_type=None,
         min_flux_err=0.1,
+        priors=None,  # Allow passing in of priors for speed
+        save_outputs=True,
     ):
         # import dense_basis as db
 
@@ -5456,9 +5458,11 @@ class ResolvedGalaxy:
 
         if hasattr(self, "use_binmap_type") and binmap_type is None:
             binmap_type = self.use_binmap_type
-        else:
+        elif binmap_type is None:
+            print("Defaulting to pixedfit binning")
             binmap_type = "pixedfit"
 
+        print(f"Using {psf_type} PSF and {binmap_type} binning.")
         if hasattr(self, "sed_fitting_table"):
             if "dense_basis" in self.sed_fitting_table.keys():
                 if (
@@ -5533,8 +5537,8 @@ class ResolvedGalaxy:
 
         fluxes = np.array(fluxes)
         errors = np.array(errors)
-
-        priors = get_priors(db_atlas_path)
+        if priors is None:
+            priors = get_priors(db_atlas_path)
 
         fit_results = Parallel(n_jobs=n_jobs)(
             delayed(run_db_fit_parallel)(
@@ -5556,14 +5560,204 @@ class ResolvedGalaxy:
         ]
 
         return fit_results
-        if not use_emcee:
-            for i, fit_result in tqdm(enumerate(fit_results)):
-                if plot:
-                    #
-                    # fit_result.evaluate_posterior_SFH()
-                    fit_result.plot_posterior_SFH(fit_result.z[0])
-                    # fit_result.plot_posteriors()
-                    fit_result.plot_posterior_spec(filter_wavs, priors)
+
+    def _save_db_fit_results(
+        self,
+        fit_results,
+        ids,
+        db_atlas_name,
+        add_to_h5=True,
+        save_full=False,
+        overwrite=False,
+        priors=None,
+        parameters_to_save=["mstar", "sfr", "Av", "Z", "z"],
+        posterior_values=[50.0, 16.0, 84.0],
+    ):
+        """
+        Save the dense_basis fit results to the h5 file
+
+        Parameters
+        ----------
+        fit_results : list
+        ids: list
+        db_atlas_name : str
+        add_to_h5 : bool
+        save_full : bool
+
+        """
+        from dense_basis import makespec_atlas
+
+        if prior is None:
+            priors = get_priors(db_atlas_path)
+
+        assert (
+            len(fit_results) == len(ids)
+        ), f"Length of fit_results and ids must be the same. {len(fit_results)} != {len(ids)}"
+        if not hasattr(self, "sed_fitting_table"):
+            self.sed_fitting_table = {}
+
+        if "dense_basis" not in self.sed_fitting_table.keys():
+            self.sed_fitting_table["dense_basis"] = {}
+
+        if (
+            db_atlas_name in self.sed_fitting_table["dense_basis"].keys()
+            and not overwrite
+        ):
+            print(
+                f"Run {db_atlas_name} already exists and overwrite is set to False. Skipping."
+            )
+            return
+
+        def ujy_to_flam(data, lam):
+            flam = ((3e-5) * data) / ((lam**2.0) * (1e6))
+            return flam / 1e-19
+
+        # start assembling the table
+
+        table = QTable()
+
+        save_seds = {}
+        save_sfhs = {}
+        save_pdfs = {}
+        for i, fit_result in tqdm(enumerate(fit_results)):
+            table_row = {}
+            table_row["#ID"] = ids[i]
+            try:
+                mstar_map = fit_result.evaluate_MAP_mstar(
+                    bw_dex=0.001,
+                    smooth="kde",
+                    lowess_frac=0.3,
+                    bw_method="scott",
+                    vb=False,
+                )
+                sfr_map = fit_result.evaluate_MAP_sfr(
+                    bw_dex=0.001,
+                    smooth="kde",
+                    lowess_frac=0.3,
+                    bw_method="scott",
+                    vb=False,
+                )
+                table_row["mstar_map"] = mstar_map
+                table_row["sfr_map"] = sfr_map
+
+            except ValueError:
+                pass
+
+            fit_result.evaluate_posterior_percentiles(
+                bw_dex=0.001, percentile_values=posterior_values, vb=False
+            )
+            for parameter in parameters_to_save:
+                val = getattr(fit_result, parameter)
+                for i, quantile in enumerate(posterior_values):
+                    table_row[f"{parameter}_{quantile}"] = val[i]
+
+            # sace
+
+            zval = fit_result.z[1]
+            sfh_50, sfh_16, sfh_84, time = fit_result.evaluate_posterior_SFH(
+                zval, ngals=100
+            )
+            # Calculate posterior best-fit SED
+            out_sfh = np.vstack((time, sfh_16, sfh_50, sfh_84))
+            save_sfhs[ids[i]] = out_sfh
+
+            lam_all = []
+            spec_all = []
+            z_all = []
+
+            bestn_gals = np.argsort(fit_result.likelihood)
+            for i in range(ngals):
+                lam_gen, spec_gen = makespec_atlas(
+                    fit_result.atlas,
+                    bestn_gals[-(i + 1)],
+                    priors,
+                    mocksp,
+                    cosmo,
+                    filter_list=[],
+                    filt_dir=[],
+                    return_spec=True,
+                )
+                z = fit_result.atlas["zval"][bestn_gals[-(i + 1)]]
+                lam_gen_obs = lam_gen * (1 + z)
+                spec_flam = ujy_to_flam(
+                    spec_gen * fit_result.norm_fac, lam_gen_obs
+                )
+                lam_all.append(lam_gen_obs)
+                spec_all.append(spec_flam)
+                z_all.append(z)
+
+            # find 16th, 50th, 84th percentiles of spectrum
+            spec_all = np.array(spec_all)
+            lam_all = np.array(lam_all)
+            z_all = np.array(z_all)
+
+            z = np.median(z_all)
+            spec_16, spec_50, spec_84 = np.percentile(
+                spec_all, [16, 50, 84], axis=0
+            )
+            lam = np.median(lam_all, axis=0)
+            out = np.vstack((lam, spec_16, spec_50, spec_84))
+
+            save_seds[ids[i]] = out
+
+            if save_full:
+                # Just save norm_fac and chi2 array. Other parameters can be calculated from these.
+                save_pdfs[ids[i]] = {}
+                save_pdfs[ids[i]]["chi2_array"] = fit_result.chi2_array
+                save_pdfs[ids[i]]["norm_fac"] = fit_result.norm_fac
+
+        self.sed_fitting_table["dense_basis"][db_atlas_name] = table
+
+        # sed_fitting_pdfs/sed_tool/name
+        # sed_fitting_seds/sed_tool/name
+        # sed_fitting_sfh/sed_tool/name
+
+        # Then Bagpipes can always work the same way
+
+        if add_to_h5:
+            write_table_hdf5(
+                self.sed_fitting_table["dense_basis"][db_atlas_name],
+                self.h5_path,
+                f"sed_fitting_table/dense_basis/{db_atlas_name}",
+                serialize_meta=True,
+                overwrite=True,
+                append=True,
+            )
+
+            # Save SED
+            for i in save_seds.keys():
+                self.add_to_h5(
+                    save_seds[i],
+                    f"sed_fitting_seds/dense_basis/{db_atlas_name}/",
+                    i,
+                    overwrite=overwrite,
+                    setattr_gal=None,
+                    force=True,
+                )
+
+            # Save SFH
+            for i in save_sfhs.keys():
+                self.add_to_h5(
+                    save_sfhs[i],
+                    f"sed_fitting_sfhs/dense_basis/{db_atlas_name}/",
+                    i,
+                    overwrite=overwrite,
+                    setattr_gal=None,
+                    force=True,
+                )
+
+            # Save PDFs
+            if save_full:
+                for i in save_pdfs.keys():
+                    for key in save_pdfs[i].keys():
+                        self.add_to_h5(
+                            save_pdfs[i][key],
+                            f"sed_fitting_pdfs/dense_basis/{db_atlas_name}/{i}/",
+                            key,
+                            overwrite=overwrite,
+                            setattr_gal=None,
+                            force=True,
+                        )
 
     def plot_filter_transmission(
         self,
@@ -5607,6 +5801,119 @@ class ResolvedGalaxy:
 
         ax.set_xlabel(f"Wavelength ({wav_unit:latex})")
         ax.set_ylabel(r"T$_{\lambda}$")
+
+    def _plot_radial_profile(
+        self,
+        map_name,
+        center="auto",
+        nrad=20,
+        minrad=1,
+        maxrad=45,
+        profile_type="cumulative",
+        log=False,
+        map_units=None,
+        output_radial_units="pix",
+        return_map=False,
+        z_for_scale=None,
+    ):
+        """Plot the radial profile of the map
+
+        Allowed profile types:
+        - cumulative: sum of pixel values within radius
+        - differential: difference between sum of pixel values within radius and sum of pixel values within radius - 1
+        - mean: mean of pixel values within radius
+        - median: median of pixel values within radius
+        """
+
+        fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 5), dpi=100)
+
+        if output_radial_units == "pix":
+            pix_scale = 1 * u.pix
+        elif output_radial_units == "arcsec":
+            pix_scale = self.im_pixel_scales[self.bands[-1]]
+        elif output_radial_units == "kpc":
+            if z_for_scale is None:
+                print(
+                    f"Output radial units set to kpc, but no redshift provided. Using self.redshift {self.redshift}"
+                )
+                z = self.redshift
+            else:
+                z = z_for_scale
+
+            d_A = cosmo.angular_diameter_distance(z).to(u.kpc)
+            pixel_size = self.im_pixel_scales[self.bands[-1]].to(u.arcsec)
+            pix_scale = (d_A * pixel_size).to(u.kpc)
+        else:
+            raise ValueError(
+                f"Output radial units {output_radial_units} not recognised"
+            )
+
+        axs[1].set_xlabel("Radius (pixels)")
+        y_label = "Radial Profile"
+
+        if center == "auto":
+            axs[0].set_title("Centre of Image")
+            center = (cutout_size / 2, cutout_size / 2)
+        elif center == "peak":
+            axs[0].set_title("Peak Center")
+            center = np.unravel_index(np.argmax(map), map.shape)
+            # Reverse x and y
+            center = (center[1], center[0])
+
+        elif center == "com":
+            axs[0].set_title("COM Center")
+            # Calculate center of mass of all pixels
+            x, y = np.meshgrid(np.arange(cutout_size), np.arange(cutout_size))
+            x = x.flatten()
+            y = y.flatten()
+            m = map.flatten()
+            x_com = np.sum(x * m) / np.sum(m)
+            y_com = np.sum(y * m) / np.sum(m)
+            center = (y_com, x_com)
+
+        radii, value = measure_cog(
+            map, center, nrad, maxrad=maxrad, minrad=minrad
+        )
+        plot_radii = copy(radii)
+
+        if map_units is not None or (
+            type(map) is unyt_array and map.units != unyt.dimensionless
+        ):
+            y_label = f"Radial Profile ({map_units})"
+
+        if pix_scale is not None:
+            radii *= pix_scale
+            axs[1].set_xlabel(f"Radius ({pix_scale.units})")
+
+        if profile_type == "cumulative":
+            value = np.cumsum(value)
+
+        elif profile_type == "differential":
+            value = np.diff(value)
+            radii = radii[:-1]
+
+        elif profile_type == "differential_density":
+            # Calculate the differential density profile, normalised by the area of the annulus
+            value = np.diff(value)
+            radii = radii[:-1]
+            area = np.pi * (radii[1:] ** 2 - radii[:-1] ** 2)
+            area = np.append(np.pi * radii[0] ** 2, area)
+            str_unit = r"pix$^{-2}$"
+
+            if pix_scale is not None:
+                # Convert area from pixels^2 to pix_scale^2
+                area *= pix_scale**2
+                str_unit = rf"{pix_scale.units}$^{{-2}}$"
+
+            value /= area
+
+            if map_units is not None or (
+                type(map) is unyt_array and map.units != unyt.dimensionless
+            ):
+                y_label = y_label[:-1] + f" {str_unit})"
+
+        else:
+            raise ValueError(f"Profile type {profile_type} not recognised")
 
     def plot_overview(
         self,
@@ -10002,8 +10309,6 @@ class ResolvedGalaxy:
                 self.photometry_properties[param_name] = all_PDFs
                 self.photometry_property_names.append(param_name)
 
-        # def add_to_h5(self, data, group, name, ext=0, setattr_gal=None, overwrite=False, meta=None):
-
         if np.all(np.isnan(map)):
             print(f"Calculation not possible for {param_name}")
             return None, None
@@ -12960,10 +13265,15 @@ class ResolvedGalaxies(np.ndarray):
                                 fit_instructions
                             )
                             # Check if the fit instructions are the same
-
+                            remove = []
                             for instruction in fit_instructions:
                                 if "redshift" in instruction:
-                                    fit_instructions.pop(instruction)
+                                    print(
+                                        f'Removing redshift instruction "{instruction}"'
+                                    )
+                                    remove.append(instruction)
+                            for r in remove:
+                                fit_instructions.pop(r)
 
                             # Convert all lists to np arrays
                             for key, value in fit_instructions.items():

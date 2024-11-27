@@ -1,1 +1,1 @@
-from .db import get_filter_files, make_db_grid, run_db_fit_parallel, get_priors
+from .db import get_filter_files, make_db_grid, run_db_fit_parallel, get_priors, get_bands_from_atlas

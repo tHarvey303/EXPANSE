@@ -4,6 +4,7 @@ import astropy.units as u
 import h5py
 from astropy.table import Table
 import ast
+import numpy as np
 
 
 def get_filter_files(
@@ -110,25 +111,42 @@ def run_db_fit_parallel(
         atlas_bands = ast.literal_eval(atlas_bands)
 
     if bands is None:
-        assert len(atlas_bands) == len(obs_sed)
+        assert (
+            len(atlas_bands) == len(obs_sed)
+        ), f"{len(atlas_bands)} != {len(obs_sed)} number of bands in grid must match length of input photometry if bands are not specified"
     else:
         # Check all bands are in the atlas
-        assert all([band in atlas_bands for band in bands])
+        assert (
+            len(bands) == len(obs_sed) == len(obs_err)
+        ), f"{len(bands)} != {len(obs_sed)} != {len(obs_err)} number of bands must match length of input photometry"
+        assert all(
+            [band in atlas_bands for band in bands]
+        ), f"All bands must be in the atlas: {atlas_bands}"
         # Order the bands in the same order as the atlas
-        obs_sed_new = obs_sed[[atlas_bands.index(band) for band in bands]]
-        obs_err_new = obs_err[[atlas_bands.index(band) for band in bands]]
-        if any(obs_sed_new != obs_sed):
-            # print("Reordering obs_sed")
-            obs_sed = obs_sed_new
-        if any(obs_err_new != obs_err):
-            # print("Reordering obs_err")
-            obs_err = obs_err_new
-        # Do something with fit_mask?
+        fit_bands = []
+        fit_mask = []  # Temporary
 
-    fit_mask = []  # Temporary
+        obs_sed_new = []
+        obs_err_new = []
+
+        for pos, band in enumerate(atlas_bands):
+            if band in bands:
+                fit_bands.append(band)
+                obs_sed_new.append(obs_sed[bands.index(band)])
+                obs_err_new.append(obs_err[bands.index(band)])
+                fit_mask.append(True)
+            else:
+                obs_sed_new.append(np.nan)
+                obs_err_new.append(np.nan)
+                fit_mask.append(False)
+
+        obs_sed = np.array(obs_sed_new)
+        obs_err = np.array(obs_err_new)
 
     # Need to generate obs_sed, obs_err, and fit_mask based on the input filter files
 
+    # run_emceesampler takes zbest and deltaz. Can't fix redshift precisely (i.e. between grid spacing), but can set zbest and small deltaz to only allow
+    # templates closest to known redshift to be used. Could precheck grid for nearest redshifts and set deltaz accordinglu.
     if use_emcee:
         sampler = db.run_emceesampler(
             obs_sed,
@@ -137,6 +155,8 @@ def run_db_fit_parallel(
             epochs=emcee_samples,
             plot_posteriors=False,
             fit_mask=fit_mask,
+            zbest=None,
+            deltaz=None,
         )
     else:
         # pass the atlas and the observed SED + uncertainties into the fitter,
@@ -144,7 +164,7 @@ def run_db_fit_parallel(
         sedfit.evaluate_likelihood()
         sedfit.evaluate_posterior_percentiles()
 
-        return sedfit
+    return sedfit
 
 
 def make_db_grid(
@@ -220,3 +240,10 @@ def get_priors(atlas_path=None):
         # with h5py.File(atlas_path, "r") as f:
 
     return priors
+
+
+def get_bands_from_atlas(atlas_path):
+    with h5py.File(atlas_path, "r") as f:
+        bands = f.attrs["bands"]
+        bands = ast.literal_eval(bands)
+    return bands
