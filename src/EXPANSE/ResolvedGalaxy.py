@@ -12917,7 +12917,7 @@ class ResolvedGalaxies(np.ndarray):
             )
             if color_by is not None and add_colorbar:
                 fig.colorbar(
-                    cm.ScalarMappable(norm=norm, cmap="viridis"),
+                    cm.ScalarMappable(norm=norm, cmap=cmap),
                     cax=cbar,
                     orientation="horizontal",
                 )
@@ -13361,7 +13361,7 @@ class ResolvedGalaxies(np.ndarray):
                                 log=prop == "stellar_mass",
                             )
                     except Exception as e:
-                        print(f'error: {e}')
+                        print(f"error: {e}")
                         print(traceback.format_exc())
                         print(
                             f"Could not load resolved properties for {run_name}"

@@ -92,7 +92,7 @@ select_pos2 = np.zeros(len(galaxies), dtype=bool)
 
 for key in delta_masses.keys():
     select_pos = select_pos | (delta_masses[key] > 0.2)
-    select_pos2 = select_pos | ((masses[key] < 8) & (delta_masses[key] < 0.2))
+    select_pos2 = select_pos2 | ((masses[key] < 8) & (delta_masses[key] < 0.2))
 
 # Remove overlap with select_pos2
 
@@ -103,7 +103,7 @@ galaxy_ids = table["galaxy_id"][select_pos2]
 galaxies_outshined = ResolvedGalaxies(
     [galaxy for galaxy in galaxies if galaxy.galaxy_id in galaxy_ids]
 )
-'''
+"""
 for galaxy in galaxies_outshined:
     print(galaxy.galaxy_id)
     galaxy.pixedfit_processing(gal_region_use="detection", overwrite=False)
@@ -117,7 +117,7 @@ for galaxy in galaxies_outshined:
         name_out=binmap_type,
     )
     galaxy.measure_flux_in_bins(binmap_type=binmap_type, overwrite=False)
-'''
+"""
 # Now we have the pixedfit results for the outshined galaxies, we can rerun the bagpipes fits
 
 override_meta_resolved = {
