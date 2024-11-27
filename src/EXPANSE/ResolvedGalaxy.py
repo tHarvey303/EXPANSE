@@ -7102,6 +7102,7 @@ class ResolvedGalaxy:
         cache=None,
         fig=None,
         axes=None,
+        plot=True,
     ):
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -7116,14 +7117,14 @@ class ResolvedGalaxy:
         ):
             self.load_bagpipes_results(run_name)
         table = self.sed_fitting_table["bagpipes"][run_name]
-        if fig is None:
+        if fig is None and plot:
             fig = plt.figure(
                 figsize=(6, 3),
                 constrained_layout=True,
                 facecolor=facecolor,
                 dpi=200,
             )
-        if axes is None:
+        if axes is None and plot:
             axes = fig.add_subplot(111)
 
         if type(bins_to_show) not in [list, np.ndarray]:
@@ -7155,20 +7156,21 @@ class ResolvedGalaxy:
                         resolved_sfh = self.resolved_sfh[save_name]
                         x_all = resolved_sfh[:, 0] * u.Gyr
                         x_all = x_all.to(time_unit).value
-                        axes.plot(
-                            x_all,
-                            resolved_sfh[:, 2],
-                            color="tomato",
-                            label="RESOLVED",
-                            lw=2,
-                        )
-                        axes.fill_between(
-                            x_all,
-                            resolved_sfh[:, 1],
-                            resolved_sfh[:, 3],
-                            color="tomato",
-                            alpha=0.5,
-                        )
+                        if plot:
+                            axes.plot(
+                                x_all,
+                                resolved_sfh[:, 2],
+                                color="tomato",
+                                label="RESOLVED",
+                                lw=2,
+                            )
+                            axes.fill_between(
+                                x_all,
+                                resolved_sfh[:, 1],
+                                resolved_sfh[:, 3],
+                                color="tomato",
+                                alpha=0.5,
+                            )
                         continue
 
                 else:
@@ -7212,20 +7214,21 @@ class ResolvedGalaxy:
                             continue
 
                     if set:
-                        axes.plot(
-                            x_all,
-                            y_all[:, 1],
-                            color="tomato",
-                            label="RESOLVED",
-                            lw=2,
-                        )
-                        axes.fill_between(
-                            x_all,
-                            y_all[:, 0],
-                            y_all[:, 2],
-                            color="tomato",
-                            alpha=0.5,
-                        )
+                        if plot:
+                            axes.plot(
+                                x_all,
+                                y_all[:, 1],
+                                color="tomato",
+                                label="RESOLVED",
+                                lw=2,
+                            )
+                            axes.fill_between(
+                                x_all,
+                                y_all[:, 0],
+                                y_all[:, 2],
+                                color="tomato",
+                                alpha=0.5,
+                            )
 
                         # Save resolved SFH
                         x_all *= u.Unit(time_unit)
@@ -7264,28 +7267,28 @@ class ResolvedGalaxy:
                 except FileNotFoundError:
                     print(f"File not found for {run_name} {rbin} (sfh)")
                     continue
-
-                pipes_obj.plot_sfh(
-                    axes,
-                    color,
-                    modify_ax=True,
-                    add_zaxis=True,
-                    timescale=time_unit,
-                    plottype=plottype,
-                    logify=False,
-                    cosmo=None,
-                    label=rbin,
-                )
-
-        axes.legend(fontsize=8)
+                if plot:
+                    pipes_obj.plot_sfh(
+                        axes,
+                        color,
+                        modify_ax=True,
+                        add_zaxis=True,
+                        timescale=time_unit,
+                        plottype=plottype,
+                        logify=False,
+                        cosmo=None,
+                        label=rbin,
+                    )
+        if plot:
+            axes.legend(fontsize=8)
 
         # cbar.set_label('Age (Gyr)', labelpad=10)
         # cbar.ax.xaxis.set_ticks_position('top')
         # cbar.ax.xaxis.set_label_position('top')
         # cbar.ax.tick_params(labelsize=8)
         # cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
-
-        return fig, cache
+        if plot:
+            return fig, cache
 
     def add_flux_aper_total(
         self,
@@ -13345,10 +13348,10 @@ class ResolvedGalaxies(np.ndarray):
                         print(f"Loading resolved properties for {run_name}")
                         galaxy.get_resolved_bagpipes_sed(run_name)
                         # Save the resolved SFH
-                        fig, _ = galaxy.plot_bagpipes_sfh(
-                            run_name, bins_to_show=["RESOLVED"]
+                        galaxy.plot_bagpipes_sfh(
+                            run_name, bins_to_show=["RESOLVED"], plot=False
                         )
-                        plt.close(fig)
+
                         # Save the resolved properties
                         for prop in properties_to_load:
                             galaxy.get_total_resolved_property(
