@@ -59,7 +59,7 @@ binmap_type = "pixedfit_nomin"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
-load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
+load_only = True  # This is for running Bagpipes - whether to skip running fitting and load existing results
 
 try:
     n_jobs = int(sys.argv[1])
@@ -103,7 +103,7 @@ galaxy_ids = table["galaxy_id"][select_pos2]
 galaxies_outshined = ResolvedGalaxies(
     [galaxy for galaxy in galaxies if galaxy.galaxy_id in galaxy_ids]
 )
-
+'''
 for galaxy in galaxies_outshined:
     print(galaxy.galaxy_id)
     galaxy.pixedfit_processing(gal_region_use="detection", overwrite=False)
@@ -117,7 +117,7 @@ for galaxy in galaxies_outshined:
         name_out=binmap_type,
     )
     galaxy.measure_flux_in_bins(binmap_type=binmap_type, overwrite=False)
-
+'''
 # Now we have the pixedfit results for the outshined galaxies, we can rerun the bagpipes fits
 
 override_meta_resolved = {

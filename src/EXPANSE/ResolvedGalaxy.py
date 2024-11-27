@@ -7150,10 +7150,11 @@ class ResolvedGalaxy:
             if rbin == "RESOLVED":
                 """ Special case where we sum the SFH of all the bins"""
                 dummy_fig, dummy_ax = plt.subplots(1, 1)
-
+                found = False
                 if self.resolved_sfh is not None:
                     if save_name in self.resolved_sfh.keys():
                         resolved_sfh = self.resolved_sfh[save_name]
+                        found = True
                         x_all = resolved_sfh[:, 0] * u.Gyr
                         x_all = x_all.to(time_unit).value
                         if plot:
@@ -7173,7 +7174,7 @@ class ResolvedGalaxy:
                             )
                         continue
 
-                else:
+                if not found:
                     set = False
                     for pos, tbin in enumerate(np.unique(table["#ID"])):
                         try:
@@ -13360,6 +13361,8 @@ class ResolvedGalaxies(np.ndarray):
                                 log=prop == "stellar_mass",
                             )
                     except Exception as e:
+                        print(f'error: {e}')
+                        print(traceback.format_exc())
                         print(
                             f"Could not load resolved properties for {run_name}"
                         )

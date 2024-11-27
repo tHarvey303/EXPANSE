@@ -726,7 +726,7 @@ class PipesFitNoLoad:
         sfh_percentiles = np.percentile(sfh_samples, [16, 50, 84], axis=0)
 
         if return_sfh:
-            return (times.to(timescale).value, sfh_percentiles)
+            return (times.to(timescale).value, sfh_percentiles.T) # For compatibility with the original function
 
         # Plot median SFH
         ax.plot(
