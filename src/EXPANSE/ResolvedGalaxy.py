@@ -1725,6 +1725,565 @@ class ResolvedGalaxy:
         self.filter_instruments = filter_instruments
         self.band_codes = band_codes
 
+    def add_psf_models(
+        self,
+        psf_dir,
+        psf_type="star_stack",
+        overwrite=False,
+        file_ending=".fits",
+    ):
+        """
+        This function will add PSF models to the galaxy object.
+        """
+
+        if getattr(self, "psfs", None) not in [None, {}] and not overwrite:
+            if psf_type in self.psfs.keys():
+                print(f"PSF models already exist for {psf_type}")
+                return
+
+        psf_dir = Path(psf_dir)
+        if not psf_dir.exists():
+            raise FileNotFoundError(f"PSF directory {psf_dir} not found")
+
+        psfs = {}
+        psfs_meta = {}
+
+        for band in self.bands:
+            paths = glob.glob(str(psf_dir / f"*{band}*{file_ending}"))
+            if len(paths) == 0:
+                print(f"No PSF found for {band} at {psf_dir}")
+                continue
+            elif len(paths) > 1:
+                raise Exception(f"Multiple PSFs found for {band}: {paths}")
+
+            psf_path = paths[0]
+
+            psf_data = fits.getdata(psf_path)
+            psf_header = fits.getheader(psf_path)
+
+            psfs[band] = copy.deepcopy(psf_data)
+            psfs_meta[band] = str(psf_header)
+
+            self.add_to_h5(psf_data, f"psfs/{psf_type}/", band, overwrite=True)
+            self.add_to_h5(
+                str(psf_header), f"psfs_meta/{psf_type}/", band, overwrite=True
+            )
+
+        self.psfs = {psf_type: psfs}
+        self.psfs_meta = {psf_type: psfs_meta}
+
+    def run_autogalaxy(
+        self,
+        model_type="sersic",
+        psf_type="star_stack",
+        use_psf_matched_data=True,
+        output_dir=None,
+        overwrite=False,
+        n_live_points=50,
+        band=None,
+        mask_type="circular",
+        mask_radius=None,
+        save_plots=True,
+        make_diagnostic_plots=True,
+        search_type="nest",
+        return_results=False,
+        override_redshift=None,
+        path_prefix="modelling",
+        model_priors={
+            "centre_1": {"type": "Gaussian", "mean": 0.0, "sigma": 0.06},  # x
+            "centre_0": {"type": "Gaussian", "mean": 0.0, "sigma": 0.06},  # y
+            "effective_radius": {
+                "type": "Uniform",
+                "lower_limit": 1e-2,
+                "upper_limit": 0.2,
+            },
+            "sersic_index": {"type": "Uniform", "lower": 0.1, "upper": 8.0},
+        },
+    ):
+        """Run PyAutoGalaxy to perform Bayesian model fitting on galaxy images.
+
+        All prior positions are in arcsec!
+
+        Parameters
+        ----------
+        model_type : str
+            Type of model to fit. Options are:
+            - 'sersic': Single Sérsic profile
+            - 'dev': de Vaucouleurs profile (n=4)
+            - 'exp': Exponential profile (n=1)
+
+        psf_type : str
+            Type of PSF to use for convolution
+        output_dir : str
+            Directory to save output files. If None, uses resolved_galaxy_dir/autogalaxy/
+        overwrite : bool
+            Whether to overwrite existing results
+        n_live_points : int
+            Number of live points for nested sampling
+        band : str
+            List of bands to fit. If None, fits all bands
+        mask_type : str
+            Type of mask to apply:
+            - Name of mask in galaxy.region (e.g. 'pixedfit', 'detection')
+            - 'circular': Circular mask with given radius
+            - 'elliptical': Elliptical mask based on Kron parameters
+        mask_radius : float
+            Radius of mask in arcsec. If None, uses Kron radius
+        save_plots : bool
+            Whether to save diagnostic plots
+        search_type : str
+            Type of parameter space search ('nest' or 'mcmc')
+        return_results : bool
+            Whether to return the full results object
+
+        Returns
+        -------
+        dict
+            Dictionary containing fitted parameters and uncertainties
+            if return_results=True
+        """
+        import autogalaxy as ag
+        import autogalaxy.plot as aplt
+        import autofit as af
+        import numpy as np
+        import os
+
+        if override_redshift is not None:
+            z = override_redshift
+        else:
+            z = self.redshift
+
+        if output_dir is None:
+            output_dir = os.path.join(resolved_galaxy_dir, "autogalaxy")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # move to output directory
+        os.chdir(output_dir)
+
+        if hasattr(self, "autogalaxy_results") and not overwrite:
+            print(
+                "AutoGalaxy results already exist. Set overwrite=True to rerun."
+            )
+            return
+
+        # Set up bands to fit
+        if band is None:
+            print(f"Fitting {self.bands[-1]}")
+            band = self.bands[-1]
+
+            # Create temporary directory to store fits files
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create imaging data objects for each band
+            # Create imaging object using from_fits
+            pixel_scales = self.im_pixel_scales[band].to("arcsec")
+
+            # Write image data, PSF and RMS map to temporary fits files
+            data_path = os.path.join(tmpdir, f"data_{band}.fits")
+            psf_path = os.path.join(tmpdir, f"psf_{band}.fits")
+            noise_path = os.path.join(tmpdir, f"noise_{band}.fits")
+            if use_psf_matched_data:
+                im_data = self.psf_matched_data[psf_type][band]
+                noise_data = self.psf_matched_rms_err[psf_type][band]
+                psf_data = self.psfs[psf_type][self.bands[-1]]
+            else:
+                im_data = self.phot_imgs[band]
+                noise_data = self.rms_err_imgs[band]
+                self.psfs[psf_type][band]
+
+            im_data *= self.phot_pix_unit[band]
+            noise_data *= self.phot_pix_unit[band]
+
+            # Convert from uJy to MJy/sr manually
+            pix_sr = pixel_scales**2
+            im_data = im_data.to(u.MJy) / (pix_sr.to(u.steradian))
+            noise_data = noise_data.to(u.MJy) / (pix_sr.to(u.steradian))
+
+            # Convert to float32 to avoid fits precision issues
+            fits.writeto(data_path, im_data.value, overwrite=True)
+            fits.writeto(noise_path, noise_data.value, overwrite=True)
+            fits.writeto(psf_path, psf_data, overwrite=True)
+
+            pixel_scales = float(pixel_scales.value)
+
+            imaging = ag.Imaging.from_fits(
+                pixel_scales=pixel_scales,
+                data_path=data_path,
+                psf_path=psf_path,
+                noise_map_path=noise_path,
+                data_hdu=0,
+                psf_hdu=0,
+                noise_map_hdu=0,
+            )
+
+            # Create mask
+            if mask_type in self.gal_region:
+                # Get pixel coordinates where region is True
+                region_mask = self.gal_region[mask_type]
+                y_coords, x_coords = np.where(region_mask > 0)
+                pixel_coordinates = list(zip(y_coords, x_coords))
+
+                mask = ag.Mask2D.from_pixel_coordinates(
+                    shape_native=region_mask.shape,
+                    pixel_coordinates=pixel_coordinates,
+                    pixel_scales=pixel_scales,
+                    invert=True,  # True = unmasked for pixel coordinates method
+                    buffer=1,  # Small buffer to ensure edge pixels are included
+                )
+
+            elif mask_type == "circular":
+                if mask_radius is None:
+                    # Use Kron radius
+                    if band in self.auto_photometry:
+                        kron_radius = self.auto_photometry[band]["KRON_RADIUS"]
+                        mask_radius = kron_radius * pixel_scales
+                    else:
+                        mask_radius = 3.0  # arcsec default
+                print("Using circular mask.")
+                print(f"Mask radius: {mask_radius} arcsec")
+                print(im_data.shape, type(im_data.shape))
+
+                mask = ag.Mask2D.circular(
+                    shape_native=im_data.shape,
+                    pixel_scales=pixel_scales,
+                    radius=mask_radius,
+                )
+            elif mask_type == "elliptical":
+                # Use Kron ellipse parameters if available
+                if band in self.auto_photometry:
+                    a = self.auto_photometry[band]["A_IMAGE"]
+                    b = self.auto_photometry[band]["B_IMAGE"]
+                    theta = self.auto_photometry[band]["THETA_IMAGE"]
+                    kron_radius = self.auto_photometry[band]["KRON_RADIUS"]
+                    mask = ag.Mask2D.elliptical(
+                        shape_native=im_data.shape,
+                        pixel_scales=pixel_scales,
+                        major_axis_radius=a * kron_radius * pixel_scales,
+                        axis_ratio=b / a,
+                        angle=theta,
+                    )
+                else:
+                    # Fall back to circular mask
+                    mask = ag.Mask2D.circular(
+                        shape_native=im_data.shape,
+                        pixel_scales=pixel_scales,
+                        radius=3.0,
+                    )
+            elif mask_type is None:
+                mask = None
+            else:
+                raise ValueError(f"Mask type {mask_type} not recognized.")
+            # Apply mask
+            if mask is not None:
+                imaging = imaging.apply_mask(mask=mask)
+
+        if make_diagnostic_plots:
+            dataset_plotter = aplt.ImagingPlotter(dataset=imaging)
+            dataset_plotter.figures_2d(data=True)
+        # Set up model
+        total_model = af.Collection()
+
+        str_to_model = {
+            "sersic": ag.lp.Sersic,
+            "exp": ag.lp.Exponential,
+            "dev": ag.lp.DevVaucouleurs,
+        }
+
+        if model_type not in str_to_model.keys():
+            raise ValueError(
+                f"Model type {model_type} not recognized. Only {str_to_model.keys()} are currently supported."
+            )
+
+        model = af.Model(str_to_model[model_type])
+        for prior in model_priors:
+            prior_type = model_priors[prior]["type"]
+            prior_obj = getattr(af, f"{prior_type}Prior")
+            copy_dict = model_priors[prior].copy()
+            # Remove type key
+            del copy_dict["type"]
+            setattr(model, prior, prior_obj(**copy_dict))
+
+        model.galaxies = ag.Galaxy(
+            redshift=z,
+            light=model,
+        )
+
+        name = f"{self.galaxy_id}"
+        unique_tag = f"{model_type}_{psf_type}"
+
+        # Set up analysis pipeline
+        if search_type == "nest":
+            search = af.DynestyDynamic(
+                path_prefix=path_prefix,
+                name=name,
+                unique_tag=unique_tag,
+                iterations_per_update=iterations_per_update,
+                **sampler_kwargs,
+            )
+        elif search_type == "mcmc":
+            search = af.Emcee(
+                path_prefix=path_prefix,
+                name=name,
+                unique_tag=unique_tag,
+                iterations_per_update=iterations_per_updatem**sampler_kwargs,
+            )
+        elif search_type == "nautilus":
+            search = af.Nautilus(
+                path_prefix=path_prefix,
+                name=name,
+                unique_tag=unique_tag,
+                iterations_per_update=iterations_per_update,
+                **sampler_kwargs,
+            )
+        # Create analysis class for each band
+        analysis = ag.AnalysisImaging(dataset=imaging)
+
+        # Run fitting
+        result = search.fit(model=total_model, analysis=analysis)
+
+        # Save results
+        self.autogalaxy_results = {
+            "model_type": model_type,
+            "mp_instance": result.max_log_likelihood_instance,
+            "parameters": result.samples.parameter_lists,
+            "log_evidence": result.log_evidence,
+            "total_log_likelihood": result.total_log_likelihood,
+        }
+
+        # Generate model images and fit info
+
+        fit = ag.FitImaging(
+            dataset=imaging, light_profile=result.max_log_likelihood_instance
+        )
+
+        self.autogalaxy_results[f"{band}_model"] = fit.model_data
+        self.autogalaxy_results[f"{band}_residuals"] = fit.residual_map
+        self.autogalaxy_results[f"{band}_chi2"] = fit.chi_squared_map
+
+        if save_plots:
+            # Save diagnostic plots
+
+            fit = ag.FitImaging(
+                dataset=imaging,
+                light_profile=result.max_log_likelihood_instance,
+            )
+            fit.figures.subplot_fit()
+            plt.savefig(
+                f"{output_dir}/{self.galaxy_id}_{band}_fit.png",
+                bbox_inches="tight",
+            )
+            plt.close()
+
+        # Save to h5 file
+        self.add_to_h5(
+            self.autogalaxy_results,
+            "autogalaxy",
+            "results",
+            overwrite=overwrite,
+        )
+
+        if return_results:
+            return self.autogalaxy_results
+
+    def run_galfitm(
+        self,
+        model_type="sersic",
+        psf_type="star_stack",
+        output_dir=None,
+        overwrite=False,
+        binmap_type="pixedfit",
+        save_models=True,
+        return_models=False,
+    ):
+        """Run GALFITM on the galaxy images to perform multi-band morphological fitting.
+
+        Parameters
+        ----------
+        model_type : str
+            Type of model to fit. Options are:
+            - 'sersic': Single Sérsic profile
+            - 'double_sersic': Double Sérsic profile
+            - 'psf': Point source
+            - 'sersic_psf': Sérsic + point source
+        psf_type : str
+            Type of PSF to use for convolution
+        output_dir : str
+            Directory to save output files. If None, uses resolved_galaxy_dir/galfitm/
+        overwrite : bool
+            Whether to overwrite existing files
+        binmap_type : str
+            Type of binning map to use for determining galaxy region
+        save_models : bool
+            Whether to save the model images and residuals
+        return_models : bool
+            Whether to return the model images and GalfitM outputs
+
+        Returns
+        -------
+        dict
+            Dictionary containing the fitted model parameters and uncertainties
+            if return_models=True
+        """
+        from pygalfitm import PyGalfitm
+        import tempfile
+        import os
+
+        if output_dir is None:
+            output_dir = os.path.join(resolved_galaxy_dir, "galfitm")
+        os.makedirs(output_dir, exist_ok=True)
+
+        if hasattr(self, "galfitm_results") and not overwrite:
+            print(
+                "GalfitM results already exist. Set overwrite=True to rerun."
+            )
+            return
+
+        # Get effective wavelengths for each band
+        self.get_filter_wavs()
+        wavs = [self.filter_wavs[band].value for band in self.bands]
+
+        # Initialize PyGalfitm object
+        gal = PyGalfitm()
+
+        # Set up base parameters
+        gal.set_base(
+            {
+                "A": f"{output_dir}/input",
+                "A1": ",".join(self.bands),
+                "A2": ",".join([str(w) for w in wavs]),
+                "B": ",".join(self.bands),
+                "K": f"{self.im_pixel_scales[self.bands[0]].to('arcsec').value}, {self.im_pixel_scales[self.bands[0]].to('arcsec').value}",
+                "J": ",".join([str(self.im_zps[band]) for band in self.bands]),
+            }
+        )
+
+        # Set up model components based on model_type
+        if model_type == "sersic":
+            gal.activate_components(["sersic"])
+            gal.set_component(
+                "sersic",
+                {
+                    "1": ("1", 3, "cheb"),  # Position x
+                    "2": ("1", 3, "cheb"),  # Position y
+                    "3": ("1", 3, "cheb"),  # Magnitude
+                    "4": ("1", 1, "cheb"),  # Re
+                    "5": ("1", 1, "cheb"),  # n
+                    "6": ("1", 1, "cheb"),  # q
+                    "7": ("1", 1, "cheb"),  # PA
+                },
+            )
+        elif model_type == "double_sersic":
+            gal.activate_components(["sersic", "sersic"])
+            # Set up double Sersic parameters
+            for i in range(2):
+                gal.set_component(
+                    f"sersic{i+1}",
+                    {
+                        "1": ("1", 3, "cheb"),
+                        "2": ("1", 3, "cheb"),
+                        "3": ("1", 3, "cheb"),
+                        "4": ("1", 1, "cheb"),
+                        "5": ("1", 1, "cheb"),
+                        "6": ("1", 1, "cheb"),
+                        "7": ("1", 1, "cheb"),
+                    },
+                )
+        elif model_type == "psf":
+            gal.activate_components(["psf"])
+            gal.set_component(
+                "psf",
+                {
+                    "1": ("1", 3, "cheb"),
+                    "2": ("1", 3, "cheb"),
+                    "3": ("1", 3, "cheb"),
+                },
+            )
+        elif model_type == "sersic_psf":
+            gal.activate_components(["sersic", "psf"])
+            gal.set_component(
+                "sersic",
+                {
+                    "1": ("1", 3, "cheb"),
+                    "2": ("1", 3, "cheb"),
+                    "3": ("1", 3, "cheb"),
+                    "4": ("1", 1, "cheb"),
+                    "5": ("1", 1, "cheb"),
+                    "6": ("1", 1, "cheb"),
+                    "7": ("1", 1, "cheb"),
+                },
+            )
+            gal.set_component(
+                "psf",
+                {
+                    "1": ("1", 3, "cheb"),
+                    "2": ("1", 3, "cheb"),
+                    "3": ("1", 3, "cheb"),
+                },
+            )
+
+        # Write input files
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write cutouts
+            for band in self.bands:
+                fits.writeto(
+                    f"{tmpdir}/cutout_{band}.fits",
+                    self.phot_imgs[band],
+                    overwrite=True,
+                )
+                fits.writeto(
+                    f"{tmpdir}/rms_{band}.fits",
+                    self.rms_err_imgs[band],
+                    overwrite=True,
+                )
+                fits.writeto(
+                    f"{tmpdir}/psf_{band}.fits",
+                    self.psfs[psf_type][band],
+                    overwrite=True,
+                )
+
+            # Write feedme file
+            gal.write_feedme(feedme_path=f"{tmpdir}/galfit.feedme")
+
+            # Run GalfitM
+            log = gal.run()
+
+            # Read results
+            from pygalfitm.read import read_output_to_class
+
+            results = read_output_to_class(f"{tmpdir}/output.fits")
+
+            if save_models:
+                # Save model images
+                for band in self.bands:
+                    model = results.get_model(band)
+                    residual = results.get_residual(band)
+                    fits.writeto(
+                        f"{output_dir}/{self.galaxy_id}_{band}_model.fits",
+                        model,
+                        overwrite=True,
+                    )
+                    fits.writeto(
+                        f"{output_dir}/{self.galaxy_id}_{band}_residual.fits",
+                        residual,
+                        overwrite=True,
+                    )
+
+            # Save parameters to class
+            self.galfitm_results = {
+                "model_type": model_type,
+                "parameters": results.get_parameters(),
+                "uncertainties": results.get_uncertainties(),
+                "chi2": results.get_chi2(),
+                "reduced_chi2": results.get_reduced_chi2(),
+            }
+
+            # Save to h5 file
+            self.add_to_h5(
+                self.galfitm_results, "galfitm", "results", overwrite=overwrite
+            )
+
+            if return_models:
+                return self.galfitm_results
+
     def _convolve_sed(self, flux, wav, filters="self"):
         """Convolve an SED with a set of filters"""
 
@@ -3187,16 +3746,25 @@ class ResolvedGalaxy:
             center = int(self.cutout_size // 2)
             possible_vals = np.unique(det_galaxy_region)
             if len(possible_vals) == 2:
-                det_gal_mask = det_galaxy_region == 1
+                det_gal_mask = det_galaxy_region == np.max(possible_vals)
             elif len(possible_vals) > 2:
                 center_val = det_galaxy_region[center, center]
                 mask = det_galaxy_region == center_val
                 det_gal_mask = np.zeros_like(det_galaxy_region)
                 det_gal_mask[mask] = True
+            else:
+                raise ValueError(
+                    f"No detection pixels found. Only value in map is {possible_vals}"
+                )
 
             det_gal_mask = det_gal_mask.astype(int)
 
             self.gal_region["detection"] = det_gal_mask
+
+            if len(np.unique(det_gal_mask)) == 1:
+                print(
+                    f"WARNING! Only one value in detection region for {self.galaxy_id}. Check!"
+                )
 
             self.add_to_h5(
                 det_gal_mask,
@@ -3616,6 +4184,10 @@ class ResolvedGalaxy:
                 mask = det_galaxy_region == center_val
                 det_gal_mask = np.zeros_like(det_galaxy_region)
                 det_gal_mask[mask] = True
+            else:
+                raise ValueError(
+                    f"Detected only one value in detection region for {self.galaxy_id}. Check!"
+                )
 
             det_gal_mask = det_gal_mask.astype(int)
 
@@ -3867,7 +4439,6 @@ class ResolvedGalaxy:
                     continue
                 else:
                     count += 1
-                    print(f"Using {band}")
                     if ref_band.endswith("min"):
                         # Take signal and noise from lowest SNR for each pixel.
                         snr = signal / noise
@@ -3914,6 +4485,10 @@ class ResolvedGalaxy:
             signal = self.psf_matched_data[psf_type][ref_band]
             noise = self.psf_matched_rms_err[psf_type][ref_band]
 
+        # replace any NaNs with 0
+        np.nan_to_num(signal, copy=False)
+        np.nan_to_num(noise, copy=False, nan=np.nanmedian(noise))
+
         if plot:
             fig, ax = plt.subplots(1, 1, figsize=(6, 6))
             mappable = ax.imshow(
@@ -3931,16 +4506,9 @@ class ResolvedGalaxy:
         signal = signal[galaxy_region == 1].flatten()
         noise = noise[galaxy_region == 1].flatten()
 
-        total_snr = np.sum(signal) / np.sqrt(np.sum(noise**2))
-
-        if total_snr < SNR_reqs:
-            raise ValueError(
-                f"Total SNR of input image within mask: {total_snr} is less than required SNR: {SNR_reqs}"
-            )
-
-        if np.all(signal / noise > SNR_reqs):
-            print(f"All pixels have SNR > {SNR_reqs}, no binning required.")
-            return
+        print(signal)
+        print(noise)
+        total_snr = np.nansum(signal) / np.sqrt(np.nansum(noise**2))
 
         print(f"Total SNR of input image: {total_snr}")
 
@@ -3949,24 +4517,37 @@ class ResolvedGalaxy:
         ), f"Lengths of x, y, signal, noise not equal: {len(x)}, {len(y)}, {len(signal)}, {len(noise)}"
 
         print(f"Number of pixels: {len(x)}")
-        # sn_func = lambda index, flux, flux_err: print(index) #flux[index] / flux_err[index]
-        bin_number, x_gen, y_gen, x_bar, y_bar, sn, nPixels, scale = (
-            voronoi_2d_binning(
-                x,
-                y,
-                signal,
-                noise,
-                SNR_reqs,
-                cvt=cvt,
-                wvt=wvt,
-                pixelsize=1,  # self.im_pixel_scales[ref_band].to(u.arcsec).value,
-                plot=plot,
-                quiet=quiet,
-            )
-        )  # sn_func = sn_func)
-        # move from 0 to n-1 bins to 1 to n bins
-        bin_number += 1
 
+        if total_snr < SNR_reqs:
+            raise ValueError(
+                f"Total SNR of input image within mask: {total_snr} is less than required SNR: {SNR_reqs}"
+            )
+
+        elif np.all(signal / noise > SNR_reqs):
+            print(f"All pixels have SNR > {SNR_reqs}, no binning required.")
+            # Make each pixel a bin
+            # Assign bin numbers from highest SNR to lowest SNR
+            bin_number = np.argsort(signal / noise)[::-1] + 1
+            print(bin_number)
+        else:
+            # sn_func = lambda index, flux, flux_err: print(index) #flux[index] / flux_err[index]
+            bin_number, x_gen, y_gen, x_bar, y_bar, sn, nPixels, scale = (
+                voronoi_2d_binning(
+                    x,
+                    y,
+                    signal,
+                    noise,
+                    SNR_reqs,
+                    cvt=cvt,
+                    wvt=wvt,
+                    pixelsize=1,  # self.im_pixel_scales[ref_band].to(u.arcsec).value,
+                    plot=plot,
+                    quiet=quiet,
+                )
+            )  # sn_func = sn_func)
+            # move from 0 to n-1 bins to 1 to n bins
+            bin_number += 1
+        print(f"Number of bins: {np.max(bin_number)}")
         # Reshape bin_number to 2D given the galaxy region mask
         bin_number_2d = np.zeros_like(galaxy_region)
         # bin_number_2d[galaxy_region != 1] =
@@ -4047,7 +4628,9 @@ class ResolvedGalaxy:
         save_out=True,
         remove_files=True,
         redshift="self",
+        animate=False,
         name_out="pixedfit",  # Allows you to override the name of the output maps
+        animation_save_path=None,
     ):
         """
         : SNR_reqs: list of SNR requirements for each band
@@ -4123,6 +4706,8 @@ class ResolvedGalaxy:
             redc_chi2_limit=redc_chi2_limit,
             del_r=del_r,
             name_out_fits=name_out_fits,
+            animate=animate,
+            save_path=animation_save_path,
         )
 
         if not out:
@@ -9323,7 +9908,7 @@ class ResolvedGalaxy:
 
         print(f"Running for {to_add}")
 
-        import sep
+        import sep_pjw as sep
 
         if override_psf_type:
             psf_type = override_psf_type
@@ -11443,11 +12028,14 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             "grid": grid_name,
             "filters": filter_codes,
             "forced_phot_band": mock_forced_phot_band,
-            "stellar_mass": gal.stellar_mass.value,
-            "tau_v": np.median(gal.tau_v),
-            "age": gal.stellar_mass_weighted_age.value,
+            "stellar_mass": float(gal.stellar_mass.value),
+            "tau_v": float(np.median(gal.tau_v)),
+            "age": float(gal.stellar_mass_weighted_age.value),
             "model_assumptions": model_assumptions,
         }
+
+        print(float(gal.stellar_mass.value, type(gal.stellar_mass.value)))
+        crash
 
         im_zps = {band: 23.9 for band in bands}
         phot_pix_unit = {band: u.uJy for band in bands}
@@ -12728,8 +13316,10 @@ class ResolvedGalaxies(np.ndarray):
         return next(self.galaxies)
     """
 
-    def total_number_of_bins(self):
-        return sum([galaxy.get_number_of_bins() for galaxy in self.galaxies])
+    def total_number_of_bins(self, **kwargs):
+        return sum(
+            [galaxy.get_number_of_bins(**kwargs) for galaxy in self.galaxies]
+        )
 
     def comparison_plot(
         self,

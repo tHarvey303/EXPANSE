@@ -134,6 +134,10 @@ mock = [
     "synthesizer"
 ]
 
+detection = [
+  "sep-pjw"
+]
+
 viewer = [
     "panel",
     "holoviews",

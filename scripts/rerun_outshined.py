@@ -1,6 +1,7 @@
 import astropy.units as u
 import numpy as np
 import os
+import sys
 
 os.environ["PIXEDFIT_HOME"] = "/nvme/scratch/work/tharvey/piXedfit/"
 from EXPANSE import ResolvedGalaxy, ResolvedGalaxies
@@ -55,7 +56,7 @@ bagpipes_runs = [
     "photoz_dpl",
     "photoz_continuity",
 ]
-binmap_type = "pixedfit_nomin"
+binmap_type = "voronoi"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
@@ -95,8 +96,8 @@ for key in delta_masses.keys():
     select_pos2 = select_pos2 | ((masses[key] < 8) & (delta_masses[key] < 0.2))
 
 # Remove overlap with select_pos2
-
-select_pos2 = select_pos2 & ~select_pos
+# Run either.
+select_pos2 = select_pos2 | select_pos
 
 galaxy_ids = table["galaxy_id"][select_pos2]
 

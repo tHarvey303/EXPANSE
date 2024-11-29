@@ -2497,7 +2497,7 @@ if __name__ == "__main__":
                 + 18.6921
             )
 
-    """
+    
 
     make_psf(
         bands,
@@ -2514,7 +2514,6 @@ if __name__ == "__main__":
         pypher_r=1e-4,
     )
 
-    """
 
     # bands = []
     for band in ["F850LP", "F814W", "F775W", "F606W", "F435W"]:
@@ -2593,6 +2592,7 @@ if __name__ == "__main__":
     # make_psf(bands, im_paths, outdir, kernel_dir, match_band = match_band, phot_zp = phot_zp, maglim=maglim, use_psf_masks=use_psf_masks, manual_id_remove = manual_id_remove, sigma=3.5, psf_fov = psf_fov, pypher_r = 1e-4)
 
     # Generate WebbPSF model for bands - only for comparison!
+    bands = ["F444W"]
     for band in bands:
         # strip things which aren't numbers
         band_wav = int("".join([i for i in band if i.isdigit()]))
@@ -2620,7 +2620,18 @@ if __name__ == "__main__":
             "F115W",
             "F090W",
         ]:
-            # get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=f'{outdir_webbpsf}/morishita_jitter', jitter_kernel='gaussian', jitter_sigma=jitter_sigma)
+            get_webbpsf(
+                band,
+                field="default",
+                angle=0,
+                fov=6,
+                og_fov=10,
+                pixscl=0.03,
+                date=None,
+                output=f"{outdir_webbpsf}/morishita_jitter",
+                jitter_kernel="gaussian",
+                jitter_sigma=jitter_sigma,
+            )
             # get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=f'{outdir_webbpsf}/default_jitter')
             pass
     # Compare EE for different models
