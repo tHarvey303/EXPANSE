@@ -13673,6 +13673,16 @@ class ResolvedGalaxies(np.ndarray):
                 )
             }
 
+            # drop configs that are None
+
+            remove_keys = []
+            for key, config in configs.items():
+                if config is None:
+                    remove_keys.append(key)
+
+            for key in remove_keys:
+                configs.pop(key)
+
             # Check if all outputs exist in SED fitting table
 
             if (
@@ -13690,9 +13700,14 @@ class ResolvedGalaxies(np.ndarray):
                 return
 
             assert all(
-                type(config) is dict for config in configs.values()
+                type(config) in [dict, None] for config in configs.values()
             ), f"All configs must be dictionaries, got {[type(config) for config in configs.values()]}"
             # Dump configs to json
+
+            # check if all None
+            if len(configs) == 0:
+                print("All configs are None, skipping.")
+                return
 
             file = tempfile.NamedTemporaryFile(delete=False)
             file_path = file.name
