@@ -194,7 +194,7 @@ for dicts in [
     resolved_dicts_cnst,
     resolved_dicts_bursty,
 ]:
-    galaxies.run_bagpipes_parallel(
+    multiple_galaxies.run_bagpipes_parallel(
         dicts,
         n_jobs=n_jobs,
         fit_photometry=fit_photometry,
@@ -235,7 +235,7 @@ for dicts in [
     resolved_dicts_cnst,
     resolved_dicts_bursty,
 ]:
-    galaxies.run_bagpipes_parallel(
+    multiple_galaxies.run_bagpipes_parallel(
         dicts,
         n_jobs=n_jobs,
         fit_photometry=fit_photometry,
