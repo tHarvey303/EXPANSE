@@ -100,7 +100,7 @@ from EXPANSE.bagpipes.pipes_models import (
     delayed_dict,
     dpl_dict,
     lognorm_dict,
-    cnst_dict, 
+    cnst_dict,
     resolved_dict_cnst,
     resolved_dict_bursty,
 )
@@ -121,14 +121,10 @@ continuity_bursty_dicts = create_dicts(
     continuity_bursty_dict, override_meta=override_meta, num=num
 )
 
-cnst_dicts = create_dicts(
-    cnst_dict, override_meta=override_meta, num=num
-)
+cnst_dicts = create_dicts(cnst_dict, override_meta=override_meta, num=num)
 
 
-dpl_dicts = create_dicts(
-    dpl_dict, override_meta=override_meta, num=num
-)
+dpl_dicts = create_dicts(dpl_dict, override_meta=override_meta, num=num)
 lognorm_dicts = create_dicts(
     lognorm_dict, override_meta=override_meta, num=num
 )
@@ -179,7 +175,7 @@ override_meta_resolved = {
 }
 resolved_dicts_cnst = create_dicts(
     resolved_dict_cnst,
-    num=len(galaxies_outshined),
+    num=num,
     override_meta=override_meta_resolved,
 )
 
@@ -190,7 +186,7 @@ override_meta_resolved = {
 
 resolved_dicts_bursty = create_dicts(
     resolved_dict_bursty,
-    num=len(galaxies_outshined),
+    num=num,
     override_meta=override_meta_resolved,
 )
 
@@ -220,7 +216,7 @@ override_meta_resolved = {
 }
 resolved_dicts_cnst = create_dicts(
     resolved_dict_cnst,
-    num=len(galaxies_outshined),
+    num=num,
     override_meta=override_meta_resolved,
 )
 
@@ -231,7 +227,7 @@ override_meta_resolved = {
 
 resolved_dicts_bursty = create_dicts(
     resolved_dict_bursty,
-    num=len(galaxies_outshined),
+    num=num,
     override_meta=override_meta_resolved,
 )
 
@@ -247,5 +243,3 @@ for dicts in [
         load_only=load_only,
         override_binmap_type=binmap_type,
     )
-
-
