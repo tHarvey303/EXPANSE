@@ -4506,8 +4506,6 @@ class ResolvedGalaxy:
         signal = signal[galaxy_region == 1].flatten()
         noise = noise[galaxy_region == 1].flatten()
 
-        print(signal)
-        print(noise)
         total_snr = np.nansum(signal) / np.sqrt(np.nansum(noise**2))
 
         print(f"Total SNR of input image: {total_snr}")
@@ -4550,6 +4548,10 @@ class ResolvedGalaxy:
         print(f"Number of bins: {np.max(bin_number)}")
         # Reshape bin_number to 2D given the galaxy region mask
         bin_number_2d = np.zeros_like(galaxy_region)
+        # check it is 2D
+        assert (
+            np.ndim(bin_number_2d) == 2
+        ), f"Bin number map is not 2D: {np.shape(bin_number_2d)}"
         # bin_number_2d[galaxy_region != 1] =
         for i, (xi, yi, bin) in enumerate(zip(x, y, bin_number)):
             bin_number_2d[yi, xi] = int(bin)
@@ -6761,6 +6763,7 @@ class ResolvedGalaxy:
         time_calls=False,
         return_run_args=False,
         override_binmap_type=None,
+        skip_single_bin=True,  # Skip fitting single bins
     ):
         # meta - run_name, use_bpass, redshift (override)
         assert (
@@ -6939,6 +6942,14 @@ class ResolvedGalaxy:
         print(
             f"Fitting only {fit_photometry} fluxes, which is {len(flux_table)} sources"
         )
+
+        if (
+            fit_photometry == "bin"
+            and len(flux_table) == 1
+            and skip_single_bin
+        ):
+            print(f'Only one bin found, skipping fitting for "{run_name}"')
+            return
 
         ids = list(flux_table["ID"])
 
@@ -11793,6 +11804,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         possible_galaxies = glob.glob(
             f"{resolved_galaxy_dir}/{mock_survey}_*.h5"
         )
+
+        print(possible_galaxies)
         # Remove those with 'mock' in the name
         possible_galaxies = [g for g in possible_galaxies if "mock" not in g]
 
@@ -12033,9 +12046,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             "age": float(gal.stellar_mass_weighted_age.value),
             "model_assumptions": model_assumptions,
         }
-
-        print(float(gal.stellar_mass.value, type(gal.stellar_mass.value)))
-        crash
 
         im_zps = {band: 23.9 for band in bands}
         phot_pix_unit = {band: u.uJy for band in bands}
@@ -13087,7 +13097,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             density=False,
             return_total=True,
         )
-        total_mass = self.meta_properties["stellar_mass"]
+        if type(mask_mass) is u.Quantity:
+            mask_mass = mask_mass.value
+
+        total_mass = float(self.meta_properties["stellar_mass"])
 
         textstr = f"True Properties\nRedshift: {self.redshift:.2f}\nM$_\star (tot)$:{np.log10(total_mass):.2f} M$_\odot$\nM$_\star (seg)$:{np.log10(mask_mass):.2f} M$_\odot$"
         fig.text(
@@ -13328,6 +13341,7 @@ class ResolvedGalaxies(np.ndarray):
         parameter="stellar_mass",
         sed_fitting_tool="bagpipes",
         aperture_label="TOTAL_BIN",
+        filter_single_bins_for_map=None,  # This lets you not plot single bins for a given input map.
         label=False,
         color_by=None,
         xlim=None,
@@ -13427,9 +13441,16 @@ class ResolvedGalaxies(np.ndarray):
                 galaxy.galaxy_id: cmap(norm(val))
                 for galaxy, val in zip(self.galaxies, vals)
             }
+        else:
+            colors = {galaxy.galaxy_id: "black" for galaxy in self.galaxies}
 
         for galaxy in self.galaxies:
             integrated, resolved = [], []
+            if filter_single_bins_for_map is not None:
+                nbins = galaxy.get_number_of_bins(filter_single_bins_for_map)
+                if nbins == 1:
+                    continue
+
             for run, label in zip(
                 [aperture_run, resolved_run], [aperture_label, ""]
             ):
@@ -13583,6 +13604,13 @@ class ResolvedGalaxies(np.ndarray):
             else:
                 rfunction = function
             rfunction(*args, **kwargs)
+
+    def filter_single_bins(self, binmap):
+        bins = np.array(
+            [galaxy.get_number_of_bins(binmap) for galaxy in self.galaxies]
+        )
+        # return a view of the galaxy array with galaxies which have > 1 bin
+        return self[bins > 1]
 
     def run_bagpipes_parallel(
         self,
