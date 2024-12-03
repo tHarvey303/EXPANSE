@@ -4390,7 +4390,7 @@ class ResolvedGalaxy:
                 raise ValueError(
                     f"Galaxy region {galaxy_region} not found. Available regions: {self.gal_region.keys()}"
                 )
-            galaxy_region = self.gal_region[galaxy_region]
+            galaxy_region = copy.copy(self.gal_region[galaxy_region])
 
         x = np.arange(self.cutout_size)
         y = np.arange(self.cutout_size)
@@ -4517,9 +4517,11 @@ class ResolvedGalaxy:
         print(f"Number of pixels: {len(x)}")
 
         if total_snr < SNR_reqs:
-            raise ValueError(
-                f"Total SNR of input image within mask: {total_snr} is less than required SNR: {SNR_reqs}"
+            print(
+                f"WARNING! Total SNR of input image within mask: {total_snr} is less than required SNR: {SNR_reqs}"
             )
+            # make all pixels a bin
+            bin_number = np.ones_like(signal)
 
         elif np.all(signal / noise > SNR_reqs):
             print(f"All pixels have SNR > {SNR_reqs}, no binning required.")
@@ -4529,22 +4531,29 @@ class ResolvedGalaxy:
             print(bin_number)
         else:
             # sn_func = lambda index, flux, flux_err: print(index) #flux[index] / flux_err[index]
-            bin_number, x_gen, y_gen, x_bar, y_bar, sn, nPixels, scale = (
-                voronoi_2d_binning(
-                    x,
-                    y,
-                    signal,
-                    noise,
-                    SNR_reqs,
-                    cvt=cvt,
-                    wvt=wvt,
-                    pixelsize=1,  # self.im_pixel_scales[ref_band].to(u.arcsec).value,
-                    plot=plot,
-                    quiet=quiet,
+            try:
+                bin_number, x_gen, y_gen, x_bar, y_bar, sn, nPixels, scale = (
+                    voronoi_2d_binning(
+                        x,
+                        y,
+                        signal,
+                        noise,
+                        SNR_reqs,
+                        cvt=cvt,
+                        wvt=wvt,
+                        pixelsize=1,  # self.im_pixel_scales[ref_band].to(u.arcsec).value,
+                        plot=plot,
+                        quiet=quiet,
+                    )
+                )  # sn_func = sn_func)
+                # move from 0 to n-1 bins to 1 to n bins
+                bin_number += 1
+            except (ValueError, IndexError):
+                print(
+                    "Voronoi binning failed. Using all pixels as a single bin."
                 )
-            )  # sn_func = sn_func)
-            # move from 0 to n-1 bins to 1 to n bins
-            bin_number += 1
+                bin_number = np.ones_like(signal)
+
         print(f"Number of bins: {np.max(bin_number)}")
         # Reshape bin_number to 2D given the galaxy region mask
         bin_number_2d = np.zeros_like(galaxy_region)
@@ -7101,6 +7110,8 @@ class ResolvedGalaxy:
                 )
             )
 
+        meta["binmap_type"] = binmap_type
+
         if return_run_args:
             # print(type(redshifts), type(redshift_sigma), type(nircam_filts), type(self.provide_bagpipes_phot('1')))
             # dog
@@ -7186,9 +7197,11 @@ class ResolvedGalaxy:
         f.close()
         """
         if not only_run and rank == 0:
-            self.load_bagpipes_results(run_name)
+            meta = {"binmap_type": binmap_type}
 
-    def load_bagpipes_results(self, run_name, run_dir="pipes/"):
+            self.load_bagpipes_results(run_name, meta=meta)
+
+    def load_bagpipes_results(self, run_name, run_dir="pipes/", meta=None):
         catalog_path = (
             f"{run_dir}/cats/{run_name}/{self.survey}/{self.galaxy_id}.fits"
         )
@@ -7196,6 +7209,9 @@ class ResolvedGalaxy:
             table = Table.read(catalog_path)
         except:
             raise Exception(f"Catalog {catalog_path} not found")
+
+        if meta is not None:
+            table.meta = meta
 
         # SFR map
         # Av map (dust)
@@ -13976,7 +13992,9 @@ class ResolvedGalaxies(np.ndarray):
             for galaxy, config in zip(self.galaxies, bagpipes_configs):
                 run_name = config["meta"]["run_name"]
                 bins_to_show = config["meta"]["fit_photometry"]
-                galaxy.load_bagpipes_results(run_name)
+                # Generate storable meta for Bagpipes table which lists some of config
+                storeable_meta = {"binmap_type": config["meta"]["binmap_type"]}
+                galaxy.load_bagpipes_results(run_name, meta=storeable_meta)
                 if bins_to_show == "bin" or "RESOLVED" in run_name:
                     try:
                         print(f"Loading resolved properties for {run_name}")
