@@ -7121,6 +7121,7 @@ class ResolvedGalaxy:
                 "meta": meta,
                 "run_name": run_name,
                 "galaxy_id": self.galaxy_id,
+                "already_run": exist_already,
                 "phot": [self.provide_bagpipes_phot(i).tolist() for i in ids],
                 "cat_filt_list": nircam_filts,
                 "redshifts": list(redshifts),
@@ -13728,8 +13729,22 @@ class ResolvedGalaxies(np.ndarray):
             file = tempfile.NamedTemporaryFile(delete=False)
             file_path = file.name
 
+            delete = []
+            write_configs = copy.deepcopy(configs)
+            for key, config in write_configs.items():
+                if config["already_run"]:
+                    print(f"Skipping {key} as already run.")
+                    delete.append(key)
+
+            for key in delete:
+                write_configs.pop(key)
+
+            if len(write_configs) == 0:
+                print("All configs already run, skipping.")
+                return
+
             with open(file_path, "w") as f:
-                json.dump(configs, f)
+                json.dump(write_configs, f)
 
             # Run the mpirun script
 
