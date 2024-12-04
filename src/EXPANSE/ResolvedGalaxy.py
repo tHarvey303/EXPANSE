@@ -5327,8 +5327,9 @@ class ResolvedGalaxy:
     ):
         if not self.save_out and not force:
             print(
-                "Skipping writing to .h5 as save_out is False. Set force=True to do this anyway."
+                f"Skipping writing {group} {name} to .h5 as save_out is False. Set force=True to do this anyway."
             )
+            
             return
 
         if type(original_data) in [
@@ -7110,7 +7111,7 @@ class ResolvedGalaxy:
                 )
             )
 
-        meta["binmap_type"] = binmap_type
+       
 
         if return_run_args:
             # print(type(redshifts), type(redshift_sigma), type(nircam_filts), type(self.provide_bagpipes_phot('1')))
@@ -7121,6 +7122,7 @@ class ResolvedGalaxy:
                 "meta": meta,
                 "run_name": run_name,
                 "galaxy_id": self.galaxy_id,
+                "binmap_type": binmap_type,
                 "already_run": exist_already,
                 "phot": [self.provide_bagpipes_phot(i).tolist() for i in ids],
                 "cat_filt_list": nircam_filts,
@@ -7716,6 +7718,7 @@ class ResolvedGalaxy:
         fig=None,
         axes=None,
         plot=True,
+        force=False,
     ):
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -7859,6 +7862,7 @@ class ResolvedGalaxy:
                             "resolved_sfh",
                             save_name,
                             overwrite=True,
+                            force=force, 
                             meta={
                                 "time_unit": time_unit,
                                 "plottype": plottype,
@@ -9268,6 +9272,7 @@ class ResolvedGalaxy:
         overwrite=False,
         n_cores=1,
         open_h5=True,
+        force=False,
     ):
         table = self.sed_fitting_table[sed_fitting_tool][run_name]
         bins = []
@@ -9397,8 +9402,8 @@ class ResolvedGalaxy:
                 self.resolved_sfr_10myr[run_name] = percentiles
 
             self.add_to_h5(
-                percentiles, f"resolved_{property}", run_name, overwrite=True
-            )
+                percentiles, f"resolved_{property}", run_name, overwrite=True, force=force)
+            
 
         if return_quantiles:
             return percentiles
@@ -9711,6 +9716,7 @@ class ResolvedGalaxy:
         overwrite=False,
         flux_units=u.uJy,
         load_h5=True,
+        force=False,
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -9865,7 +9871,7 @@ class ResolvedGalaxy:
         out_array[:, 0] = total_wav
         out_array[:, 1] = total_flux
 
-        self.add_to_h5(out_array, "resolved_sed", run_name, overwrite=True)
+        self.add_to_h5(out_array, "resolved_sed", run_name, overwrite=True, force=force)
 
         if self.resolved_sed is None:
             self.resolved_sed = {}
@@ -13162,6 +13168,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         axes=None,
         add_true=True,
         mask="pixedfit",
+        force=False,
     ):
         # Call parent method
 
@@ -13693,12 +13700,13 @@ class ResolvedGalaxies(np.ndarray):
             # drop configs that are None
 
             remove_keys = []
-            for key, config in configs.items():
+            write_configs = copy.deepcopy(configs)
+            for key, config in write_configs.items():
                 if config is None:
                     remove_keys.append(key)
 
             for key in remove_keys:
-                configs.pop(key)
+                write_configs.pop(key)
 
             # Check if all outputs exist in SED fitting table
 
@@ -13717,8 +13725,8 @@ class ResolvedGalaxies(np.ndarray):
                 return
 
             assert all(
-                type(config) in [dict, None] for config in configs.values()
-            ), f"All configs must be dictionaries, got {[type(config) for config in configs.values()]}"
+                type(config) in [dict, None] for config in write_configs.values()
+            ), f"All configs must be dictionaries, got {[type(config) for config in write_configs.values()]}"
             # Dump configs to json
 
             # check if all None
@@ -13730,7 +13738,6 @@ class ResolvedGalaxies(np.ndarray):
             file_path = file.name
 
             delete = []
-            write_configs = copy.deepcopy(configs)
             for key, config in write_configs.items():
                 if config["already_run"]:
                     print(f"Skipping {key} as already run.")
@@ -13768,13 +13775,13 @@ class ResolvedGalaxies(np.ndarray):
                     os.path.exists(
                         f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}/{galaxy_id}.fits"
                     )
-                    for galaxy_id, config in configs.items()
+                    for galaxy_id, config in write_configs.items()
                 ]
             ) or os.path.exists(
                 os.path.join(run_dir, f"cats/{out_subdir_name}.fits")
             )
             # also check if .h5 files exist in either location
-            for galaxy_id, config in configs.items():
+            for galaxy_id, config in write_configs.items():
                 # Check all IDs and see if .h5 exists in either new or old location
                 cat_ids = [f"{galaxy_id}_{id}" for id in config["ids"]]
                 for cat_id, gal_id in zip(cat_ids, config["ids"]):
@@ -13796,9 +13803,9 @@ class ResolvedGalaxies(np.ndarray):
 
             n_fits = int(
                 np.sum(
-                    np.ones(len(configs))
+                    np.ones(len(write_configs))
                     * np.array(
-                        [len(config["ids"]) for config in configs.values()]
+                        [len(config["ids"]) for config in write_configs.values()]
                     )
                 )
             )
@@ -13863,7 +13870,7 @@ class ResolvedGalaxies(np.ndarray):
             print(
                 [
                     f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
-                    for galaxy_id, config in configs.items()
+                    for galaxy_id, config in write_configs.items()
                 ]
             )
 
@@ -13872,7 +13879,7 @@ class ResolvedGalaxies(np.ndarray):
                     os.path.exists(
                         f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
                     )
-                    for galaxy_id, config in configs.items()
+                    for galaxy_id, config in write_configs.items()
                 ]
             ):
                 print("Individual galaxy catalogues found. Skipping.")
@@ -13889,7 +13896,7 @@ class ResolvedGalaxies(np.ndarray):
                 )
 
             if not done:
-                for galaxy_id, config in configs.items():
+                for galaxy_id, config in write_configs.items():
                     new_dir = os.path.join(run_dir, config["out_dir"])
                     new_cat_dir = os.path.dirname(
                         new_dir.replace("posterior", "cats")
@@ -14004,20 +14011,22 @@ class ResolvedGalaxies(np.ndarray):
                 )
 
             print("Moving on to loading properties into galaxies.")
-
             for galaxy, config in zip(self.galaxies, bagpipes_configs):
+                if configs[galaxy.galaxy_id] is None:
+                    continue
+
                 run_name = config["meta"]["run_name"]
                 bins_to_show = config["meta"]["fit_photometry"]
                 # Generate storable meta for Bagpipes table which lists some of config
-                storeable_meta = {"binmap_type": config["meta"]["binmap_type"]}
+                storeable_meta = {"binmap_type": configs[galaxy.galaxy_id]["binmap_type"]}
                 galaxy.load_bagpipes_results(run_name, meta=storeable_meta)
                 if bins_to_show == "bin" or "RESOLVED" in run_name:
                     try:
                         print(f"Loading resolved properties for {run_name}")
-                        galaxy.get_resolved_bagpipes_sed(run_name)
+                        galaxy.get_resolved_bagpipes_sed(run_name, force=True)
                         # Save the resolved SFH
                         galaxy.plot_bagpipes_sfh(
-                            run_name, bins_to_show=["RESOLVED"], plot=False
+                            run_name, bins_to_show=["RESOLVED"], plot=False, force=True,
                         )
 
                         # Save the resolved properties
@@ -14026,6 +14035,7 @@ class ResolvedGalaxies(np.ndarray):
                                 run_name,
                                 property=prop,
                                 log=prop == "stellar_mass",
+                                force=True,
                             )
                     except Exception as e:
                         print(f"error: {e}")

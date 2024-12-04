@@ -72,7 +72,7 @@ elif computer == "singularity":
     run_dir = "/mnt/pipes/"
 
 field = "JOF_psfmatched"
-load_only = False
+load_only = True
 fit_photometry = "TOTAL_BIN"
 
 
