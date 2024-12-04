@@ -13739,9 +13739,10 @@ class ResolvedGalaxies(np.ndarray):
             for key in delete:
                 write_configs.pop(key)
 
+            done = False
             if len(write_configs) == 0:
                 print("All configs already run, skipping.")
-                return
+                done = True
 
             with open(file_path, "w") as f:
                 json.dump(write_configs, f)
@@ -13762,7 +13763,7 @@ class ResolvedGalaxies(np.ndarray):
 
             # Check if already run
             # If seperate configs exist or if a single catalogue exists, then it is done
-            done = all(
+            done = done | all(
                 [
                     os.path.exists(
                         f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}/{galaxy_id}.fits"
