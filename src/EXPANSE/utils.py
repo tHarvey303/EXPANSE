@@ -1171,6 +1171,153 @@ def measure_cog(sci_cutout, pos, nradii=20, minrad=1, maxrad=10):
 
     apertures = [CircularAperture(pos, r) for r in radii]
     phot_tab = aperture_photometry(sci_cutout, apertures)
+    print(phot_tab)
     cog = np.array([[phot_tab[coln][0] for coln in phot_tab.colnames[3:]]][0])
 
     return radii, cog
+
+
+def get_bounding_box(array, scale_border=0, square=False):
+    """Get bounding box coordinates of non-NaN values in 2D array.
+
+    Parameters
+    ----------
+    array : ndarray
+        2D numpy array
+
+    Returns
+    -------
+    tuple
+        (xmin, xmax, ymin, ymax) coordinates. Returns None if all values are NaN.
+    """
+    valid = ~np.isnan(array)
+    if not np.any(valid):
+        return None
+
+    rows = np.any(valid, axis=1)
+    cols = np.any(valid, axis=0)
+
+    ymin, ymax = np.where(rows)[0][[0, -1]]
+    xmin, xmax = np.where(cols)[0][[0, -1]]
+
+    diff_x = xmax - xmin
+    diff_y = ymax - ymin
+
+    xmin = xmin - scale_border * diff_x
+    xmax = xmax + scale_border * diff_x
+    ymin = ymin - scale_border * diff_y
+    ymax = ymax + scale_border * diff_y
+
+    if square:
+        # Pad the smaller dimension to make it square
+        diff_x = xmax - xmin
+        diff_y = ymax - ymin
+
+        if diff_x > diff_y:
+            diff = diff_x - diff_y
+            ymin -= diff / 2
+            ymax += diff / 2
+        elif diff_y > diff_x:
+            diff = diff_y - diff_x
+            xmin -= diff / 2
+            xmax += diff / 2
+
+    return xmin, xmax, ymin, ymax
+
+
+def calculate_half_radius(
+    map_data,
+    center="com",
+    mask=None,
+    replace_nan=True,
+    replace_val=0,
+    radius_step=1.0,
+    max_radius=None,
+    method="exact",
+):
+    """Calculate radius containing half of total value using circular aperture photometry.
+
+    Parameters
+    ----------
+    map_data : array_like
+        2D array containing surface density values (e.g. Msun/kpc^2 or SFR/kpc^2)
+    center : tuple, optional
+        (x,y) coordinates of center. If None, uses center of array.
+    mask : array_like, optional
+        Boolean mask of valid pixels. Invalid pixels ignored.
+    radius_step : float
+        Step size in pixels for radius search
+    max_radius : float, optional
+        Maximum radius to try. If None, uses half the image size.
+    method : {'exact', 'center'}
+        Method for treating pixels that span aperture boundaries:
+        - 'exact': Exact overlap fraction (slower)
+        - 'center': Include if center is in aperture (faster)
+
+    Returns
+    -------
+    radius : float
+        Radius in pixels containing half the total value
+    """
+    from photutils.aperture import CircularAperture, aperture_photometry
+
+    # Set maximum radius if not provided
+    if max_radius is None:
+        max_radius = min(map_data.shape) / 2
+
+    # Calculate radii to try
+    radii = np.arange(radius_step, max_radius, radius_step)
+
+    if replace_nan:
+        map_data = np.nan_to_num(map_data, nan=replace_val)
+
+    # Set center if not provided
+    if center is None:
+        center = (map_data.shape[1] / 2, map_data.shape[0] / 2)
+    elif center == "com":
+        x, y = np.meshgrid(
+            np.arange(map_data.shape[1]), np.arange(map_data.shape[0])
+        )
+        x = x.flatten()
+        y = y.flatten()
+        m = map_data.flatten()
+        x_com = np.nansum(x * m) / np.nansum(m)
+        y_com = np.nansum(y * m) / np.nansum(m)
+        center = (x_com, y_com)
+
+    # Get masked data if mask provided
+    if mask is not None:
+        data = map_data.copy()
+        data[~mask] = 0
+    else:
+        data = map_data
+
+    # Get total value using large aperture
+    total_aper = CircularAperture(center, r=max_radius)
+    total_phot = aperture_photometry(data, total_aper, method=method)
+    total = float(total_phot["aperture_sum"])
+
+    # Try apertures of increasing size
+    cumsum = []
+    for r in radii:
+        aper = CircularAperture(center, r=r)
+        phot = aperture_photometry(data, aper, method=method)
+        cumsum.append(float(phot["aperture_sum"]))
+
+    cumsum = np.array(cumsum)
+
+    # Find radius where cumsum crosses half total
+    idx = np.searchsorted(cumsum, total / 2)
+
+    if idx == 0:
+        return radii[0], center
+    elif idx == len(radii):
+        print("Warning: Half-radius search reached maximum radius")
+        return radii[-1], center
+
+    # Interpolate between bracketing radii
+    r1, r2 = radii[idx - 1 : idx + 1]
+    m1, m2 = cumsum[idx - 1 : idx + 1]
+    radius = r1 + (r2 - r1) * (total / 2 - m1) / (m2 - m1)
+
+    return radius, center

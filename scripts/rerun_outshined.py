@@ -104,6 +104,13 @@ galaxy_ids = table["galaxy_id"][select_pos2]
 galaxies_outshined = ResolvedGalaxies(
     [galaxy for galaxy in galaxies if galaxy.galaxy_id in galaxy_ids]
 )
+
+masses = [
+    galaxy.get_total_resolved_property(resolved_run)[1] for galaxy in galaxies
+]
+galaxies_lowmass = galaxies[np.array(masses) < 9]
+
+
 """
 for galaxy in galaxies_outshined:
     print(galaxy.galaxy_id)
@@ -127,7 +134,7 @@ override_meta_resolved = {
 }
 resolved_dicts_cnst = create_dicts(
     resolved_dict_cnst,
-    num=len(galaxies_outshined),
+    num=len(galaxies_lowmass),
     override_meta=override_meta_resolved,
 )
 
@@ -138,7 +145,7 @@ override_meta_resolved = {
 
 resolved_dicts_bursty = create_dicts(
     resolved_dict_bursty,
-    num=len(galaxies_outshined),
+    num=len(galaxies_lowmass),
     override_meta=override_meta_resolved,
 )
 
@@ -146,7 +153,7 @@ for dicts in [
     resolved_dicts_cnst,
     resolved_dicts_bursty,
 ]:
-    galaxies_outshined.run_bagpipes_parallel(
+    galaxies_lowmass.run_bagpipes_parallel(
         dicts,
         n_jobs=n_jobs,
         fit_photometry=fit_photometry,

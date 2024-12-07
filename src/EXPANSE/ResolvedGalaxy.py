@@ -3798,6 +3798,7 @@ class ResolvedGalaxy:
         text_fontsize="large",
         add_scalebar=False,
         label_bands=False,
+        show_kron_ellipse=True,
     ):
         """Plot the galaxy in Lupton RGB"""
 
@@ -3848,10 +3849,10 @@ class ResolvedGalaxy:
         # disable x and y ticks
         ax.set_xticks([])
         ax.set_yticks([])
-
-        self.plot_kron_ellipse(
-            ax=ax, center=self.cutout_size / 2, band="detection"
-        )
+        if show_kron_ellipse:
+            self.plot_kron_ellipse(
+                ax=ax, center=self.cutout_size / 2, band="detection"
+            )
         if label_bands:
             ax.text(
                 0.03,
@@ -5329,7 +5330,7 @@ class ResolvedGalaxy:
             print(
                 f"Skipping writing {group} {name} to .h5 as save_out is False. Set force=True to do this anyway."
             )
-            
+
             return
 
         if type(original_data) in [
@@ -6401,7 +6402,7 @@ class ResolvedGalaxy:
 
     def _plot_radial_profile(
         self,
-        map_name,
+        map,
         center="auto",
         nrad=20,
         minrad=1,
@@ -6412,6 +6413,8 @@ class ResolvedGalaxy:
         output_radial_units="pix",
         return_map=False,
         z_for_scale=None,
+        axs=None,
+        fig=None,
     ):
         """Plot the radial profile of the map
 
@@ -6422,7 +6425,10 @@ class ResolvedGalaxy:
         - median: median of pixel values within radius
         """
 
-        fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 5), dpi=100)
+        if fig is None:
+            fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 5), dpi=100)
+        if axs is None:
+            axs = fig.subplots(nrows=1, ncols=2)
 
         if output_radial_units == "pix":
             pix_scale = 1 * u.pix
@@ -6450,7 +6456,7 @@ class ResolvedGalaxy:
 
         if center == "auto":
             axs[0].set_title("Centre of Image")
-            center = (cutout_size / 2, cutout_size / 2)
+            center = (self.cutout_size / 2, self.cutout_size / 2)
         elif center == "peak":
             axs[0].set_title("Peak Center")
             center = np.unravel_index(np.argmax(map), map.shape)
@@ -6460,7 +6466,9 @@ class ResolvedGalaxy:
         elif center == "com":
             axs[0].set_title("COM Center")
             # Calculate center of mass of all pixels
-            x, y = np.meshgrid(np.arange(cutout_size), np.arange(cutout_size))
+            x, y = np.meshgrid(
+                np.arange(self.cutout_size), np.arange(self.cutout_size)
+            )
             x = x.flatten()
             y = y.flatten()
             m = map.flatten()
@@ -6468,10 +6476,16 @@ class ResolvedGalaxy:
             y_com = np.sum(y * m) / np.sum(m)
             center = (y_com, x_com)
 
+        from .utils import measure_cog
+
         radii, value = measure_cog(
             map, center, nrad, maxrad=maxrad, minrad=minrad
         )
-        plot_radii = copy(radii)
+        plot_radii = copy.copy(radii)
+
+        print(radii, value)
+
+        from unyt import unyt_array
 
         if map_units is not None or (
             type(map) is unyt_array and map.units != unyt.dimensionless
@@ -6479,8 +6493,8 @@ class ResolvedGalaxy:
             y_label = f"Radial Profile ({map_units})"
 
         if pix_scale is not None:
-            radii *= pix_scale
-            axs[1].set_xlabel(f"Radius ({pix_scale.units})")
+            radii = radii * pix_scale
+            axs[1].set_xlabel(f"Radius ({output_radial_units})")
 
         if profile_type == "cumulative":
             value = np.cumsum(value)
@@ -6500,17 +6514,33 @@ class ResolvedGalaxy:
             if pix_scale is not None:
                 # Convert area from pixels^2 to pix_scale^2
                 area *= pix_scale**2
-                str_unit = rf"{pix_scale.units}$^{{-2}}$"
+                str_unit = rf"{pix_scale.unit}$^{{-2}}$"
 
-            value /= area
+            value = value / area
 
             if map_units is not None or (
                 type(map) is unyt_array and map.units != unyt.dimensionless
             ):
                 y_label = y_label[:-1] + f" {str_unit})"
 
+            # Ensure that radii and value are the same length
+            plot_radii = radii
+
         else:
             raise ValueError(f"Profile type {profile_type} not recognised")
+
+        # if return_map:
+        #    return radii, value
+
+        axs[0].plot(plot_radii, value)
+
+        if log:
+            axs[0].set_yscale("log")
+
+        axs[0].set_ylabel(y_label)
+        axs[0].set_xlabel(f"Radius ({pix_scale.unit})")
+
+        return fig, axs
 
     def plot_overview(
         self,
@@ -6689,6 +6719,7 @@ class ResolvedGalaxy:
             stretch=rgb_stretch,
             q=rgb_q,
             label_bands=True,
+            add_scalebar=True,
         )
 
         # plot pixedfit
@@ -7111,8 +7142,6 @@ class ResolvedGalaxy:
                 )
             )
 
-       
-
         if return_run_args:
             # print(type(redshifts), type(redshift_sigma), type(nircam_filts), type(self.provide_bagpipes_phot('1')))
             # dog
@@ -7241,21 +7270,74 @@ class ResolvedGalaxy:
     def convert_table_to_map(
         self, table, id_col, value_col, map, remove_log10=False
     ):
-        changed = np.zeros(map.shape)
-        return_map = copy.deepcopy(map)
+        """Convert a table of values to a 2D map based on bin IDs.
+
+        Parameters
+        ----------
+        table : astropy.table.Table
+            Table containing IDs and values
+        id_col : str
+            Column name for bin IDs
+        value_col : str
+            Column name for values
+        map : ndarray
+            2D map containing bin IDs
+        remove_log10 : bool
+            Whether to convert values from log10
+
+        Returns
+        -------
+        ndarray
+            2D map with values from table
+        """
+        # Initialize output map with NaNs
+        return_map = np.full_like(map, np.nan, dtype=float)
+
+        # Track which pixels get assigned
+        changed = np.zeros_like(map, dtype=bool)
+
         for row in table:
-            gal_id = row[id_col]
+            # Get ID and validate
             try:
-                gal_id = float(gal_id)
-            except:
+                gal_id = float(row[id_col])
+                if np.isnan(gal_id):
+                    continue
+            except (ValueError, TypeError):
                 continue
-            value = row[value_col]
-            return_map[map == float(gal_id)] = (
-                value if not remove_log10 else 10**value
-            )
-            changed[map == float(gal_id)] = 1
-        # print(f'changed {np.sum(changed)} pixels out of {len(map.flatten())} pixels')
-        return_map[changed == 0] = np.nan
+
+            # Get value and validate
+            try:
+                value = float(row[value_col])
+                if np.isnan(value):
+                    continue
+
+                if remove_log10:
+                    value = 10**value
+
+                if not np.isfinite(value):
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+            # Create mask for this ID
+            mask = map == gal_id
+            if not np.any(mask):
+                continue
+
+            # Assign value
+            return_map[mask] = value
+            changed[mask] = True
+
+        # Verify changes
+        n_changed = np.sum(changed)
+        if n_changed == 0:
+            print("Warning: No pixels were assigned values!")
+            print(f"Unique IDs in map: {np.unique(map)}")
+            print(f"IDs in table: {table[id_col]}")
+
+        # Set non-changed pixels to NaN
+        return_map[~changed] = np.nan
+
         return return_map
 
     def param_unit(self, param):
@@ -7862,7 +7944,7 @@ class ResolvedGalaxy:
                             "resolved_sfh",
                             save_name,
                             overwrite=True,
-                            force=force, 
+                            force=force,
                             meta={
                                 "time_unit": time_unit,
                                 "plottype": plottype,
@@ -8036,6 +8118,7 @@ class ResolvedGalaxy:
         savetype="temp",
         path="temp",
         cmap="magma",
+        binmap_type="pixedfit",
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -8051,7 +8134,9 @@ class ResolvedGalaxy:
             else:
                 run_name = run_name[0]
 
-        map = self.pixedfit_map
+        map = getattr(self, f"{binmap_type}_map", None)
+        if map is None:
+            raise Exception(f"Map {binmap_type} not found.")
 
         values = list(np.unique(map[~np.isnan(map)]))
         values = [int(val) for val in values if val != 0.0]
@@ -8118,6 +8203,7 @@ class ResolvedGalaxy:
             logmap=logmap,
             weight_by_band=weight_by_band,
             cmap=cmap,
+            binmap_type=binmap_type,
         )
 
         if path == "temp":
@@ -8631,9 +8717,266 @@ class ResolvedGalaxy:
 
         return data
 
+    def measure_cog_of_property_map(
+        self,
+        run_name=None,
+        binmap_type="pixedfit",
+        param="stellar_mass",
+        pos="center",
+        nradii=20,
+        maxrad=32,
+        minrad=1,
+        profile_type="cumulative",
+        output_radial_units="pix",
+        fig=None,
+        axs=None,
+        reload_from_cat=False,
+        weight_mass_sfr=True,
+        plot=True,
+    ):
+        from .utils import measure_cog
+
+        if (
+            not hasattr(self, "sed_fitting_table")
+            or "bagpipes" not in self.sed_fitting_table.keys()
+        ):
+            print("No bagpipes results found.")
+            return None
+
+        if run_name is None:
+            run_name = list(self.sed_fitting_table["bagpipes"].keys())
+            if len(run_name) > 1:
+                raise Exception("Multiple runs found, please specify run_name")
+            else:
+                run_name = run_name[0]
+
+        if (
+            not hasattr(self, "sed_fitting_table")
+            or "bagpipes" not in self.sed_fitting_table.keys()
+            or run_name not in self.sed_fitting_table["bagpipes"].keys()
+            or reload_from_cat
+        ):
+            self.load_bagpipes_results(run_name)
+
+        if not hasattr(self, f"{binmap_type}_map"):
+            raise Exception(f"Need to run {binmap_type} binning first")
+        # If it still isn't there, return None
+        if (
+            not hasattr(self, "sed_fitting_table")
+            or "bagpipes" not in self.sed_fitting_table.keys()
+            or run_name not in self.sed_fitting_table["bagpipes"].keys()
+        ):
+            return None
+
+        table = self.sed_fitting_table["bagpipes"][run_name]
+        redshift = self.sed_fitting_table["bagpipes"][run_name][
+            "input_redshift"
+        ][0]
+
+        binmap = getattr(self, f"{binmap_type}_map")
+
+        param_name = f"{param[:-1]}" if param.endswith("-") else f"{param}_50"
+        map = self.convert_table_to_map(
+            table,
+            "#ID",
+            param_name,
+            binmap,
+            remove_log10=param.startswith("stellar_mass"),
+        )
+
+        log = ""
+
+        if param in [
+            "stellar_mass",
+            "sfr",
+            "stellar_mass_10myr",
+            "sfr_10myr",
+        ]:
+            ref_band = {
+                "stellar_mass": "F444W",
+                "sfr": "1500A",
+                "stellar_mass_10myr": "F444W",
+                "sfr_10myr": "1500A",
+            }
+            # print(param, np.nanmin(map), np.nanmax(map))
+
+            if weight_mass_sfr:
+                weight = ref_band[param]
+            else:
+                weight = False
+
+            # # Calculate half-mass/sfr radius
+
+            map = self.map_to_density_map(
+                map,
+                redshift=redshift,
+                weight_by_band=weight,
+                logmap=True,
+                binmap_type=binmap_type,
+                area_norm=False,
+            )
+
+            log = r"$\log_{10}$ "
+
+        out = self._plot_radial_profile(
+            map,
+            center="auto",
+            nrad=nradii,
+            minrad=minrad,
+            maxrad=maxrad,
+            profile_type=profile_type,
+            log=False,
+            map_units=None,
+            output_radial_units=output_radial_units,
+            return_map=~plot,
+            z_for_scale=self.redshift,
+            fig=fig,
+            axs=axs,
+        )
+
+        return out
+
+    def map_to_density_map(
+        self,
+        map,
+        cosmo=FlatLambdaCDM(H0=70, Om0=0.3),
+        redshift=None,
+        logmap=False,
+        weight_by_band=False,
+        psf_type="star_stack",
+        binmap_type="pixedfit",
+        area_norm=True,
+    ):
+        """Convert a binned parameter map to a per-pixel density map.
+
+        Parameters
+        ----------
+        map : array_like
+            Input map with parameter values per bin
+        cosmo : astropy.cosmology object
+            Cosmology to use for physical distances
+        redshift : float, optional
+            Redshift to use. If None, uses self.redshift
+        logmap : bool
+            Whether to return log10 of values
+        weight_by_band : str or False
+            Band to use for pixel weighting, or False for uniform weights
+        psf_type : str
+            Type of PSF-matched data to use for weighting
+        binmap_type : str
+            Type of binning map to use
+        area_norm : bool
+            Whether to normalize by pixel area in kpc^2
+
+        Returns
+        -------
+        array_like
+            Map of parameter values per pixel
+        """
+        # Setup
+        pixel_scale = self.im_pixel_scales[self.bands[0]]
+        pixel_map = getattr(self, f"{binmap_type}_map")
+        density_map = np.full_like(map, np.nan)
+
+        if pixel_map is None:
+            raise Exception(f"Need to run {binmap_type} binning first")
+
+        # Get redshift
+        if redshift is None:
+            z = self.redshift
+        else:
+            z = redshift
+
+        # Calculate pixel area in kpc^2
+        d_A = cosmo.angular_diameter_distance(z)
+        pix_kpc = (pixel_scale * d_A).to(u.kpc, u.dimensionless_angles())
+        pix_area = pix_kpc**2
+
+        # Process each bin
+        for bin_id in np.unique(pixel_map):
+            if bin_id == 0:  # Skip background
+                continue
+
+            mask = pixel_map == bin_id
+            bin_value = np.unique(map[mask])
+
+            if len(bin_value) != 1:
+                raise Exception(f"Multiple values found in bin {bin_id}")
+            bin_value = bin_value[0]
+
+            if weight_by_band:
+                # Get weighting band
+                if weight_by_band.endswith("A"):
+                    # Find closest band to rest wavelength
+                    wav = float(weight_by_band[:-1]) * u.AA
+                    obs_wav = wav * (1 + z)
+
+                    self.get_filter_wavs()
+                    fmask = [
+                        self.filter_wavs[band].to(u.AA).value > obs_wav.value
+                        for band in self.bands
+                    ]
+                    band = self.bands[np.argwhere(fmask)[0][0]]
+                else:
+                    band = weight_by_band
+
+                if self.use_psf_type:
+                    psf_type = self.use_psf_type
+
+                # Get band data for weighting
+                data_band = self.psf_matched_data[psf_type][band]
+                temp_mask = mask & np.isfinite(data_band) & (data_band > 0)
+                weights = data_band[temp_mask]
+
+                # Normalize weights
+                weights = weights / np.sum(weights)
+
+                # Calculate weighted value per pixel
+                if area_norm:
+                    pixel_values = bin_value * weights / pix_area.value
+                else:
+                    pixel_values = bin_value * weights
+
+                if logmap:
+                    pixel_values = np.log10(pixel_values)
+
+                density_map[temp_mask] = pixel_values
+
+                # Verify total is preserved
+                if logmap:
+                    mapped_sum = np.nansum(
+                        10**pixel_values * (pix_area.value if area_norm else 1)
+                    )
+                    original = bin_value
+                else:
+                    mapped_sum = np.nansum(
+                        pixel_values * (pix_area.value if area_norm else 1)
+                    )
+                    original = bin_value
+
+                if not np.isclose(mapped_sum, original, rtol=1e-2):
+                    print(f"Warning: Sum mismatch in bin {bin_id}")
+                    print(f"Original: {original}")
+                    print(f"Mapped sum: {mapped_sum}")
+
+            else:
+                # Uniform weighting
+                if area_norm:
+                    value = bin_value / pix_area.value
+                else:
+                    value = bin_value
+
+                if logmap:
+                    value = np.log10(value)
+
+                density_map[mask] = value
+
+        return density_map
+
     def plot_bagpipes_results(
         self,
         run_name=None,
+        binmap_type="pixedfit",
         parameters=[
             "bin_map",
             "stellar_mass",
@@ -8649,6 +8992,13 @@ class ResolvedGalaxy:
         weight_mass_sfr=True,
         norm="linear",
         total_params=[],
+        scale_border=0.66,
+        add_scalebar=True,
+        rgb_stretch=0.001,
+        rgb_q=0.001,
+        text_fontsize=10,
+        area_norm=True,
+        show_info=True,
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -8682,8 +9032,8 @@ class ResolvedGalaxy:
         ):
             self.load_bagpipes_results(run_name)
 
-        if not hasattr(self, "pixedfit_map"):
-            raise Exception("Need to run pixedfit_binning first")
+        if not hasattr(self, f"{binmap_type}_map"):
+            raise Exception(f"Need to run {binmap_type} binning first")
         # If it still isn't there, return None
         if (
             not hasattr(self, "sed_fitting_table")
@@ -8705,8 +9055,8 @@ class ResolvedGalaxy:
             ),
             constrained_layout=True,
             facecolor=facecolor,
-            sharex=True,
-            sharey=True,
+            sharex=False,
+            sharey=False,
             dpi=200,
         )
         # add gap between rows using get_layout_engine
@@ -8721,15 +9071,40 @@ class ResolvedGalaxy:
             "input_redshift"
         ][0]
 
-        for i, param in enumerate(parameters):
-            ax_divider = make_axes_locatable(axes[i])
-            cax = ax_divider.append_axes("top", size="5%", pad="2%")
+        binmap = getattr(self, f"{binmap_type}_map")
+        scalebar_added = False
 
-            if param == "bin_map":
-                map = copy.copy(self.pixedfit_map)
+        for i, param in enumerate(parameters):
+            done = False
+            if param == "lupton_rgb":
+                self.plot_lupton_rgb(
+                    ax=axes[i],
+                    fig=fig,
+                    show=False,
+                    red=["F444W"],
+                    green=["F356W"],
+                    blue=["F200W"],
+                    return_array=False,
+                    stretch=rgb_stretch,
+                    q=rgb_q,
+                    label_bands=True,
+                    add_scalebar=add_scalebar,
+                    show_kron_ellipse=False,
+                )
+                done = True
+
+            elif param == "bin_map":
+                ax_divider = make_axes_locatable(axes[i])
+                cax = ax_divider.append_axes("top", size="5%", pad="2%")
+                map = copy.copy(binmap)
                 map[map == 0] = np.nan
                 log = ""
             else:
+                ax_divider = make_axes_locatable(axes[i])
+                cax = ax_divider.append_axes("top", size="5%", pad="2%")
+                axes[i].set_xticks([])
+                axes[i].set_yticks([])
+
                 param_name = (
                     f"{param[:-1]}" if param.endswith("-") else f"{param}_50"
                 )
@@ -8737,144 +9112,307 @@ class ResolvedGalaxy:
                     table,
                     "#ID",
                     param_name,
-                    self.pixedfit_map,
+                    binmap,
                     remove_log10=param.startswith("stellar_mass"),
                 )
                 log = ""
 
-            if param in [
-                "stellar_mass",
-                "sfr",
-                "stellar_mass_10myr",
-                "sfr_10myr",
-            ]:
-                ref_band = {
-                    "stellar_mass": "F444W",
-                    "sfr": "1500A",
-                    "stellar_mass_10myr": "F444W",
-                    "sfr_10myr": "1500A",
-                }
-                # print(param, np.nanmin(map), np.nanmax(map))
+                if param in [
+                    "stellar_mass",
+                    "sfr",
+                    "sfr_10myr",
+                ]:
+                    ref_band = {
+                        "stellar_mass": "F444W",
+                        "sfr": "1500A",
+                        "stellar_mass_10myr": "F444W",
+                        "sfr_10myr": "1500A",
+                    }
+                    # print(param, np.nanmin(map), np.nanmax(map))
 
-                if weight_mass_sfr:
-                    weight = ref_band[param]
-                else:
-                    weight = False
-
-                map = self.map_to_density_map(
-                    map, redshift=redshift, weight_by_band=weight, logmap=True
-                )
-                # map = self.map_to_density_map(map, redshift = redshift, logmap = True)
-                log = r"$\log_{10}$ "
-                param = f"{param}_density"
-
-            if norm == "log":
-                norm = LogNorm(vmin=np.nanmin(map), vmax=np.nanmax(map))
-            else:
-                norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
-
-            gunit = self.param_unit(param.split(":")[-1])
-            unit = (
-                f" ({log}{gunit:latex})"
-                if gunit != u.dimensionless_unscaled
-                else ""
-            )
-            param_str = param.replace("_", r"\ ")
-
-            for pos, total_param in enumerate(total_params):
-                if total_param in table["#ID"]:
-                    value = table[table["#ID"] == total_param][param_name]
-                    if param_name.endswith("_50"):
-                        err_up = (
-                            table[table["#ID"] == total_param][
-                                param_name.replace("50", "84")
-                            ]
-                            - value
-                        )
-                        err_down = (
-                            value
-                            - table[table["#ID"] == total_param][
-                                param_name.replace("50", "16")
-                            ]
-                        )
-
-                        berr = (
-                            f"$^{{+{err_up[0]:.2f}}}_{{-{err_down[0]:.2f}}}$"
-                        )
+                    if weight_mass_sfr:
+                        weight = ref_band[param]
                     else:
-                        berr = ""
+                        weight = False
 
-                    if 0 < norm(value) < 1:
-                        c_map = plt.cm.get_cmap(cmaps[i])
-                        color = c_map(norm(value))
-                    else:
-                        color = "black"
+                    if show_info:
+                        log = (
+                            r"$\log_{10}$ "
+                            if param.startswith("stellar_mass")
+                            else ""
+                        )
+                        gunit = self.param_unit(param.split(":")[-1])
+                        unit = (
+                            f" {log}{gunit:latex}"
+                            if gunit != u.dimensionless_unscaled
+                            else ""
+                        )
 
-                    axes[i].text(
-                        0.5,
-                        0.03 + 0.1 * pos,
-                        f"{total_param}:{value[0]:.2f}{berr} {unit}",
-                        ha="center",
-                        va="bottom",
-                        fontsize=8,
-                        transform=axes[i].transAxes,
-                        color=color,
-                        path_effects=[
-                            PathEffects.withStroke(
-                                linewidth=0.2, foreground="black"
+                        param_16, param_50, param_84 = (
+                            self.get_total_resolved_property(
+                                run_name, property=param
                             )
-                        ],
+                        )
+                        # print(f"{param}: {param_50:.2f} +{param_84-param_50:.2f} -{param_50-param_16:.2f}")
+                        axes[i].text(
+                            0.03,
+                            0.98,
+                            f"{param_50:.2f}$^{{+{param_84-param_50:.2f}}}_{{-{param_50-param_16:.2f}}}$ {unit}",
+                            ha="left",
+                            va="top",
+                            fontsize=10,
+                            transform=axes[i].transAxes,
+                            color="black",
+                        )
+
+                    half_radius_map = self.map_to_density_map(
+                        map,
+                        redshift=redshift,
+                        weight_by_band=weight,
+                        logmap=False,
+                        binmap_type=binmap_type,
+                        area_norm=False,
                     )
 
-            # Create actual normalisation
+                    map = self.map_to_density_map(
+                        map,
+                        redshift=redshift,
+                        weight_by_band=weight,
+                        logmap=True,
+                        binmap_type=binmap_type,
+                        area_norm=area_norm,
+                    )
 
-            mappable = axes[i].imshow(
-                map,
-                origin="lower",
-                interpolation="none",
-                cmap=cmaps[i],
-                norm=norm,
-            )
-            cbar = fig.colorbar(mappable, cax=cax, orientation="horizontal")
+                    if np.all([~np.isfinite(map)]):
+                        print(f"Map {param} is empty")
+                        fig.delaxes(axes[i])
+                        fig.delaxes(cax)
+                        continue
 
-            # ensure cbar is using ScalarFormatter
-            cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
-            cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
+                    from .utils import calculate_half_radius
 
-            cbar.set_label(
-                rf"$\rm{{{param_str}}}${unit}", labelpad=10, fontsize=8
-            )
-            # Change cbar scale number size
+                    radius, center = calculate_half_radius(
+                        half_radius_map, radius_step=0.2
+                    )
 
-            cbar.ax.xaxis.get_offset_text().set_fontsize(0)
-            cbar.ax.xaxis.set_ticks_position("top")
-            cbar.ax.xaxis.set_tick_params(labelsize=6, which="both")
-            cbar.ax.xaxis.set_label_position("top")
-            # disable xtick labels
-            # cax.set_xticklabels([])
-            # Fix colorbar tick size and positioning if log
-            if norm == "log":
-                # Generate reasonable ticks
-                ticks = np.logspace(
-                    np.log10(np.nanmin(map)), np.log10(np.nanmax(map)), num=5
+                    from matplotlib.patches import Circle
+
+                    circle = Circle(
+                        center,
+                        radius,
+                        edgecolor="black",
+                        facecolor="none",
+                        linewidth=0.5,
+                        linestyle="--",
+                    )
+                    axes[i].add_patch(circle)
+
+                    # map = self.map_to_density_map(map, redshift = redshift, logmap = True)
+                    log = r"$\log_{10}$ "
+                    param = f"{param}_density" if area_norm else param
+
+                if np.all([~np.isfinite(map)]):
+                    print(f"Map {param} is empty")
+                    fig.delaxes(axes[i])
+                    fig.delaxes(cax)
+                    continue
+
+                # Exlude nan and infinities for max and min
+                max = np.nanmax(map[np.isfinite(map)])
+                min = np.nanmin(map[np.isfinite(map)])
+
+                if norm == "log":
+                    norm = LogNorm(vmin=min, vmax=max)
+                else:
+                    norm = Normalize(vmin=min, vmax=max)
+
+                gunit = self.param_unit(param.split(":")[-1])
+                unit = (
+                    f" ({log}{gunit:latex})"
+                    if gunit != u.dimensionless_unscaled
+                    else ""
                 )
-                cbar.set_ticks(ticks)
+                param_str = param.replace("_", r"\ ")
+
+                for pos, total_param in enumerate(total_params):
+                    if total_param in table["#ID"]:
+                        value = table[table["#ID"] == total_param][param_name]
+                        if param_name.endswith("_50"):
+                            err_up = (
+                                table[table["#ID"] == total_param][
+                                    param_name.replace("50", "84")
+                                ]
+                                - value
+                            )
+                            err_down = (
+                                value
+                                - table[table["#ID"] == total_param][
+                                    param_name.replace("50", "16")
+                                ]
+                            )
+
+                            berr = f"$^{{+{err_up[0]:.2f}}}_{{-{err_down[0]:.2f}}}$"
+                        else:
+                            berr = ""
+
+                        if 0 < norm(value) < 1:
+                            c_map = plt.cm.get_cmap(cmaps[i])
+                            color = c_map(norm(value))
+                        else:
+                            color = "black"
+
+                        axes[i].text(
+                            0.5,
+                            0.03 + 0.1 * pos,
+                            f"{total_param}:{value[0]:.2f}{berr} {unit}",
+                            ha="center",
+                            va="bottom",
+                            fontsize=8,
+                            transform=axes[i].transAxes,
+                            color=color,
+                            path_effects=[
+                                PathEffects.withStroke(
+                                    linewidth=0.2, foreground="black"
+                                )
+                            ],
+                        )
+
+            if not done:
+                from .utils import get_bounding_box
+
+                xmin, xmax, ymin, ymax = get_bounding_box(
+                    map, scale_border=scale_border, square=True
+                )
+
+                mappable = axes[i].imshow(
+                    map,
+                    origin="lower",
+                    interpolation="none",
+                    cmap=cmaps[i],
+                    norm=norm,
+                )
+                cbar = fig.colorbar(
+                    mappable, cax=cax, orientation="horizontal"
+                )
+
+                # ensure cbar is using ScalarFormatter
                 cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
                 cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
+
+                cbar.set_label(
+                    rf"$\rm{{{param_str}}}${unit}", labelpad=10, fontsize=10
+                )
+                # Change cbar scale number size
+
+                cbar.ax.xaxis.get_offset_text().set_fontsize(0)
+                cbar.ax.xaxis.set_ticks_position("top")
                 cbar.ax.xaxis.set_tick_params(labelsize=6, which="both")
                 cbar.ax.xaxis.set_label_position("top")
-                cbar.ax.xaxis.set_ticks_position("top")
+                # disable xtick labels
+                # cax.set_xticklabels([])
+                # Fix colorbar tick size and positioning if log
+                if norm == "log":
+                    print("Fixing ticks")
+                    # Generate reasonable ticks
+                    ticks = np.logspace(
+                        np.log10(np.nanmin(map)),
+                        np.log10(np.nanmax(map)),
+                        num=5,
+                    )
+                    cbar.set_ticks(ticks)
+                    cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+                    cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
+                    cbar.ax.xaxis.set_tick_params(labelsize=6, which="both")
+                    cbar.ax.xaxis.set_label_position("top")
+                    cbar.ax.xaxis.set_ticks_position("top")
                 cbar.update_ticks()
 
-        if save:
-            fig.savefig(
-                f"{resolved_galaxy_dir}/{run_name}_maps.png",
-                dpi=300,
-                bbox_inches="tight",
-            )
-        return fig
+                axes[i].set_xlim(xmin, xmax)
+                axes[i].set_ylim(ymin, ymax)
 
-    def map_to_density_map(
+                if add_scalebar and not scalebar_added:
+                    scalebar_added = True
+                    re = (xmax - xmin) / 5
+                    d_A = cosmo.angular_diameter_distance(self.redshift)
+                    pix_scal = u.pixel_scale(
+                        self.im_pixel_scales["F444W"].value
+                        * u.arcsec
+                        / u.pixel
+                    )
+                    re_as = (re * u.pixel).to(u.arcsec, pix_scal)
+                    re_kpc = (re_as * d_A).to(u.kpc, u.dimensionless_angles())
+
+                    # First scalebar
+                    scalebar = AnchoredSizeBar(
+                        axes[i].transData,
+                        0.3 / self.im_pixel_scales["F444W"].value,
+                        '0.3"',
+                        "lower right",
+                        pad=0.3,
+                        color="black",
+                        frameon=False,
+                        size_vertical=0.5,
+                        fontproperties=FontProperties(size=text_fontsize),
+                    )
+                    axes[i].add_artist(scalebar)
+                    # Plot scalebar with physical size
+                    scalebar = AnchoredSizeBar(
+                        axes[i].transData,
+                        re,
+                        f"{re_kpc:.1f}",
+                        "lower left",
+                        pad=0.3,
+                        color="black",
+                        frameon=False,
+                        size_vertical=0.5,
+                        fontproperties=FontProperties(size=text_fontsize),
+                    )
+                    scalebar.set(
+                        path_effects=[
+                            PathEffects.withStroke(
+                                linewidth=3, foreground="white"
+                            )
+                        ]
+                    )
+                    axes[i].add_artist(scalebar)
+        # Give redshift, ID in first axis
+        if show_info:
+            props = dict(boxstyle="square", facecolor="white", alpha=0.5)
+            try:
+                z50 = self.meta_properties["zbest_fsps_larson_zfree"]
+                z16 = self.meta_properties["zbest_16_fsps_larson_zfree"]
+                z84 = self.meta_properties["zbest_84_fsps_larson_zfree"]
+                if type(z84) in [list, np.ndarray]:
+                    z84 = z84[0]
+                if type(z16) in [list, np.ndarray]:
+                    z16 = z16[0]
+                error = (
+                    f"$^{{+{np.abs(z84-z50):.2f}}}_{{-{np.abs(z50-z16):.2f}}}$"
+                )
+            except:
+                z50 = self.redshift
+                error = ""
+
+            textstr = f"ID {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nBinmap Type: {binmap_type.replace('_', ' ')} ({len(np.unique(getattr(self, f'{binmap_type}_map')))-1})"
+            fig.text(
+                0.5,
+                1.03,
+                textstr,
+                transform=axes[0].transAxes,
+                fontsize=9,
+                verticalalignment="bottom",
+                horizontalalignment="center",
+                bbox=props,
+            )
+            if save:
+                fig.savefig(
+                    f"{resolved_galaxy_dir}/{run_name}_maps.png",
+                    dpi=300,
+                    bbox_inches="tight",
+                )
+            return fig
+
+    def map_to_density_map_old(
         self,
         map,
         cosmo=FlatLambdaCDM(H0=70, Om0=0.3),
@@ -8883,13 +9421,15 @@ class ResolvedGalaxy:
         weight_by_band=False,
         psf_type="star_stack",
         binmap_type="pixedfit",
+        area_norm=True,
     ):
         pixel_scale = self.im_pixel_scales[self.bands[0]]
         density_map = copy.copy(map)
-        if binmap_type == "pixedfit":
-            pixel_map = self.pixedfit_map
-        else:
-            raise Exception("Only pixedfit binning is supported for now")
+
+        pixel_map = getattr(self, f"{binmap_type}_map")
+
+        if pixel_map is None:
+            raise Exception(f"Need to run {binmap_type} binning first")
 
         for gal_id in np.unique(pixel_map):
             # print(id)
@@ -8941,28 +9481,66 @@ class ResolvedGalaxy:
                     psf_type = self.use_psf_type
 
                 data_band = self.psf_matched_data[psf_type][band]
-                norm = np.sum(data_band[mask])
 
-                x, y = np.where(mask)
+                temp_mask = mask & np.isfinite(data_band) & (data_band > 0)
+                norm = np.nansum(data_band[temp_mask])
+
+                x, y = np.where(temp_mask)
+                value = map[temp_mask][0]
+
                 for xi, yi in zip(x, y):
-                    value = map[xi, yi]
-                    # print(mask[xi, yi], data_band[xi, yi] / norm)
                     weighted_val = value * data_band[xi, yi] / norm
-                    weighted_val_area = weighted_val / pix_kpc**2
+                    weighted_val_area = (
+                        weighted_val / pix_kpc**2
+                        if area_norm
+                        else weighted_val
+                    )
 
-                    if logmap:
-                        weighted_val_area = np.log10(weighted_val_area.value)
                     if type(weighted_val_area) in [
                         u.Quantity,
                         u.Magnitude,
                         Masked(u.Quantity),
                     ]:
                         weighted_val_area = weighted_val_area.value
+
+                    if logmap:
+                        weighted_val_area = np.log10(weighted_val_area)
+
                     density_map[xi, yi] = weighted_val_area
-                # assert np.sum(density_map[mask]) == value,
-                # f'overall sum should still correspond, {np.sum(density_map[mask])} != {value}'
+
+                if area_norm:
+                    if logmap:
+                        test = np.log10(
+                            np.nansum(
+                                (10 ** density_map[mask] * pix_kpc.value**2)
+                            )
+                        )
+                    else:
+                        test = np.log10(
+                            np.nansum(density_map[mask] * pix_kpc.value**2)
+                        )
+
+                    # Verification of sum
+
+                    assert np.isclose(
+                        test, np.log10(value), atol=5e-2
+                    ), f"Sum of map {test} does not match original value {np.log10(value)}"
+                else:
+                    if logmap:
+                        test = np.log10(np.nansum(10 ** density_map[mask]))
+                    else:
+                        test = np.log10(np.nansum(density_map[mask]))
+
+                    assert np.isclose(
+                        test, np.log10(value), atol=5e-2
+                    ), f"Sum of map {test} does not match original value {np.log10(value)}"
+
             else:
-                value = np.unique(map[mask]) / pix_area
+                if area_norm:
+                    value = np.unique(map[mask]) / pix_area
+                else:
+                    value = np.unique(map[mask])
+
                 if type(value) in [
                     u.Quantity,
                     u.Magnitude,
@@ -9274,6 +9852,16 @@ class ResolvedGalaxy:
         open_h5=True,
         force=False,
     ):
+        if sed_fitting_tool not in self.sed_fitting_table.keys():
+            raise Exception(
+                f"SED fitting tool {sed_fitting_tool} not found for {self.galaxy_id}"
+            )
+
+        if run_name not in self.sed_fitting_table[sed_fitting_tool].keys():
+            raise Exception(
+                f"Run {run_name} not found for {self.galaxy_id}. Available runs are {self.sed_fitting_table[sed_fitting_tool].keys()}"
+            )
+
         table = self.sed_fitting_table[sed_fitting_tool][run_name]
         bins = []
         bins_to_show = table["#ID"]
@@ -9402,8 +9990,12 @@ class ResolvedGalaxy:
                 self.resolved_sfr_10myr[run_name] = percentiles
 
             self.add_to_h5(
-                percentiles, f"resolved_{property}", run_name, overwrite=True, force=force)
-            
+                percentiles,
+                f"resolved_{property}",
+                run_name,
+                overwrite=True,
+                force=force,
+            )
 
         if return_quantiles:
             return percentiles
@@ -9423,6 +10015,7 @@ class ResolvedGalaxy:
         density_map=False,
         logmap=False,
         weight_by_band=False,
+        binmap_type="pixedfit",
         path="temp",
         cmap="magma",
     ):
@@ -9454,6 +10047,7 @@ class ResolvedGalaxy:
                     redshift=self.redshift,
                     logmap=logmap,
                     weight_by_band=weight_by_band,
+                    binmap_type=binmap_type,
                 )
             else:
                 if logmap:
@@ -9473,6 +10067,7 @@ class ResolvedGalaxy:
                         redshift=self.redshift,
                         logmap=logmap,
                         weight_by_band=weight_by_band,
+                        binmap_type=binmap_type,
                     )
                     if type(new_map) in [
                         u.Quantity,
@@ -9871,7 +10466,9 @@ class ResolvedGalaxy:
         out_array[:, 0] = total_wav
         out_array[:, 1] = total_flux
 
-        self.add_to_h5(out_array, "resolved_sed", run_name, overwrite=True, force=force)
+        self.add_to_h5(
+            out_array, "resolved_sed", run_name, overwrite=True, force=force
+        )
 
         if self.resolved_sed is None:
             self.resolved_sed = {}
@@ -10905,7 +11502,10 @@ class ResolvedGalaxy:
                     map[map == gal_id] = value
         if density:
             map = self.map_to_density_map(
-                map, redshift=self.redshift, logmap=logmap
+                map,
+                redshift=self.redshift,
+                logmap=logmap,
+                binmap_type=binmap_type,
             )
 
             unit = unit / u.kpc**2
@@ -13377,6 +13977,8 @@ class ResolvedGalaxies(np.ndarray):
         ax=None,
         norm=None,
         add_colorbar=True,
+        skip_missing=False,
+        errorbar_alpha=0.4,
         **kwargs,
     ):
         if fig is None:
@@ -13499,14 +14101,20 @@ class ResolvedGalaxies(np.ndarray):
                 else:
                     # resolved mass
                     logp = True if parameter == "stellar_mass" else False
-                    quantities = galaxy.get_total_resolved_property(
-                        run,
-                        sed_fitting_tool=sed_fitting_tool,
-                        n_cores=n_jobs,
-                        property=parameter,
-                        log=logp,
-                        overwrite=overwrite,
-                    )
+                    try:
+                        quantities = galaxy.get_total_resolved_property(
+                            run,
+                            sed_fitting_tool=sed_fitting_tool,
+                            n_cores=n_jobs,
+                            property=parameter,
+                            log=logp,
+                            overwrite=overwrite,
+                        )
+                    except Exception as e:
+                        if skip_missing:
+                            continue
+                        else:
+                            raise e
 
                     param_16, param_50, param_84 = quantities
                     resolved.append((param_50, param_16, param_84))
@@ -13525,7 +14133,13 @@ class ResolvedGalaxies(np.ndarray):
                 ax.set_ylabel(
                     rf"Integrated Stellar Mass (M$_\odot$) [{resolved_run}]"
                 )
+
             else:
+                if len(resolved) == 0 and skip_missing:
+                    continue
+
+                print(resolved, integrated)
+                print(len(resolved), len(integrated))
                 raise ValueError(
                     "Resolved and integrated properties must be unique"
                 )
@@ -13545,11 +14159,21 @@ class ResolvedGalaxies(np.ndarray):
                 y[0],
                 xerr=xerr,
                 yerr=yerr,
-                fmt="o",
+                marker="none",
+                color=colors[galaxy.galaxy_id],
+                alpha=errorbar_alpha,
+                elinewidth=1,
+                zorder=1,
+            )
+            ax.scatter(
+                x[0],
+                y[0],
                 label=galaxy.galaxy_id if label else "",
                 color=colors[galaxy.galaxy_id],
+                zorder=2,
                 **kwargs,
             )
+
             if color_by is not None and add_colorbar:
                 fig.colorbar(
                     cm.ScalarMappable(norm=norm, cmap=cmap),
@@ -13725,7 +14349,8 @@ class ResolvedGalaxies(np.ndarray):
                 return
 
             assert all(
-                type(config) in [dict, None] for config in write_configs.values()
+                type(config) in [dict, None]
+                for config in write_configs.values()
             ), f"All configs must be dictionaries, got {[type(config) for config in write_configs.values()]}"
             # Dump configs to json
 
@@ -13805,7 +14430,10 @@ class ResolvedGalaxies(np.ndarray):
                 np.sum(
                     np.ones(len(write_configs))
                     * np.array(
-                        [len(config["ids"]) for config in write_configs.values()]
+                        [
+                            len(config["ids"])
+                            for config in write_configs.values()
+                        ]
                     )
                 )
             )
@@ -14018,7 +14646,9 @@ class ResolvedGalaxies(np.ndarray):
                 run_name = config["meta"]["run_name"]
                 bins_to_show = config["meta"]["fit_photometry"]
                 # Generate storable meta for Bagpipes table which lists some of config
-                storeable_meta = {"binmap_type": configs[galaxy.galaxy_id]["binmap_type"]}
+                storeable_meta = {
+                    "binmap_type": configs[galaxy.galaxy_id]["binmap_type"]
+                }
                 galaxy.load_bagpipes_results(run_name, meta=storeable_meta)
                 if bins_to_show == "bin" or "RESOLVED" in run_name:
                     try:
@@ -14026,7 +14656,10 @@ class ResolvedGalaxies(np.ndarray):
                         galaxy.get_resolved_bagpipes_sed(run_name, force=True)
                         # Save the resolved SFH
                         galaxy.plot_bagpipes_sfh(
-                            run_name, bins_to_show=["RESOLVED"], plot=False, force=True,
+                            run_name,
+                            bins_to_show=["RESOLVED"],
+                            plot=False,
+                            force=True,
                         )
 
                         # Save the resolved properties
