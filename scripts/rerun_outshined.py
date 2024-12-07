@@ -78,7 +78,7 @@ for bagpipes_run in bagpipes_runs:
         # Something weird going on with this run, skip it for now
         continue
     delta_mass = (
-        table["CNST_SFH_RESOLVED_P_resolved_mass"][:, 1]
+        table["CNST_SFH_RESOLVED_resolved_mass"][:, 1]
         - table[f"{bagpipes_run}_stellar_mass_50"]
     )
     delta_masses[bagpipes_run] = delta_mass
@@ -105,6 +105,7 @@ galaxies_outshined = ResolvedGalaxies(
     [galaxy for galaxy in galaxies if galaxy.galaxy_id in galaxy_ids]
 )
 
+resolved_run = "CNST_SFH_RESOLVED"
 masses = [
     galaxy.get_total_resolved_property(resolved_run)[1] for galaxy in galaxies
 ]
