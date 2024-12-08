@@ -56,7 +56,7 @@ bagpipes_runs = [
     "photoz_dpl",
     "photoz_continuity",
 ]
-binmap_type = "voronoi"
+binmap_type = "pixedfit_nomin"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
