@@ -60,7 +60,7 @@ binmap_type = "voronoi"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
-load_only = True  # This is for running Bagpipes - whether to skip running fitting and load existing results
+load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
 
 try:
     n_jobs = int(sys.argv[1])
