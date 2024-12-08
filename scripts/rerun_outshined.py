@@ -106,12 +106,14 @@ galaxies_outshined = ResolvedGalaxies(
 )
 
 resolved_run = "CNST_SFH_RESOLVED"
+# filter out single bins
+galaxies = galaxies.filter_single_bins("pixedfit")
 masses = [
     galaxy.get_total_resolved_property(resolved_run)[1] for galaxy in galaxies
 ]
 galaxies_lowmass = galaxies[np.array(masses) < 9]
 
-
+crash
 """
 for galaxy in galaxies_outshined:
     print(galaxy.galaxy_id)
