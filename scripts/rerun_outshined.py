@@ -113,7 +113,6 @@ masses = [
 ]
 galaxies_lowmass = galaxies[np.array(masses) < 9]
 
-crash
 """
 for galaxy in galaxies_outshined:
     print(galaxy.galaxy_id)
