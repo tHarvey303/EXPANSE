@@ -7102,9 +7102,6 @@ class ResolvedGalaxy:
 
             if (
                 run_name in self.sed_fitting_table["bagpipes"].keys()
-                and len(self.sed_fitting_table["bagpipes"][run_name])
-                == len(ids)
-                and not overwrite_internal
                 and not overwrite
             ):
                 print(
@@ -7119,6 +7116,7 @@ class ResolvedGalaxy:
                 print(
                     "All files exist except catalogue, rerunning to build catalogue."
                 )
+            els
 
         if np.any(mask == 1):
             if rank == 0:
