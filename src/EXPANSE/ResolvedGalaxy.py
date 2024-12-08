@@ -5552,7 +5552,7 @@ class ResolvedGalaxy:
         )
 
     def measure_flux_in_bins(
-        self, override_psf_type=None, binmap_type="pixedfit", overwrite=False
+        self, binmap_type="pixedfit", override_psf_type=None, overwrite=False
     ):
         if hasattr(self, "use_psf_type") and override_psf_type is None:
             psf_type = self.use_psf_type
@@ -14653,7 +14653,7 @@ class ResolvedGalaxies(np.ndarray):
 
             print("Moving on to loading properties into galaxies.")
             for galaxy, config in zip(self.galaxies, bagpipes_configs):
-                if configs[galaxy.galaxy_id] is None:
+                if configs[galaxy.galaxy_id] is None or config["already_run"]:
                     continue
 
                 run_name = config["meta"]["run_name"]
