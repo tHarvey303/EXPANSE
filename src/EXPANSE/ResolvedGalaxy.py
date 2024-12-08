@@ -7100,7 +7100,19 @@ class ResolvedGalaxy:
             else:
                 cat_exists = False
 
-            if np.all(mask == 1) and cat_exists:
+            if (
+                run_name in self.sed_fitting_table["bagpipes"].keys()
+                and len(self.sed_fitting_table["bagpipes"][run_name])
+                == len(ids)
+                and not overwrite_internal
+                and not overwrite
+            ):
+                print(
+                    f"Run {run_name} already exists in internal table and overwrite is False. Skipping."
+                )
+                exist_already = True
+
+            elif np.all(mask == 1) and cat_exists:
                 print("All files already exist")
                 exist_already = True
             elif np.all(mask == 1) and not cat_exists:
@@ -14437,6 +14449,8 @@ class ResolvedGalaxies(np.ndarray):
                     )
                 )
             )
+
+            print(f"Total number of fits: {n_fits}")
 
             if not load_only and not done:
                 print(f"Starting mpi process with {n_jobs} cores.")
