@@ -7116,7 +7116,8 @@ class ResolvedGalaxy:
                 print(
                     "All files exist except catalogue, rerunning to build catalogue."
                 )
-            els
+            else:
+                print(f"Files already exist for {np.sum(mask)} sources")
 
         if np.any(mask == 1):
             if rank == 0:
