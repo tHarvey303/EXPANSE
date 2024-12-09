@@ -14653,7 +14653,7 @@ class ResolvedGalaxies(np.ndarray):
 
             print("Moving on to loading properties into galaxies.")
             for galaxy, config in zip(self.galaxies, bagpipes_configs):
-                if configs[galaxy.galaxy_id] is None or config["already_run"]:
+                if configs[galaxy.galaxy_id] is None or (run_name in galaxy.sed_fitting_table['bagpipes'].keys()): #configs[galaxy.galaxy_id]["already_run"]:
                     continue
 
                 run_name = config["meta"]["run_name"]

@@ -56,7 +56,7 @@ bagpipes_runs = [
     "photoz_dpl",
     "photoz_continuity",
 ]
-binmap_type = "pixedfit_nomin"
+binmap_type = "voronoi"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
@@ -132,7 +132,7 @@ for galaxy in galaxies_outshined:
 
 override_meta_resolved = {
     "use_bpass": True,
-    "run_name": "CNST_SFH_RESOLVED_NOMIN",
+    "run_name": "CNST_SFH_RESOLVED_VORONOI",
 }
 resolved_dicts_cnst = create_dicts(
     resolved_dict_cnst,
@@ -142,7 +142,7 @@ resolved_dicts_cnst = create_dicts(
 
 override_meta_resolved = {
     "use_bpass": True,
-    "run_name": "BURSTY_SFH_RESOLVED_NOMIN",
+    "run_name": "BURSTY_SFH_RESOLVED_VORONOI",
 }
 
 resolved_dicts_bursty = create_dicts(
