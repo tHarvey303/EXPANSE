@@ -203,15 +203,12 @@ if __name__ == "__main__":
     continuity_dicts = create_dicts(
         continuity_dict, len(galaxies), override_meta=override_cont_meta
     )
-
     continuity_bursty_dicts = create_dicts(
         continuity_bursty_dict, len(galaxies), override_meta=override_cont_meta
     )
-
     cnst_dicts = create_dicts(
         cnst_dict, len(galaxies), override_meta=override_meta
     )
-
     delayed_dicts = create_dicts(
         delayed_dict, len(galaxies), override_meta=override_meta
     )
@@ -224,11 +221,9 @@ if __name__ == "__main__":
     resolved_dicts_cnst = create_dicts(
         resolved_dict_cnst, len(galaxies), override_meta=resolved_meta
     )
-
     resolved_dicts_bursty = create_dicts(
         resolved_dict_bursty, len(galaxies), override_meta=resolved_meta
     )
-
     for dicts in [
         # lognorm_dicts,
         cnst_dicts,

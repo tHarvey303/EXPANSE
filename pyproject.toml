@@ -131,7 +131,8 @@ sed_fitting = [
 # Mock galxiees
 
 mock = [
-    "synthesizer"
+    "synthesizer",
+    "unyt"
 ]
 
 detection = [
@@ -144,6 +145,12 @@ viewer = [
     "xarray",
     "hvplot",
     "plotly",
+]
+
+morphology = [
+  "pysersic",
+  "pyautogalaxy",
+  "pygalfitm"
 ]
 
 

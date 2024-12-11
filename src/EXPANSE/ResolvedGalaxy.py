@@ -200,6 +200,8 @@ class ResolvedGalaxy:
         save_out=True,
         h5_path=None,
         interactive_outputs=None,
+        autogalaxy_results=None,
+        pysersic_results=None,
     ):
         self.internal_bagpipes_cache = {}
 
@@ -245,19 +247,25 @@ class ResolvedGalaxy:
 
         self.interactive_outputs = interactive_outputs
 
-        if photometry_properties is not None:
-            self.photometry_properties = photometry_properties
-            self.photometry_property_names = list(photometry_properties.keys())
-            for property in photometry_properties:
-                setattr(self, property, photometry_properties[property])
-                setattr(
-                    self,
-                    f"{property}_meta",
-                    photometry_meta_properties[property],
-                )
-                # print('Added property', property)
-        else:
-            self.photometry_property_names = []
+        # if photometry_properties is not None:
+        self.photometry_properties = photometry_properties
+        self.photometry_meta_properties = photometry_meta_properties
+        # self.photometry_property_names = list(photometry_properties[photometry_properties.keys()][0].keys())
+        self.autogalaxy_results = autogalaxy_results
+        self.pysersic_results = pysersic_results
+
+        """
+        for property in photometry_properties:
+            setattr(self, property, photometry_properties[property])
+            setattr(
+                self,
+                f"{property}_meta",
+                photometry_meta_properties[property],
+            )
+            # print('Added property', property)
+        """
+        # else:
+        #    self.photometry_property_names = []
 
         if h5_path is None:
             if not h5_folder.endswith("/"):
@@ -1351,6 +1359,34 @@ class ResolvedGalaxy:
             else:
                 resolved_sed = None
 
+            if hfile.get("pysersic") is not None:
+                pysersic_results = {}
+                pymeta = {}
+                for key in hfile["pysersic"].keys():
+                    pysersic_results[key] = {}
+                    for subkey in hfile["pysersic"][key].keys():
+                        pysersic_results[key][subkey] = hfile["pysersic"][key][
+                            subkey
+                        ][()]
+                        if subkey == "model":
+                            # Read attributes
+                            for mkey in hfile["pysersic"][key][
+                                subkey
+                            ].attrs.keys():
+                                value = hfile["pysersic"][key][subkey].attrs[
+                                    mkey
+                                ]
+                                # Cast to number if possible
+                                try:
+                                    value = float(value)
+                                except:
+                                    pass
+                                pymeta[mkey] = value
+
+                    pysersic_results[key]["meta"] = pymeta
+            else:
+                pysersic_results = None
+
             # Read in PSF
             psf_kernels = {}
             if hfile.get("psf_kernels") is not None:
@@ -1405,27 +1441,38 @@ class ResolvedGalaxy:
             photometry_properties = {}
             photometry_meta_properties = {}
             if hfile.get("photometry_properties") is not None:
-                for prop in hfile["photometry_properties"].keys():
-                    photometry_properties[prop] = hfile[
-                        "photometry_properties"
-                    ][prop][()]
-                    meta = hfile["photometry_properties"][prop].attrs
-                    # print('meta', meta)
-                    photometry_meta_properties[prop] = {}
-                    for key in meta:
-                        # print(meta[key])
-                        # print(key)
-                        # print(meta[key])
-                        photometry_meta_properties[prop][key] = meta[key]
-                    if "unit" in photometry_meta_properties[prop].keys():
-                        unit = u.Unit(photometry_meta_properties[prop]["unit"])
-                    else:
-                        unit = u.dimensionless_unscaled
+                for map in hfile["photometry_properties"].keys():
+                    photometry_properties[map] = {}
+                    photometry_meta_properties[map] = {}
+                    for prop in hfile["photometry_properties"][map].keys():
+                        photometry_properties[map][prop] = hfile[
+                            "photometry_properties"
+                        ][map][prop][()]
+                        meta = hfile["photometry_properties"][map][prop].attrs
+                        # print('meta', meta)
+                        photometry_meta_properties[map][prop] = {}
+
+                        for key in meta:
+                            # print(meta[key])
+                            # print(key)
+                            # print(meta[key])
+                            photometry_meta_properties[map][prop][key] = meta[
+                                key
+                            ]
+                        if (
+                            "unit"
+                            in photometry_meta_properties[map][prop].keys()
+                        ):
+                            unit = u.Unit(
+                                photometry_meta_properties[map][prop]["unit"]
+                            )
+                        else:
+                            unit = u.dimensionless_unscaled
 
                     # print('unit', unit)
 
-                    photometry_properties[prop] = (
-                        photometry_properties[prop] * unit
+                    photometry_properties[map][prop] = (
+                        photometry_properties[map][prop] * unit
                     )
                     # print(f'Loaded {prop} with shape {photometry_properties[prop].shape}')
 
@@ -1483,6 +1530,7 @@ class ResolvedGalaxy:
             "cutout_size": cutout_size,
             "h5_folder": h5_folder,
             "psf_kernels": psf_kernels,
+            "pysersic_results": pysersic_results,
             "interactive_outputs": interactive_outputs,
             "h5_path": h5path if type(h5_name) is not BytesIO else None,
             "save_out": save_out,
@@ -2083,6 +2131,386 @@ class ResolvedGalaxy:
 
         if return_results:
             return self.autogalaxy_results
+
+    def run_pysersic(
+        self,
+        model_type="sersic",
+        psf_type="star_stack",
+        use_psf_matched_data=True,
+        output_dir=None,
+        overwrite=False,
+        band="F444W",
+        mask_type="detection",
+        save_plots=True,
+        make_diagnostic_plots=True,
+        return_results=False,
+        show_plots=False,
+        override_redshift=None,
+        extra_tag="",
+        sky_type="none",
+        posterior_method="laplace",
+        fit_type="sample",
+        loss_function="student_t",
+        rkey=1000,
+        sample_kwargs={},
+        save_external_results=False,
+        renderer="hybrid",
+        render_kwargs={},
+        quantiles=[0.16, 0.5, 0.84],
+        posterior_sample_method="median",
+        force=True,
+        save_chains=False,
+    ):
+        """Run PySersic to perform Bayesian model fitting on galaxy images.
+
+        All prior positions are in arcsec!
+
+        Parameters
+        ----------
+        model_type : str
+            Type of model to fit. Options are:
+            - 'sersic': Single Sérsic profile
+            - 'pointsource': de Vaucouleurs profile (n=4)
+            - 'exponential': Exponential profile (n=1)
+            - 'doublesersic': Double Sérsic profile
+            - 'sersic_pointsource': Sérsic + point source
+            - 'sersic_exp': Sérsic + exponential
+        psf_type : str
+            Type of PSF to use for convolution
+        output_dir : str
+            Directory to save output files. If None, uses resolved_galaxy_dir/autogalaxy/
+        overwrite : bool
+            Whether to overwrite existing results
+        band : str
+            List of bands to fit. If None, fits all bands
+        mask_type : str
+            Type of mask to apply:
+            - Name of mask in galaxy.region (e.g. 'pixedfit', 'detection')
+        save_plots : bool
+            Whether to save diagnostic plots
+        return_results : bool
+            Whether to return the full results object
+        extra_tag : str
+            Extra tag to add to the output files for unique identification
+        sky_type : str
+            Type of sky background to use. Options are:
+            - 'none': No sky background
+            -'flat': Flat sky background
+            - 'tilted-plane': Tilted plane sky background
+        posterior_method : str
+            Method to use for estimating the posterior. Options are:
+            - 'laplace': Laplace approximation
+            - 'svi-flow': Stochastic variational inference with normalizing flow
+        fit_type : 'mvp':
+            Type of fitting to use. Options are:
+            - 'mvp': Maximum a posteriori estimation using the SVI method. Only does quick estimation of the MAP.
+            - 'posterior': Estimate the full posterior using the specified method
+            - 'sample': Sample from the posterior using a No-U-Turn Sampler
+        rkey : int
+            Random key to use for reproducibility
+        sample_kwargs : dict
+            Dictionary of keyword arguments to pass to mcmc.NUTS() if fit_type='sample'
+        save_external_results : bool
+            Whether to save the external results to a file
+        loss_function : str
+            Loss function to use. Options are:
+            - 'student_t': Student's t-distribution loss function
+            - 'cash': Cash statistic loss function
+            - 'gaussian': Gaussian loss function
+        renderer : str
+            Type of renderer to use. Options are:
+            - 'hybrid': Hybrid renderer
+            - 'fourier': Fourier renderer
+            - 'pixel': Pixel renderer
+        render_kwargs : dict
+            Dictionary of keyword arguments to pass to the renderer
+        quantiles : list
+            List of quantiles to calculate for the results
+        posterior_sample_method : str
+            Method to use for sampling from the posterior. Options are:
+            - 'median': Use the median of the posterior as the best fit
+            - 'mean': Use the mean of the posterior as the best fit
+        overwrite : bool
+            Whether to overwrite existing results
+        force : bool
+            Whether to force save the results to the h5 file
+        save_chains : bool
+            Whether to save the chains to the h5 file.
+
+        Returns
+        -------
+        dict
+            Dictionary containing fitted parameters and uncertainties
+            if return_results=True
+        """
+        import autogalaxy as ag
+        import autogalaxy.plot as aplt
+        import autofit as af
+        import numpy as np
+        import os
+
+        if override_redshift is not None:
+            z = override_redshift
+        else:
+            z = self.redshift
+
+        # Set up bands to fit
+        if band is None:
+            print(f"Fitting {self.bands[-1]}")
+            band = self.bands[-1]
+
+        name = f"{band}_{model_type}_{psf_type}_{fit_type}{extra_tag}"
+
+        if (
+            hasattr(self, "pysersic_results")
+            and self.pysersic_results is not None
+            and name in self.pysersic_results
+            and not overwrite
+        ):
+            print(
+                "Pysersic results already exist. Set overwrite=True to rerun."
+            )
+            return
+            # Create temporary directory to store fits files
+
+        if output_dir is None:
+            output_dir = os.path.join(resolved_galaxy_dir, "pysersic")
+
+        if save_external_results or save_plots:
+            os.makedirs(output_dir, exist_ok=True)
+
+        if use_psf_matched_data:
+            im_data = self.psf_matched_data[psf_type][band]
+            noise_data = self.psf_matched_rms_err[psf_type][band]
+            psf_data = self.psfs[psf_type][self.bands[-1]]
+        else:
+            im_data = self.phot_imgs[band]
+            noise_data = self.rms_err_imgs[band]
+            psf_data = self.psfs[psf_type][band]
+
+        # Crop PSF data to match image data (if necessary)
+
+        if len(psf_data) > len(im_data):
+            # Crop centered
+            diff = len(psf_data) - len(im_data)
+            start = diff // 2
+            end = start + len(im_data)
+            psf_data = psf_data[start:end, start:end]
+            psf_data = psf_data / np.sum(psf_data)
+
+            # Create mask
+        if mask_type in self.gal_region:
+            # Get pixel coordinates where region is True
+            region_mask = self.gal_region[mask_type]
+            mask = ~region_mask.astype(bool)
+
+        if mask_type in self.bands:
+            # Get segmentation map
+            seg_map = copy.deepcopy(self.seg_imgs[mask_type])
+            # If multiple objects, set all but the central object to 1. All other pixels are 0.
+            if np.unique(seg_map) > 2:
+                center = np.array(seg_map.shape) // 2
+                seg_map = np.where(
+                    seg_map == seg_map[center[0], center[1]], 1, 0
+                )
+            mask = seg_map.astype(bool)
+
+        elif mask_type is None:
+            mask = None
+        else:
+            raise ValueError(f"Mask type {mask_type} not recognized.")
+        # Apply mask
+
+        from pysersic.priors import autoprior
+        from pysersic import FitSingle, check_input_data, FitMulti
+        from pysersic.loss import student_t_loss
+        from pysersic.results import plot_residual
+        from pysersic.exceptions import MaskWarning
+
+        try:
+            check_input_data(
+                data=im_data, rms=noise_data, psf=psf_data, mask=mask
+            )
+        except MaskWarning as e:
+            pass
+
+        prior = autoprior(
+            image=im_data,
+            profile_type=model_type,
+            mask=mask,
+            sky_type=sky_type,
+        )
+
+        if "double" in model_type or "_" in model_type:
+            fitter = FitMulti
+        else:
+            fitter = FitSingle
+
+        loss_funcs = {"student_t": student_t_loss}
+
+        loss_func = loss_funcs[loss_function]
+
+        fitter = fitter(
+            data=im_data,
+            rms=noise_data,
+            mask=mask,
+            psf=psf_data,
+            prior=prior,
+            loss_func=loss_func,
+        )
+
+        # initial model guess using SVI
+        from jax.random import (
+            PRNGKey,
+        )  # Need to use a seed to start jax's random number generation
+
+        if fit_type == "mvp":
+            map_params = fitter.find_MAP(rkey=PRNGKey(rkey))
+            results = map_params
+            print(results)
+
+            if make_diagnostic_plots:
+                fig, ax = plot_residual(
+                    im_data, map_params["model"], mask=mask
+                )
+                if save_plots:
+                    fig.savefig(f"{output_dir}/{name}_residual.png")
+                if show_plots:
+                    plt.show()
+                plt.close(fig)
+
+            model = map_params["model"]
+            results_quantiles = {
+                k: float(v) for k, v in results.items() if k != "model"
+            }
+
+        elif fit_type == "posterior":
+            fitter.estimate_posterior(
+                rkey=PRNGKey(rkey + 2), method=posterior_method
+            )
+            results = fitter.svi_results
+
+        elif fit_type == "sample":
+            fitter.sample(rkey=PRNGKey(rkey + 3), **sample_kwargs)
+            results = fitter.sampling_results
+        else:
+            raise ValueError(f"Fit type {fit_type} not recognized.")
+
+        if fit_type in ["posterior", "sample"]:
+            summary = results.summary()
+            print(summary)
+
+            results_quantiles = results.retrieve_param_quantiles(
+                return_dataframe=False, quantiles=quantiles
+            )
+            results_quantiles = {
+                k: float(v) for k, v in results_quantiles.items()
+            }
+
+            from pysersic.rendering import (
+                FourierRenderer,
+                HybridRenderer,
+                PixelRenderer,
+            )
+
+            renderers = {
+                "fourier": FourierRenderer,
+                "hybrid": HybridRenderer,
+                "pixel": PixelRenderer,
+            }
+            render = renderers[renderer]
+            import jax.numpy as jnp
+
+            dict_mean = {}
+            for a, b in zip(summary.index, summary["mean"]):
+                dict_mean[a] = float(b)
+
+            dict_median = {}
+            median_pos = 1
+            for result in results_quantiles:
+                dict_median[result] = results_quantiles[result][median_pos]
+
+            if posterior_sample_method == "mean":
+                udict = dict_mean
+            elif posterior_sample_method == "median":
+                udict = dict_median
+
+            rend = render(
+                im_data.shape, jnp.array(psf_data.astype(np.float32))
+            )
+            render_func = getattr(rend, f"render_{model_type}")
+            model = render_func(**udict)
+
+            if make_diagnostic_plots:
+                # Corner
+                fig = results.corner()
+                if save_plots:
+                    fig.savefig(f"{output_dir}/{name}_corner.png")
+                if show_plots:
+                    plt.show()
+                plt.close(fig)
+
+                fig, ax = plot_residual(image=im_data, mask=mask, model=model)
+                if save_plots:
+                    fig.savefig(f"{output_dir}/{name}_residual.png")
+                if show_plots:
+                    plt.show()
+                plt.close(fig)
+
+            if save_external_results:
+                if fit_type == "sample":
+                    fitter.sampling_results.save_result(
+                        f"{output_dir}/pyseric_{name}_sample.asdf"
+                    )
+                elif fit_type == "posterior":
+                    fitter.svi_results.save_result(
+                        f"{output_dir}/pyseric_{name}_svi.asdf"
+                    )
+
+        # Save results
+        if self.pysersic_results is None:
+            self.pysersic_results = {}
+
+        meta = {
+            "model_type": model_type,
+            "psf_type": psf_type,
+            "band": band,
+            "mask_type": mask_type,
+            "sky_type": sky_type,
+            "posterior_method": posterior_method,
+            "rkey": rkey,
+            "sample_kwargs": sample_kwargs,
+            "loss_function": loss_function,
+            "results": results_quantiles,
+            "posterior_sample_method": posterior_sample_method,
+        }
+
+        print(meta)
+
+        self.pysersic_results[name] = {
+            "meta": meta,
+            "model": model,
+        }
+
+        if save_chains:
+            chains = fitter.svi_results.get_chains()
+            self.add_to_h5(
+                chains, f"pysersic/{name}/", "chains", overwrite=overwrite
+            )
+            self.pysersic_results[name]["chains"] = chains
+
+        # Save to h5 file
+        self.add_to_h5(
+            self.pysersic_results[name]["model"],
+            f"pysersic/{name}/",
+            "model",
+            overwrite=overwrite,
+            meta=meta,
+            force=force,
+        )
+
+        if return_results:
+            return results
 
     def run_galfitm(
         self,
@@ -2947,17 +3375,29 @@ class ResolvedGalaxy:
                             compression="gzip",
                         )
 
-                for pos, property in enumerate(self.photometry_property_names):
-                    if pos == 0:
-                        hfile.create_group("photometry_properties")
-                    hfile["photometry_properties"].create_dataset(
-                        property, data=getattr(self, property)
-                    )
-                    # Add meta data
-                    for key in getattr(self, f"{property}_meta").keys():
-                        hfile["photometry_properties"][property].attrs[key] = (
-                            getattr(self, f"{property}_meta")[key]
+                if (
+                    self.photometry_properties is not None
+                    and self.photometry_properties != {}
+                ):
+                    hfile.create_group("photometry_properties")
+                    for map in self.photometry_properties.keys():
+                        hfile["photometry_properties"].create_group(map)
+                    for pos, property in enumerate(
+                        self.photometry_properties[map].keys()
+                    ):
+                        data = self.photometry_properties[map][property]
+                        hfile[f"photometry_properties/{map}/"].create_dataset(
+                            property, data=data
                         )
+                        # Add meta data
+                        for key in getattr(
+                            self, f"photometry_meta_properties"
+                        )[map][property].keys():
+                            hfile[f"photometry_properties/{map}/"][
+                                property
+                            ].attrs[key] = self.photometry_meta_properties[
+                                map
+                            ][property][key]
 
                 # Add resolved mass
                 if self.resolved_mass is not None:
@@ -3004,6 +3444,26 @@ class ResolvedGalaxy:
                             data=self.resolved_sed[key],
                             compression="gzip",
                         )
+
+                if self.pysersic_results is not None:
+                    hfile.create_group("pysersic")
+                    for key in self.pysersic_results.keys():
+                        hfile["pysersic"].create_group(key)
+                        meta = self.pysersic_results[key]["meta"]
+                        for subkey in self.pysersic_results[key].keys():
+                            if subkey != "meta":
+                                data = self.pysersic_results[key][subkey]
+                                hfile["pysersic"][key].create_dataset(
+                                    subkey,
+                                    data=data,
+                                    compression="gzip",
+                                )
+                            # Add meta data to 'model' key as attributes
+                            else:
+                                for meta_key in meta.keys():
+                                    hfile["pysersic"][key]["model"].attrs[
+                                        meta_key
+                                    ] = str(meta[meta_key])
 
                 # Add MockGalaxy properties
                 if type(self) is MockResolvedGalaxy:
@@ -4815,6 +5275,18 @@ class ResolvedGalaxy:
         ax.add_artist(e)
         e.set_clip_box(ax.bbox)
         e.set_alpha(0.5)
+
+    def _pix_scale_kpc(self, npix=1, band="F444W", redshift=None):
+        if redshift is None:
+            redshift = self.redshift
+
+        d_A = cosmo.angular_diameter_distance(redshift)
+        pix_scal = u.pixel_scale(
+            self.im_pixel_scales[band].value * u.arcsec / u.pixel
+        )
+        re_as = (npix * u.pixel).to(u.arcsec, pix_scal)
+        re_kpc = (re_as * d_A).to(u.kpc, u.dimensionless_angles())
+        return re_kpc.value
 
     def plot_image_stamp(
         self,
@@ -7393,6 +7865,219 @@ class ResolvedGalaxy:
             "Av": u.mag,
         }
         return param_dict.get(param, u.dimensionless_unscaled)
+
+    def plot_resolved_scatter(
+        self,
+        run_name=None,
+        binmap_type="pixedfit",
+        x_param="stellar_mass",
+        y_param="sfr",
+        log_x=False,
+        log_y=False,
+        reload_from_cat=False,
+        save=False,
+        facecolor="white",
+        total_params=[],
+        text_fontsize=10,
+        marker_color="k",
+        fig=None,
+        axes=None,
+    ):
+        if (
+            not hasattr(self, "sed_fitting_table")
+            or "bagpipes" not in self.sed_fitting_table.keys()
+        ):
+            print("No bagpipes results found.")
+            return None
+
+        if run_name is None:
+            run_name = list(self.sed_fitting_table["bagpipes"].keys())
+            if len(run_name) > 1:
+                raise Exception("Multiple runs found, please specify run_name")
+            else:
+                run_name = run_name[0]
+        if (
+            not hasattr(self, "sed_fitting_table")
+            or "bagpipes" not in self.sed_fitting_table.keys()
+            or run_name not in self.sed_fitting_table["bagpipes"].keys()
+            or reload_from_cat
+        ):
+            self.load_bagpipes_results(run_name)
+
+        if not hasattr(self, f"{binmap_type}_map"):
+            raise Exception(f"Need to run {binmap_type} binning first")
+        # If it still isn't there, return None
+        if (
+            not hasattr(self, "sed_fitting_table")
+            or "bagpipes" not in self.sed_fitting_table.keys()
+            or run_name not in self.sed_fitting_table["bagpipes"].keys()
+        ):
+            return None
+
+        table = copy.deepcopy(self.sed_fitting_table["bagpipes"][run_name])
+
+        # fig, axes = plt.subplots(1, len(parameters), figsize=(4*len(parameters), 4),
+        #  constrained_layout=True, facecolor=facecolor)
+        if fig is None:
+            fig = plt.figure(
+                figsize=(5, 5),
+                constrained_layout=True,
+                facecolor=facecolor,
+                dpi=200,
+            )
+        if axes is None:
+            fig.add_subplot(111)
+
+        # add gap between rows using get_layout_engine
+        fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
+        redshift = self.sed_fitting_table["bagpipes"][run_name][
+            "input_redshift"
+        ][0]
+
+        binmap = getattr(self, f"{binmap_type}_map")
+
+        if x_param.endswith("_density"):
+            xdensity = True
+            for post in ["_50", "_16", "_84"]:
+                table[f"{x_param}{post}"] = np.zeros(len(table))
+        else:
+            xdensity = False
+            xdensitytext = ""
+        if y_param.endswith("_density"):
+            ydensity = True
+            for post in ["_50", "_16", "_84"]:
+                table[f"{y_param}{post}"] = np.zeros(len(table))
+        else:
+            ydensity = False
+            ydensitytext = ""
+
+        for row in table:
+            if xdensity or ydensity:
+                # Count number of pixels where row #ID matches binmap, calculate area in kpc^2 using
+                # astropy cosmology at either row['redshift_50'] or row['input_redshift'] depending on
+                # whether the redshift is available in the table
+
+                if "redshift_50" in row.keys():
+                    z = row["redshift_50"]
+                elif "input_redshift" in row.keys():
+                    z = row["input_redshift"]
+                else:
+                    z = self.redshift
+
+                num_pixels = np.sum(binmap == float(row["#ID"]))
+
+                size_kpc = self._pix_scale_kpc(redshift=z)
+
+                area_kpc2 = num_pixels * size_kpc**2
+
+                if xdensity:
+                    x_param_original = x_param.replace("_density", "")
+                    if (
+                        x_param_original in ["stellar_mass"]
+                        or "formed_mass" in x_param_original
+                    ):
+                        # Convert to 10**
+                        row[f"{x_param_original}_50"] = (
+                            10 ** row[f"{x_param_original}_50"]
+                        )
+                        row[f"{x_param_original}_16"] = (
+                            10 ** row[f"{x_param_original}_16"]
+                        )
+                        row[f"{x_param_original}_84"] = (
+                            10 ** row[f"{x_param_original}_84"]
+                        )
+
+                    row[f"{x_param}_50"] = (
+                        row[f"{x_param_original}_50"] / area_kpc2
+                    )
+                    row[f"{x_param}_16"] = (
+                        row[f"{x_param_original}_16"] / area_kpc2
+                    )
+                    row[f"{x_param}_84"] = (
+                        row[f"{x_param_original}_84"] / area_kpc2
+                    )
+                    xdensitytext = " (kpc$^{-2}$)"
+
+                if ydensity:
+                    y_param_original = y_param.replace("_density", "")
+                    if (
+                        y_param_original in ["stellar_mass"]
+                        or "formed_mass" in y_param_original
+                    ):
+                        # Convert to 10**
+                        row[f"{y_param_original}_50"] = (
+                            10 ** row[f"{y_param_original}_50"]
+                        )
+                        row[f"{y_param_original}_16"] = (
+                            10 ** row[f"{y_param_original}_16"]
+                        )
+                        row[f"{y_param_original}_84"] = (
+                            10 ** row[f"{y_param_original}_84"]
+                        )
+
+                    row[f"{y_param}_50"] = (
+                        row[f"{y_param_original}_50"] / area_kpc2
+                    )
+                    row[f"{y_param}_16"] = (
+                        row[f"{y_param_original}_16"] / area_kpc2
+                    )
+                    row[f"{y_param}_84"] = (
+                        row[f"{y_param_original}_84"] / area_kpc2
+                    )
+                    ydensitytext = " (kpc$^{-2}$)"
+
+            x = row[f"{x_param}_50"]
+            y = row[f"{y_param}_50"]
+            x_err_hi = row[f"{x_param}_84"] - x
+            y_err_hi = row[f"{y_param}_84"] - y
+            x_err_lo = x - row[f"{x_param}_16"]
+            y_err_lo = y - row[f"{y_param}_16"]
+            x_err = np.array([[x_err_lo], [x_err_hi]])
+            y_err = np.array([[y_err_lo], [y_err_hi]])
+
+            plt.scatter(
+                x,
+                y,
+                c=marker_color,
+                s=10,
+                linewidths=0.5,
+                edgecolors="k",
+                zorder=3,
+            )
+            plt.errorbar(
+                x,
+                y,
+                xerr=x_err,
+                yerr=y_err,
+                fmt="none",
+                c="k",
+                lw=0.5,
+                alpha=0.5,
+                zorder=2,
+            )
+
+        logtxtx = ""
+        logtxty = ""
+
+        if log_x:
+            plt.xscale("log")
+            logtxtx = "log "
+        if log_y:
+            plt.yscale("log")
+            logtxty = "log "
+
+        xunit = self.param_unit(x_param)
+        yunit = self.param_unit(y_param)
+        plt.xlabel(
+            f'{logtxtx}{x_param.replace("_", " ")} [{xunit:latex}]',
+            fontsize=text_fontsize,
+        )
+        plt.ylabel(
+            f'{logtxty}{y_param.replace("_", " ")} [{yunit:latex}]',
+            fontsize=text_fontsize,
+        )
+
+        return fig, axes
 
     def plot_bagpipes_corner(
         self,
@@ -11251,11 +11936,11 @@ class ResolvedGalaxy:
 
     def init_galfind_phot(
         self,
-        inst="ACS_WFC+NIRCam",
+        inst=["ACS_WFC", "NIRCam"],
         psf_type="star_stack",
         binmap_type="pixedfit",
     ):
-        from galfind import Combined_Instrument, Photometry_rest
+        from galfind import Multiple_Filter, Photometry_rest
 
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
@@ -11283,24 +11968,25 @@ class ResolvedGalaxy:
         table = self.photometry_table[psf_type][binmap_type]
         self.galfind_photometry_rest = {}
 
-        start_instrument = Combined_Instrument.from_name(inst)
+        start_filterset = Multiple_Filter.from_instruments(inst)
 
         for row in tqdm(table):
             flux_Jy, flux_Jy_errs = [], []
-            instrument = copy.deepcopy(start_instrument)
-            for ratio_band in instrument.band_names:
+            filterset = copy.deepcopy(start_filterset)
+            for filter in filterset.filters:
+                ratio_band = filter.band_name
                 if ratio_band in self.bands:
                     flux = row[ratio_band].to(u.Jy).value
                     flux_err = row[f"{ratio_band}_err"].to(u.Jy).value
                     flux_Jy.append(flux)
                     flux_Jy_errs.append(flux_err)
                 else:
-                    instrument.remove_band(ratio_band)
+                    filterset -= filter
 
             flux_Jy = np.array(flux_Jy) * u.Jy
             flux_Jy_errs = np.array(flux_Jy_errs) * u.Jy
             self.galfind_photometry_rest[str(row["ID"])] = Photometry_rest(
-                instrument,
+                filterset,
                 flux_Jy,
                 flux_Jy_errs,
                 depths=np.ones(len(flux_Jy)),
@@ -11320,6 +12006,8 @@ class ResolvedGalaxy:
         facecolor="white",
         cmap="viridis",
         binmap_type="pixedfit",
+        aper_diam=0.32 * u.arcsec,
+        n_jobs=1,
         **kwargs,
     ):
         """
@@ -11361,18 +12049,40 @@ class ResolvedGalaxy:
 
         from galfind import PDF
 
+        from galfind import (
+            UV_Beta_Calculator,
+            UV_Dust_Attenuation_Calculator,
+            mUV_Calculator,
+            MUV_Calculator,
+            LUV_Calculator,
+            SFR_UV_Calculator,
+        )
+
+        # match property to calculator
+
+        calculators = {
+            "UV_Beta": UV_Beta_Calculator,
+            "UV_Dust_Attenuation": UV_Dust_Attenuation_Calculator,
+            "mUV": mUV_Calculator,
+            "MUV": MUV_Calculator,
+            "LUV": LUV_Calculator,
+            "SFR": SFR_UV_Calculator,
+        }
+
+        SED_fit_label = f"{binmap_type}"
+
         required_kwargs = {
-            "beta_phot": ["rest_UV_wav_lims", "iters"],
-            "AUV_from_beta_phot": [
+            "UV_Beta": ["rest_UV_wav_lims", "iters"],
+            "UV_Dust_Attenuation": [
                 "rest_UV_wav_lims",
                 "dust_author_year",
                 "iters",
                 "ref_wav",
             ],
-            "mUV_phot": ["rest_UV_wav_lims", "ref_wav", "iters"],
-            "MUV_phot": ["rest_UV_wav_lims", "ref_wav", "iters"],
-            "LUV_phot": ["rest_UV_wav_lims", "ref_wav", "iters", "frame"],
-            "SFR_UV_phot": [
+            "mUV": ["rest_UV_wav_lims", "ref_wav", "iters"],
+            "MUV": ["rest_UV_wav_lims", "ref_wav", "iters"],
+            "LUV": ["rest_UV_wav_lims", "ref_wav", "iters", "frame"],
+            "SFR": [
                 "rest_UV_wav_lims",
                 "ref_wav",
                 "dust_author_year",
@@ -11380,15 +12090,17 @@ class ResolvedGalaxy:
                 "frame",
                 "iters",
             ],
-            "fesc_from_beta_phot": [
-                "rest_UV_wav_lims",
-                "conv_author_year",
-                "iters",
-            ],
-            "EW_rest_optical": ["strong_line_names"],
-            "line_flux_rest_optical": ["strong_line_names", "iters"],
-            "xi_ion": ["iters"],
         }
+        """
+        "fesc_from_beta_phot": [
+            "rest_UV_wav_lims",
+            "conv_author_year",
+            "iters",
+        ],
+        "EW_rest_optical": ["strong_line_names"],
+        "line_flux_rest_optical": ["strong_line_names", "iters"],
+        "xi_ion": ["iters"],
+        """
         if type(binmap_type) is str:
             map = getattr(
                 self, binmap_type, getattr(self, f"{binmap_type}_map")
@@ -11401,24 +12113,7 @@ class ResolvedGalaxy:
         map[map == 0] = np.nan
         # PDFs = []
 
-        kwargs["iters"] = iters
-
-        test_id = np.unique(map)[1]
-        func = getattr(
-            self.galfind_photometry_rest[str(int(test_id))], f"calc_{property}"
-        )
-
-        # arguments = signature(func).parameters
-        # func_args = arguments['args']
-        # func_kwargs = arguments['kwargs']
-        # print(func_args, func_kwargs)
-        # print(func_args.default, func_kwargs.default)
-        # print(func)
-
-        # match kwargs to arguments
-        # for arg in arguments:
-        #    if arg not in kwargs.keys():
-        #        raise ValueError(f'Missing required argument {arg} for {property}')
+        kwargs["n_chains"] = iters
 
         used_kwargs = {
             arg: kwargs[arg]
@@ -11426,11 +12121,15 @@ class ResolvedGalaxy:
             if arg in required_kwargs[property]
         }
 
-        print(kwargs, used_kwargs)
+        # property_name = func(extract_property_name=True, **used_kwargs)
 
-        property_name = func(extract_property_name=True, **used_kwargs)
-        num_pdfs = len(property_name)
-        PDFs = [[] for i in range(num_pdfs)]
+        calculator = calculators[property]
+        property_calculator = calculator(
+            aper_diam=aper_diam, SED_fit_label=SED_fit_label, **used_kwargs
+        )
+        property_name = property_calculator.name
+
+        PDFs = [[] for i in range(len(np.unique(map)) - 1)]
 
         for pos, gal_id in enumerate(tqdm(np.unique(map))):
             if str(gal_id) in ["0", "nan"]:
@@ -11443,74 +12142,64 @@ class ResolvedGalaxy:
             loaded = False
             for prop_name in property_name:
                 # print('checking', f'{prop_name}')
-
-                if hasattr(self, f"{prop_name}"):
-                    skip = False
-                    ppdf = getattr(self, f"{prop_name}")[pos]
-                    # print(ppdf.unit)
-
-                    if not skip and load_in:
-                        # print('Updating property PDFs from .h5')
-                        # pdf = phot.property_PDFs[property_name][pos]
-                        # pdf = getattr(self, f'{property_name}_PDFs')[pos]
-
-                        saved_kwargs = getattr(self, f"{prop_name}_kwargs", {})
-
-                        phot.property_PDFs[prop_name] = PDF.from_1D_arr(
-                            prop_name, ppdf, kwargs=saved_kwargs
-                        )
-
-                        phot._update_properties_from_PDF(prop_name)
-                        loaded = True
-                        if len(ppdf) != iters:
-                            # print(np.shape(pdf), [iters, len(np.unique(map))])
-                            print(
-                                f"PDFs for {prop_name} do not match shape of map, recalculating, {len(ppdf)} != {iters}"
+                if load_in:
+                    if (
+                        self.photometry_properties is not None
+                        and binmap_type in self.photometry_properties.keys()
+                    ):
+                        for prop_name in self.photometry_properties[
+                            binmap_type
+                        ].keys():
+                            ppdf = np.squeeze(
+                                self.photometry_properties[binmap_type][
+                                    prop_name
+                                ][pos]
                             )
-                            loaded = False
+                            kwargs = self.photometry_meta_properties[
+                                binmap_type
+                            ][prop_name]
+                            saved_kwargs = getattr(
+                                self, f"{prop_name}_kwargs", {}
+                            )
 
-            func_name = f"calc_{property}"
-            if hasattr(phot, func_name):
-                func = getattr(phot, func_name)
-                _, param_names = phot._calc_property(
-                    SED_rest_property_function=func, **used_kwargs
-                )
+                            phot.property_PDFs[prop_name] = PDF.from_1D_arr(
+                                prop_name, ppdf, kwargs=saved_kwargs
+                            )
+
+                            phot._update_properties_from_PDF(prop_name)
+                            loaded = True
+                            if len(ppdf) != iters:
+                                # print(np.shape(pdf), [iters, len(np.unique(map))])
+                                print(
+                                    f"PDFs for {prop_name} do not match shape of map, recalculating, {len(ppdf)} != {iters}"
+                                )
+                                loaded = False
+
+                if not loaded:
+                    property_calculator(phot, n_chains=iters)
 
                 # if type(param_name) in [tuple, list]:
                 #    param_name = param_name
+
+            value = phot.properties[property_name]
+            # print(param_name, value)
+            if type(value) in [
+                u.Quantity,
+                u.Magnitude,
+                Masked(u.Quantity),
+            ]:
+                unit = value.unit
             else:
-                raise ValueError(
-                    f"Function calc_{property} not found in galfind photometry object"
-                )
+                print("Unknown unit!")
+                print(value)
 
-            for pos_param, param_name in enumerate(param_names):
-                value = phot.properties[param_name]
-                # print(param_name, value)
-                if type(value) in [
-                    u.Quantity,
-                    u.Magnitude,
-                    Masked(u.Quantity),
-                ]:
-                    unit = value.unit
-                else:
-                    print("Unknown unit!")
-                    print(value)
+                unit = u.dimensionless_unscaled
+            if phot.property_PDFs[property_name] is not None:
+                out_kwargs = phot.property_PDFs[property_name].kwargs
+                PDFs[pos].append(phot.property_PDFs[property_name].input_arr)
 
-                    unit = u.dimensionless_unscaled
+            map[map == gal_id] = value
 
-                if phot.property_PDFs[param_name] is not None:
-                    out_kwargs = phot.property_PDFs[param_name].kwargs
-                    PDFs[pos_param].append(
-                        phot.property_PDFs[param_name].input_arr
-                    )
-
-                else:
-                    out_kwargs = {}
-                    PDFs[pos_param].append([])
-
-                if pos_param == len(param_names) - 1:
-                    pname = param_name
-                    map[map == gal_id] = value
         if density:
             map = self.map_to_density_map(
                 map,
@@ -11521,30 +12210,38 @@ class ResolvedGalaxy:
 
             unit = unit / u.kpc**2
 
-        label = f"{pname} ({unit:latex})"
+        label = f"{property} ({unit:latex})"
 
         if not loaded:
-            for pos, param_name in enumerate(param_names):
-                unit = phot.properties[param_name].unit
-                out_kwargs["unit"] = unit
-                all_PDFs = np.array(PDFs[pos]) * unit
-                out_kwargs = phot.property_PDFs[param_name].kwargs
-                self.add_to_h5(
-                    all_PDFs,
-                    "photometry_properties",
-                    param_name,
-                    setattr_gal=f"{param_name}",
-                    overwrite=True,
-                    meta=out_kwargs,
-                    setattr_gal_meta=f"{param_name}_kwargs",
+            # for pos, param_name in enumerate(param_names):
+            unit = phot.properties[property_name].unit
+            all_PDFs = np.array(PDFs) * unit
+            out_kwargs = phot.property_PDFs[property_name].kwargs
+            out_kwargs["unit"] = unit
+            print(all_PDFs)
+
+            if len(all_PDFs) == 0:
+                raise Exception(
+                    f"No PDFs found for {property_name}. Something went wrong."
                 )
-                if getattr(self, "photometry_properties", None) is None:
-                    self.photometry_properties = {}
-                self.photometry_properties[param_name] = all_PDFs
-                self.photometry_property_names.append(param_name)
+
+            self.add_to_h5(
+                all_PDFs,
+                f"photometry_properties/{binmap_type}/",
+                property_name,
+                setattr_gal=f"{property_name}",
+                overwrite=True,
+                meta=out_kwargs,
+                setattr_gal_meta=f"{property_name}_kwargs",
+            )
+            if getattr(self, "photometry_properties", None) is None:
+                self.photometry_properties = {}
+            if binmap_type not in self.photometry_properties.keys():
+                self.photometry_properties[binmap_type] = {}
+            self.photometry_properties[binmap_type][property_name] = all_PDFs
 
         if np.all(np.isnan(map)):
-            print(f"Calculation not possible for {param_name}")
+            print(f"Calculation not possible for {property_name}")
             return None, None
 
         if plot:
@@ -11571,7 +12268,7 @@ class ResolvedGalaxy:
             cbar.ax.tick_params(labelsize=8)
             cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
             if property == "EW_rest_optical":
-                line = param_name.split("_")[2]
+                line = property_name.split("_")[2]
 
                 line_band = out_kwargs[f"{line}_emission_band"]
                 cont_band = out_kwargs[f"{line}_cont_band"]
@@ -14653,7 +15350,9 @@ class ResolvedGalaxies(np.ndarray):
 
             print("Moving on to loading properties into galaxies.")
             for galaxy, config in zip(self.galaxies, bagpipes_configs):
-                if configs[galaxy.galaxy_id] is None or (run_name in galaxy.sed_fitting_table['bagpipes'].keys()): #configs[galaxy.galaxy_id]["already_run"]:
+                if configs[galaxy.galaxy_id] is None or (
+                    run_name in galaxy.sed_fitting_table["bagpipes"].keys()
+                ):  # configs[galaxy.galaxy_id]["already_run"]:
                     continue
 
                 run_name = config["meta"]["run_name"]

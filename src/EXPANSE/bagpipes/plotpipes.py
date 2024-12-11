@@ -660,6 +660,30 @@ class PipesFitNoLoad:
                 zorder=zorder,
             )
 
+    def _calculate_mwa(
+        self,
+        sfh_posterior,
+        return_quantiles=False,
+        quantiles=(16, 50, 84),
+        set_self=True,
+    ):
+        self._recrate_bagpipes_time_grid()
+        mwa = np.zeros(len(sfh_posterior))
+        for i in range(len(sfh_posterior)):
+            mwa[i] = np.sum(sfh_posterior[i] * self.age_widths * self.ages)
+            mwa[i] /= np.sum(sfh_posterior[i] * self.age_widths)
+        if set_self:
+            self.mwa = mwa
+
+        if return_quantiles:
+            mwa_q = np.percentile(mwa, quantiles)
+            if set_self:
+                self.mwa_q = mwa_q
+
+            return mwa_q
+        else:
+            return mwa
+
     def _recrate_bagpipes_time_grid(self, log_sampling=0.0025, cosmo=None):
         if cosmo is None:
             cosmo = FlatLambdaCDM(H0=70.0, Om0=0.3)
@@ -675,7 +699,14 @@ class PipesFitNoLoad:
         # Set up the age sampling for internal SFH calculations.
         log_age_max = np.log10(self.hubble_time) + 9.0 + 2 * log_sampling
         self.ages = np.arange(6.0, log_age_max, log_sampling)
+        from bagpipes.utils import make_bins
+
+        self.age_lhs = make_bins(self.ages, make_rhs=True)[0]
         self.ages = 10**self.ages * u.yr
+        self.age_lhs = 10**self.age_lhs
+        self.age_lhs[0] = 0.0
+        self.age_lhs[-1] = 10**9 * self.hubble_time
+        self.age_widths = self.age_lhs[1:] - self.age_lhs[:-1]
 
     def plot_sfh(
         self,
@@ -726,7 +757,10 @@ class PipesFitNoLoad:
         sfh_percentiles = np.percentile(sfh_samples, [16, 50, 84], axis=0)
 
         if return_sfh:
-            return (times.to(timescale).value, sfh_percentiles.T) # For compatibility with the original function
+            return (
+                times.to(timescale).value,
+                sfh_percentiles.T,
+            )  # For compatibility with the original function
 
         # Plot median SFH
         ax.plot(
