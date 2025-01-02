@@ -21,10 +21,13 @@ from astropy.stats import mad_std, sigma_clip
 from astropy.table import Table, hstack, vstack
 from astropy.visualization import ImageNormalize, simple_norm
 from astropy.wcs import WCS
-from photutils import CircularAperture, aperture_photometry
+from photutils.aperture import CircularAperture, aperture_photometry
 from photutils.centroids import centroid_com
 from photutils.detection import find_peaks
-from photutils.psf import SplitCosineBellWindow, create_matching_kernel
+from photutils.psf.matching import (
+    SplitCosineBellWindow,
+    create_matching_kernel,
+)
 from scipy.ndimage import binary_dilation, zoom
 from skimage.morphology import disk
 
@@ -2379,13 +2382,14 @@ def psf_correction_factor(
 
 if __name__ == "__main__":
     surveys = ["JOF"]  # ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
-
-    surveys = [[f"COSMOS-Web-{i}A", f"COSMOS-Web-{i}B"] for i in range(0, 7)]
+    surveys = ["NEP-1", "NEP-2", "NEP-3", "NEP-4"]
+    # surveys = [[f"COSMOS-Web-{i}A", f"COSMOS-Web-{i}B"] for i in range(0, 7)]
     # flatten list
-    surveys = [item for sublist in surveys for item in sublist]
+    # surveys = [item for sublist in surveys for item in sublist]
     print(surveys)
     outdir_name = "+".join(surveys)
-    outdir_name = "COSMOS-Web"
+    # outdir_name = "COSMOS-Web"
+    #
     version = "v11"
     instruments = ["NIRCam"]
     match_band = "F444W"  #'F444W' or None
@@ -2400,6 +2404,7 @@ if __name__ == "__main__":
     manual_id_remove = []
     # im_paths = data.im_paths
     # bands = data.instrument.band_names
+    """
     bands = [
         "F090W",
         "F115W",
@@ -2416,11 +2421,22 @@ if __name__ == "__main__":
         "F410M",
         "F444W",
     ]
-    bands = ["F115W", "F150W", "F277W", "F444W"]
+    """
+    # bands = ["F115W", "F150W", "F277W", "F444W"]
     # NORMAL OPERATION HERE
-    # bands = ['F090W', 'F115W', 'F150W', 'F200W', 'F277W', 'F356W', 'F410M', 'F444W']
+
+    bands = [
+        "F090W",
+        "F115W",
+        "F150W",
+        "F200W",
+        "F277W",
+        "F356W",
+        "F410M",
+        "F444W",
+    ]
     folders = [
-        f"/raid/scratch/data/jwst/{survey}/NIRCam/mosaic_1084_wispnathan/30mas/"
+        f"/raid/scratch/data/jwst/{survey}/NIRCam/mosaic_1084_wisptemp2/"
         for survey in surveys
     ]
 
@@ -2437,7 +2453,7 @@ if __name__ == "__main__":
         im_paths[band] = []
 
         for folder in folders:
-            path = f"{folder}/*{band}*.fits"
+            path = f"{folder}/*{band.lower()}*.fits"
             print(path)
             im_paths[band].append(glob.glob(path)[0])
 
@@ -2589,7 +2605,20 @@ if __name__ == "__main__":
     }  # 'New webbpsf':0.03}
 
     # Make PSF model and kernels from stacking stars
-    # make_psf(bands, im_paths, outdir, kernel_dir, match_band = match_band, phot_zp = phot_zp, maglim=maglim, use_psf_masks=use_psf_masks, manual_id_remove = manual_id_remove, sigma=3.5, psf_fov = psf_fov, pypher_r = 1e-4)
+    make_psf(
+        bands,
+        im_paths,
+        outdir,
+        kernel_dir,
+        match_band=match_band,
+        phot_zp=phot_zp,
+        maglim=maglim,
+        use_psf_masks=use_psf_masks,
+        manual_id_remove=manual_id_remove,
+        sigma=3.5,
+        psf_fov=psf_fov,
+        pypher_r=1e-4,
+    )
 
     # Generate WebbPSF model for bands - only for comparison!
     bands = ["F444W"]
@@ -2607,6 +2636,8 @@ if __name__ == "__main__":
             "F444W",
             "F430M",
             "F410M",
+            "F380M",
+            "F360M",
             "F356W",
             "F335M",
             "F300M",

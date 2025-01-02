@@ -35,6 +35,7 @@ from astropy.wcs import WCS
 from joblib import Parallel, delayed
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LogNorm, Normalize
+import matplotlib.cm as cm
 
 # import Ellipse
 from matplotlib.patches import Ellipse
@@ -1434,7 +1435,11 @@ class ResolvedGalaxy:
 
             if len(possible_sed_keys) > 0:
                 for key in possible_sed_keys:
+                    # read meta from key as well
+                    meta = dict(hfile[key].attrs.items())
                     table = read_table_hdf5(hfile, key)
+                    table.meta = meta
+
                     tool, run = key.split("/")[1:]
                     sed_fitting_table[tool][run] = table
 
@@ -2374,7 +2379,9 @@ class ResolvedGalaxy:
                     im_data, map_params["model"], mask=mask
                 )
                 if save_plots:
-                    fig.savefig(f"{output_dir}/{name}_residual.png")
+                    fig.savefig(
+                        f"{output_dir}/{self.galaxy_id}_{self.survey}_{name}_residual.png"
+                    )
                 if show_plots:
                     plt.show()
                 plt.close(fig)
@@ -2445,14 +2452,18 @@ class ResolvedGalaxy:
                 # Corner
                 fig = results.corner()
                 if save_plots:
-                    fig.savefig(f"{output_dir}/{name}_corner.png")
+                    fig.savefig(
+                        f"{output_dir}/{self.galaxy_id}_{self.survey}_{name}_corner.png"
+                    )
                 if show_plots:
                     plt.show()
                 plt.close(fig)
 
                 fig, ax = plot_residual(image=im_data, mask=mask, model=model)
                 if save_plots:
-                    fig.savefig(f"{output_dir}/{name}_residual.png")
+                    fig.savefig(
+                        f"{output_dir}/{self.galaxy_id}_{self.survey}_{name}_residual.png"
+                    )
                 if show_plots:
                     plt.show()
                 plt.close(fig)
@@ -2460,11 +2471,11 @@ class ResolvedGalaxy:
             if save_external_results:
                 if fit_type == "sample":
                     fitter.sampling_results.save_result(
-                        f"{output_dir}/pyseric_{name}_sample.asdf"
+                        f"{output_dir}/{self.galaxy_id}_{self.survey}_pyseric_{name}_sample.asdf"
                     )
                 elif fit_type == "posterior":
                     fitter.svi_results.save_result(
-                        f"{output_dir}/pyseric_{name}_svi.asdf"
+                        f"{output_dir}/{self.galaxy_id}_{self.survey}_pyseric_{name}_svi.asdf"
                     )
 
         # Save results
@@ -3572,6 +3583,8 @@ class ResolvedGalaxy:
                 if self.sed_fitting_table is not None:
                     for tool in self.sed_fitting_table.keys():
                         for run in self.sed_fitting_table[tool].keys():
+                            meta = self.sed_fitting_table[tool][run].meta
+
                             write_table_hdf5(
                                 self.sed_fitting_table[tool][run],
                                 new_h5_path,
@@ -3580,6 +3593,10 @@ class ResolvedGalaxy:
                                 overwrite=True,
                                 append=True,
                             )
+                            for key in meta.keys():
+                                hfile[f"sed_fitting_table/{tool}/{run}"].attrs[
+                                    key
+                                ] = str(meta[key])
 
                 # Add anything else from the old file to the new file
                 exists = False
@@ -6223,21 +6240,28 @@ class ResolvedGalaxy:
         return table
 
     def provide_bagpipes_phot(
-        self, gal_id, return_bands=False, exclude_bands=[]
+        self,
+        gal_id,
+        return_bands=False,
+        exclude_bands=[],
+        binmap_type=None,
+        psf_type=None,
     ):
         """Provide the fluxes in the correct format for bagpipes"""
         gal_id = str(gal_id)
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
-        if hasattr(self, "use_psf_type"):
-            psf_type = self.use_psf_type
-        else:
-            psf_type = "webbpsf"
+        if binmap_type is None:
+            if hasattr(self, "use_psf_type"):
+                psf_type = self.use_psf_type
+            else:
+                psf_type = "webbpsf"
 
-        if hasattr(self, "use_binmap_type"):
-            binmap_type = self.use_binmap_type
-        else:
-            binmap_type = "pixedfit"
+        if binmap_type is None:
+            if hasattr(self, "use_binmap_type"):
+                binmap_type = self.use_binmap_type
+            else:
+                binmap_type = "pixedfit"
 
         if hasattr(self, "sed_min_percentage_err"):
             min_percentage_error = self.sed_min_percentage_err
@@ -7919,17 +7943,22 @@ class ResolvedGalaxy:
         # fig, axes = plt.subplots(1, len(parameters), figsize=(4*len(parameters), 4),
         #  constrained_layout=True, facecolor=facecolor)
         if fig is None:
+            fig_provided = False
             fig = plt.figure(
                 figsize=(5, 5),
                 constrained_layout=True,
                 facecolor=facecolor,
                 dpi=200,
             )
+            fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
+        else:
+            fig_provided = True
+
         if axes is None:
-            fig.add_subplot(111)
+            axes = fig.add_subplot(111)
 
         # add gap between rows using get_layout_engine
-        fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
+
         redshift = self.sed_fitting_table["bagpipes"][run_name][
             "input_redshift"
         ][0]
@@ -8059,23 +8088,25 @@ class ResolvedGalaxy:
         logtxtx = ""
         logtxty = ""
 
-        if log_x:
-            plt.xscale("log")
-            logtxtx = "log "
-        if log_y:
-            plt.yscale("log")
-            logtxty = "log "
+        if not fig_provided:
+            if log_x:
+                plt.xscale("log")
+                logtxtx = "log "
+            if log_y:
+                plt.yscale("log")
+                logtxty = "log "
 
         xunit = self.param_unit(x_param)
         yunit = self.param_unit(y_param)
-        plt.xlabel(
-            f'{logtxtx}{x_param.replace("_", " ")} [{xunit:latex}]',
-            fontsize=text_fontsize,
-        )
-        plt.ylabel(
-            f'{logtxty}{y_param.replace("_", " ")} [{yunit:latex}]',
-            fontsize=text_fontsize,
-        )
+        if not fig_provided:
+            axes.set_xlabel(
+                f'{logtxtx}{x_param.replace("_", " ")} [{xunit:latex}]',
+                fontsize=text_fontsize,
+            )
+            axes.set_ylabel(
+                f'{logtxty}{y_param.replace("_", " ")} [{yunit:latex}]',
+                fontsize=text_fontsize,
+            )
 
         return fig, axes
 
@@ -8487,6 +8518,7 @@ class ResolvedGalaxy:
         save=False,
         facecolor="white",
         marker_colors="black",
+        resolved_color="tomato",
         time_unit="Gyr",
         cmap="viridis",
         plotpipes_dir="pipes_scripts/",
@@ -8497,6 +8529,9 @@ class ResolvedGalaxy:
         axes=None,
         plot=True,
         force=False,
+        overwrite=False,
+        legend=True,
+        **kwargs,
     ):
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -8545,8 +8580,10 @@ class ResolvedGalaxy:
                 """ Special case where we sum the SFH of all the bins"""
                 dummy_fig, dummy_ax = plt.subplots(1, 1)
                 found = False
+                binmap_type = table.meta.get("binmap_type", "pixedfit")
+
                 if self.resolved_sfh is not None:
-                    if save_name in self.resolved_sfh.keys():
+                    if save_name in self.resolved_sfh.keys() and not overwrite:
                         resolved_sfh = self.resolved_sfh[save_name]
                         found = True
                         x_all = resolved_sfh[:, 0] * u.Gyr
@@ -8555,15 +8592,15 @@ class ResolvedGalaxy:
                             axes.plot(
                                 x_all,
                                 resolved_sfh[:, 2],
-                                color="tomato",
+                                color=resolved_color,
                                 label="RESOLVED",
-                                lw=2,
+                                **kwargs,
                             )
                             axes.fill_between(
                                 x_all,
                                 resolved_sfh[:, 1],
                                 resolved_sfh[:, 3],
-                                color="tomato",
+                                color=resolved_color,
                                 alpha=0.5,
                             )
                         continue
@@ -8579,6 +8616,7 @@ class ResolvedGalaxy:
                                 run_dir=run_dir,
                                 cache=cache,
                                 plotpipes_dir=plotpipes_dir,
+                                binmap_type=binmap_type,
                             )
                             tx, tsfh = pipes_obj.plot_sfh(
                                 dummy_ax,
@@ -8613,15 +8651,15 @@ class ResolvedGalaxy:
                             axes.plot(
                                 x_all,
                                 y_all[:, 1],
-                                color="tomato",
+                                color=resolved_color,
                                 label="RESOLVED",
-                                lw=2,
+                                **kwargs,
                             )
                             axes.fill_between(
                                 x_all,
                                 y_all[:, 0],
                                 y_all[:, 2],
-                                color="tomato",
+                                color=resolved_color,
                                 alpha=0.5,
                             )
 
@@ -8667,15 +8705,16 @@ class ResolvedGalaxy:
                     pipes_obj.plot_sfh(
                         axes,
                         color,
-                        modify_ax=True,
+                        modify_ax=False,
                         add_zaxis=True,
                         timescale=time_unit,
                         plottype=plottype,
                         logify=False,
                         cosmo=None,
                         label=rbin,
+                        **kwargs,
                     )
-        if plot:
+        if plot and legend:
             axes.legend(fontsize=8)
 
         # cbar.set_label('Age (Gyr)', labelpad=10)
@@ -9695,6 +9734,15 @@ class ResolvedGalaxy:
         text_fontsize=10,
         area_norm=True,
         show_info=True,
+        origin=None,
+        extent=None,
+        fig=None,
+        ax=None,
+        show_half_radius=True,
+        add_cbar=True,
+        norm_min=None,
+        norm_max=None,
+        return_map=False,
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -9742,26 +9790,29 @@ class ResolvedGalaxy:
 
         # fig, axes = plt.subplots(1, len(parameters), figsize=(4*len(parameters), 4),
         #  constrained_layout=True, facecolor=facecolor)
-        fig, axes = plt.subplots(
-            len(parameters) // max_on_row + 1,
-            max_on_row,
-            figsize=(
-                2.5 * max_on_row,
-                2.5 * (len(parameters) // max_on_row + 1),
-            ),
-            constrained_layout=True,
-            facecolor=facecolor,
-            sharex=False,
-            sharey=False,
-            dpi=200,
-        )
-        # add gap between rows using get_layout_engine
-        fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
+        if fig is None and ax is None:
+            fig, axes = plt.subplots(
+                len(parameters) // max_on_row + 1,
+                max_on_row,
+                figsize=(
+                    2.5 * max_on_row,
+                    2.5 * (len(parameters) // max_on_row + 1),
+                ),
+                constrained_layout=True,
+                facecolor=facecolor,
+                sharex=False,
+                sharey=False,
+                dpi=200,
+            )
+            fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
 
-        axes = axes.flatten()
-        # Remove empty axes
-        for i in range(len(parameters), len(axes)):
-            fig.delaxes(axes[i])
+            axes = axes.flatten()
+            # Remove empty axes
+            for i in range(len(parameters), len(axes)):
+                fig.delaxes(axes[i])
+        else:
+            axes = np.array([ax])
+        # add gap between rows using get_layout_engine
 
         redshift = self.sed_fitting_table["bagpipes"][run_name][
             "input_redshift"
@@ -9790,14 +9841,16 @@ class ResolvedGalaxy:
                 done = True
 
             elif param == "bin_map":
-                ax_divider = make_axes_locatable(axes[i])
-                cax = ax_divider.append_axes("top", size="5%", pad="2%")
+                if add_cbar:
+                    ax_divider = make_axes_locatable(axes[i])
+                    cax = ax_divider.append_axes("top", size="5%", pad="2%")
                 map = copy.copy(binmap)
                 map[map == 0] = np.nan
                 log = ""
             else:
-                ax_divider = make_axes_locatable(axes[i])
-                cax = ax_divider.append_axes("top", size="5%", pad="2%")
+                if add_cbar:
+                    ax_divider = make_axes_locatable(axes[i])
+                    cax = ax_divider.append_axes("top", size="5%", pad="2%")
                 axes[i].set_xticks([])
                 axes[i].set_yticks([])
 
@@ -9884,28 +9937,31 @@ class ResolvedGalaxy:
                         fig.delaxes(axes[i])
                         fig.delaxes(cax)
                         continue
+                    if show_half_radius:
+                        from .utils import calculate_half_radius
 
-                    from .utils import calculate_half_radius
+                        radius, center = calculate_half_radius(
+                            half_radius_map, radius_step=0.2
+                        )
 
-                    radius, center = calculate_half_radius(
-                        half_radius_map, radius_step=0.2
-                    )
+                        from matplotlib.patches import Circle
 
-                    from matplotlib.patches import Circle
-
-                    circle = Circle(
-                        center,
-                        radius,
-                        edgecolor="black",
-                        facecolor="none",
-                        linewidth=0.5,
-                        linestyle="--",
-                    )
-                    axes[i].add_patch(circle)
+                        circle = Circle(
+                            center,
+                            radius,
+                            edgecolor="black",
+                            facecolor="none",
+                            linewidth=0.5,
+                            linestyle="--",
+                        )
+                        axes[i].add_patch(circle)
 
                     # map = self.map_to_density_map(map, redshift = redshift, logmap = True)
                     log = r"$\log_{10}$ "
                     param = f"{param}_density" if area_norm else param
+
+                if return_map:
+                    return map
 
                 if np.all([~np.isfinite(map)]):
                     print(f"Map {param} is empty")
@@ -9914,8 +9970,14 @@ class ResolvedGalaxy:
                     continue
 
                 # Exlude nan and infinities for max and min
-                max = np.nanmax(map[np.isfinite(map)])
-                min = np.nanmin(map[np.isfinite(map)])
+                if norm_max is None:
+                    max = np.nanmax(map[np.isfinite(map)])
+                else:
+                    max = norm_max
+                if norm_min is None:
+                    min = np.nanmin(map[np.isfinite(map)])
+                else:
+                    min = norm_min
 
                 if norm == "log":
                     norm = LogNorm(vmin=min, vmax=max)
@@ -9986,45 +10048,53 @@ class ResolvedGalaxy:
                     interpolation="none",
                     cmap=cmaps[i],
                     norm=norm,
-                )
-                cbar = fig.colorbar(
-                    mappable, cax=cax, orientation="horizontal"
+                    extent=extent,
                 )
 
-                # ensure cbar is using ScalarFormatter
-                cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
-                cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
-
-                cbar.set_label(
-                    rf"$\rm{{{param_str}}}${unit}", labelpad=10, fontsize=10
-                )
-                # Change cbar scale number size
-
-                cbar.ax.xaxis.get_offset_text().set_fontsize(0)
-                cbar.ax.xaxis.set_ticks_position("top")
-                cbar.ax.xaxis.set_tick_params(labelsize=6, which="both")
-                cbar.ax.xaxis.set_label_position("top")
-                # disable xtick labels
-                # cax.set_xticklabels([])
-                # Fix colorbar tick size and positioning if log
-                if norm == "log":
-                    print("Fixing ticks")
-                    # Generate reasonable ticks
-                    ticks = np.logspace(
-                        np.log10(np.nanmin(map)),
-                        np.log10(np.nanmax(map)),
-                        num=5,
+                if add_cbar:
+                    cbar = fig.colorbar(
+                        mappable, cax=cax, orientation="horizontal"
                     )
-                    cbar.set_ticks(ticks)
+
+                    # ensure cbar is using ScalarFormatter
                     cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
                     cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
+
+                    cbar.set_label(
+                        rf"$\rm{{{param_str}}}${unit}",
+                        labelpad=10,
+                        fontsize=10,
+                    )
+                    # Change cbar scale number size
+
+                    cbar.ax.xaxis.get_offset_text().set_fontsize(0)
+                    cbar.ax.xaxis.set_ticks_position("top")
                     cbar.ax.xaxis.set_tick_params(labelsize=6, which="both")
                     cbar.ax.xaxis.set_label_position("top")
-                    cbar.ax.xaxis.set_ticks_position("top")
-                cbar.update_ticks()
+                    # disable xtick labels
+                    # cax.set_xticklabels([])
+                    # Fix colorbar tick size and positioning if log
+                    if norm == "log":
+                        print("Fixing ticks")
+                        # Generate reasonable ticks
+                        ticks = np.logspace(
+                            np.log10(np.nanmin(map)),
+                            np.log10(np.nanmax(map)),
+                            num=5,
+                        )
+                        cbar.set_ticks(ticks)
+                        cbar.ax.xaxis.set_major_formatter(ScalarFormatter())
+                        cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
+                        cbar.ax.xaxis.set_tick_params(
+                            labelsize=6, which="both"
+                        )
+                        cbar.ax.xaxis.set_label_position("top")
+                        cbar.ax.xaxis.set_ticks_position("top")
+                    cbar.update_ticks()
 
-                axes[i].set_xlim(xmin, xmax)
-                axes[i].set_ylim(ymin, ymax)
+                if ax is None:
+                    axes[i].set_xlim(xmin, xmax)
+                    axes[i].set_ylim(ymin, ymax)
 
                 if add_scalebar and not scalebar_added:
                     scalebar_added = True
@@ -10338,7 +10408,10 @@ class ResolvedGalaxy:
                 mask = table["ID"] == load_p
 
                 bands_gal = self.provide_bagpipes_phot(
-                    str(load_p), return_bands=True
+                    str(load_p),
+                    return_bands=True,
+                    binmap_type=binmap_type,
+                    psf_type=psf_type,
                 )
                 param["bands"] = bands_gal
                 params_b.append(param)
@@ -10599,6 +10672,7 @@ class ResolvedGalaxy:
         if not open_h5:
             try:
                 #
+                binmap_type = table.meta.get("binmap_type", "pixedfit")
 
                 pipes_objs = self.load_pipes_object(
                     run_name,
@@ -10607,7 +10681,9 @@ class ResolvedGalaxy:
                     run_dir=run_dir,
                     plotpipes_dir=pipes_dir,
                     n_cores=n_cores,
+                    binmap_type=binmap_type,
                 )
+
             except FileNotFoundError:
                 print(f"Files not found for {run_name} {bins}")
                 return None
@@ -11029,6 +11105,14 @@ class ResolvedGalaxy:
 
         table = self.sed_fitting_table["bagpipes"][run_name]
 
+        if "binmap_type" in table.meta.keys():
+            binmap_type = table.meta["binmap_type"]
+        else:
+            print(
+                f"Binmap type not found in {run_name} {self.galaxy_id}. Assuming pixedfit. This may lead to unexpected results."
+            )
+            binmap_type = "pixedfit"
+
         # Make cmap for map
         count = []
         for i, gal_id in enumerate(table["#ID"]):
@@ -11078,8 +11162,12 @@ class ResolvedGalaxy:
                     )
                     if "spectrum_full" in f["advanced_quantities"].keys():
                         data = f["advanced_quantities"]["spectrum_full"][:]
+
+                        self.use_binmap_type = binmap_type
                         bands = self.provide_bagpipes_phot(
-                            str(rbin), return_bands=True
+                            str(rbin),
+                            return_bands=True,
+                            binmap_type=binmap_type,
                         )
                         wav = self._recalculate_bagpipes_wavelength_array(
                             bands=bands
@@ -12136,6 +12224,7 @@ class ResolvedGalaxy:
                 value = np.nan
                 continue
 
+            print(self.galfind_photometry_rest.keys())
             phot = copy.deepcopy(
                 self.galfind_photometry_rest[str(int(gal_id))]
             )
@@ -12194,7 +12283,11 @@ class ResolvedGalaxy:
                 print(value)
 
                 unit = u.dimensionless_unscaled
-            if phot.property_PDFs[property_name] is not None:
+
+            if (
+                property_name in phot.property_PDFs
+                and phot.property_PDFs[property_name] is not None
+            ):
                 out_kwargs = phot.property_PDFs[property_name].kwargs
                 PDFs[pos].append(phot.property_PDFs[property_name].input_arr)
 
@@ -12212,13 +12305,12 @@ class ResolvedGalaxy:
 
         label = f"{property} ({unit:latex})"
 
-        if not loaded:
+        if not loaded and n_jobs > 1:
             # for pos, param_name in enumerate(param_names):
             unit = phot.properties[property_name].unit
             all_PDFs = np.array(PDFs) * unit
             out_kwargs = phot.property_PDFs[property_name].kwargs
             out_kwargs["unit"] = unit
-            print(all_PDFs)
 
             if len(all_PDFs) == 0:
                 raise Exception(
@@ -12239,6 +12331,14 @@ class ResolvedGalaxy:
             if binmap_type not in self.photometry_properties.keys():
                 self.photometry_properties[binmap_type] = {}
             self.photometry_properties[binmap_type][property_name] = all_PDFs
+
+            if getattr(self, "photometry_meta_properties", None) is None:
+                self.photometry_meta_properties = {}
+            if binmap_type not in self.photometry_meta_properties.keys():
+                self.photometry_meta_properties[binmap_type] = {}
+            self.photometry_meta_properties[binmap_type][property_name] = (
+                out_kwargs
+            )
 
         if np.all(np.isnan(map)):
             print(f"Calculation not possible for {property_name}")
@@ -12356,6 +12456,96 @@ class ResolvedGalaxy:
         for i in range(len(to_plot), len(axes)):
             fig.delaxes(axes[i])
         return fig
+
+    def _recrate_bagpipes_time_grid(self, log_sampling=0.0025, cosmo=None):
+        if cosmo is None:
+            cosmo = FlatLambdaCDM(H0=70.0, Om0=0.3)
+
+        self.cosmo = cosmo
+
+        self.z_array = np.arange(0.0, 100.0, 0.01)
+        self.age_at_z = cosmo.age(self.z_array).value
+        # ldist_at_z = cosmo.luminosity_distance(z_array).value
+
+        self.hubble_time = self.age_at_z[self.z_array == 0.0]
+
+        # Set up the age sampling for internal SFH calculations.
+        log_age_max = np.log10(self.hubble_time) + 9.0 + 2 * log_sampling
+        self.ages = np.arange(6.0, log_age_max, log_sampling)
+        from bagpipes.utils import make_bins
+
+        self.age_lhs = make_bins(self.ages, make_rhs=True)[0]
+        self.ages = 10**self.ages * u.yr
+        self.age_lhs = 10**self.age_lhs
+        self.age_lhs[0] = 0.0
+        self.age_lhs[-1] = 10**9 * self.hubble_time
+        self.age_widths = self.age_lhs[1:] - self.age_lhs[:-1]
+
+    def calculate_mwa(
+        self,
+        sfh_posterior=None,
+        resolved_name=None,
+        integrated_name=None,
+        integrated_tool="bagpipes",
+        integrated_run="TOTAL_BIN",
+    ):
+        """
+        Calculates the mass-weighted age of a galaxy from a SFH posterior. If integrated_name is provided, it will use the integrated table to get the MWA. If not, it will use the resolved SFH posterior. If neither are provided, it will raise an exception.
+        """
+        if integrated_name in self.sed_fitting_table[integrated_tool].keys():
+            table = self.sed_fitting_table[integrated_tool][integrated_name]
+            row = table["#ID"] == integrated_run
+            if not np.any(row):
+                raise Exception(
+                    f"Integrated run {integrated_run} not found in {integrated_tool} table"
+                )
+            mwa_16 = table["mass_weighted_age_16"][row][0] * u.Gyr
+            mwa_50 = table["mass_weighted_age_50"][row][0] * u.Gyr
+            mwa_84 = table["mass_weighted_age_84"][row][0] * u.Gyr
+            mwa = np.array(
+                [
+                    mwa_16.to(u.Myr).value,
+                    mwa_50.to(u.Myr).value,
+                    mwa_84.to(u.Myr).value,
+                ]
+            )
+            return mwa
+
+        if resolved_name is not None:
+            sfh_posterior = self.resolved_sfh[resolved_name]
+
+        if sfh_posterior is None:
+            raise Exception("No SFH posterior or resolved name provided")
+
+        self._recrate_bagpipes_time_grid()
+        ages = self.ages
+        age_widths = self.age_widths
+
+        mwa = np.zeros(len(sfh_posterior))
+
+        sfh_16, sfh_50, sfh_84 = (
+            sfh_posterior[:, 1],
+            sfh_posterior[:, 2],
+            sfh_posterior[:, 3],
+        )
+        mwa_16 = np.sum(sfh_16 * age_widths * ages) / np.sum(
+            sfh_16 * age_widths
+        )
+        mwa_50 = np.sum(sfh_50 * age_widths * ages) / np.sum(
+            sfh_50 * age_widths
+        )
+        mwa_84 = np.sum(sfh_84 * age_widths * ages) / np.sum(
+            sfh_84 * age_widths
+        )
+        mwa = np.array(
+            [
+                mwa_16.to(u.Myr).value,
+                mwa_50.to(u.Myr).value,
+                mwa_84.to(u.Myr).value,
+            ]
+        )
+
+        return mwa
 
 
 class MockResolvedGalaxy(ResolvedGalaxy):
@@ -14846,8 +15036,6 @@ class ResolvedGalaxies(np.ndarray):
                 if len(resolved) == 0 and skip_missing:
                     continue
 
-                print(resolved, integrated)
-                print(len(resolved), len(integrated))
                 raise ValueError(
                     "Resolved and integrated properties must be unique"
                 )
@@ -14952,6 +15140,272 @@ class ResolvedGalaxies(np.ndarray):
 
         return fig
 
+    def plot_resolved_map_scatter(
+        self,
+        binmap_type,
+        run_name,
+        x_param="redshift",
+        y_param="stellar_mass",
+        map_param="stellar_mass",
+        cmap="viridis",
+        facecolor="white",
+        map_density=True,
+        scale_pixel_pkpc=10,
+        origin="lower",
+        area_norm=True,
+        scale_physical=True,
+        individual_cnorm=False,
+        norm_type="minmax",
+        percentile_norm=[10, 99],
+        text_color="black",
+        scalebar_length=5,
+        add_scalebar=True,
+        figsize=(12, 7),
+        spread_factor=1.5,
+    ):
+        """
+        Plot a scatter plot of x_param vs y_param for each galaxy, with resolved maps shown at each point.
+
+        Parameters
+        ----------
+        binmap_type : str
+            Type of binning map to use
+        run_name : str
+            Name of the bagpipes run to use
+        x_param : str
+            Parameter to plot on x-axis
+        y_param : str
+            Parameter to plot on y-axis
+        map_param : str
+            Parameter to show in resolved maps
+        spread_factor : float
+            Factor to spread galaxies horizontally to avoid overlap
+        [other parameters remain the same]
+        """
+        fig, ax = plt.subplots(
+            1, 1, figsize=figsize, dpi=300, facecolor=facecolor
+        )
+        ax.set_facecolor(facecolor)
+
+        # Set axis line color to textcolor
+        ax.spines["bottom"].set_color(text_color)
+        ax.spines["top"].set_color(text_color)
+        ax.spines["right"].set_color(text_color)
+        ax.spines["left"].set_color(text_color)
+
+        div = make_axes_locatable(ax)
+        cax = div.append_axes("right", "5%", "5%")
+
+        # Get x and y points
+        galaxy_redshifts = [
+            galaxy.sed_fitting_table["bagpipes"][run_name]["input_redshift"][0]
+            for galaxy in self.galaxies
+        ]
+
+        if x_param == "redshift":
+            x = galaxy_redshifts
+        else:
+            x = [
+                galaxy.get_total_resolved_property(run_name, property=x_param)[
+                    1
+                ]
+                for galaxy in self.galaxies
+            ]
+
+        y = [
+            galaxy.get_total_resolved_property(run_name, property=y_param)[1]
+            for galaxy in self.galaxies
+        ]
+
+        x_param_text = self.galaxies[0].param_unit(x_param.split(":")[-1])
+        y_param_text = self.galaxies[0].param_unit(y_param.split(":")[-1])
+
+        unitx = (
+            f" ({x_param_text:latex})"
+            if x_param_text != u.dimensionless_unscaled
+            else ""
+        )
+        unity = (
+            f" ({y_param_text:latex})"
+            if y_param_text != u.dimensionless_unscaled
+            else ""
+        )
+
+        ax.set_xlabel(f"{x_param.replace('_', ' ')}{unitx}", color=text_color)
+        ax.set_ylabel(f"{y_param.replace('_', ' ')}{unity}", color=text_color)
+
+        ax.tick_params(axis="x", colors=text_color)
+        ax.tick_params(axis="y", colors=text_color)
+
+        galaxy_redshifts = [
+            galaxy.sed_fitting_table["bagpipes"][run_name]["input_redshift"][0]
+            for galaxy in self.galaxies
+        ]
+        galaxy_pix_scales = [
+            galaxy._pix_scale_kpc(npix=1, band="F444W", redshift=z)
+            for z, galaxy in zip(galaxy_redshifts, self.galaxies)
+        ]
+
+        # Get the data range
+        x_range = max(x) - min(x)
+        y_range = max(y) - min(y)
+
+        # Scale x coordinates to spread galaxies out
+        x_scaled = [min(x) + (xi - min(x)) * spread_factor for xi in x]
+
+        extents = []
+        maps = []
+
+        dummy_fig, dummy_ax = plt.subplots(1, 1, figsize=(2, 2))
+        from .utils import get_bounding_box
+
+        for pos, (galaxy, x_val, y_val) in enumerate(
+            zip(self.galaxies, x_scaled, y)
+        ):
+            map = galaxy.plot_bagpipes_results(
+                run_name=run_name,
+                binmap_type=binmap_type,
+                parameters=[map_param],
+                add_scalebar=False,
+                show_info=False,
+                add_cbar=False,
+                fig=dummy_fig,
+                ax=dummy_ax,
+                facecolor=facecolor,
+                show_half_radius=False,
+                origin=origin,
+                return_map=True,
+            )
+
+            if pos == 0:
+                min_map = np.nanmin(map)
+                max_map = np.nanmax(map)
+            else:
+                min_map = min(min_map, np.nanmin(map))
+                max_map = max(max_map, np.nanmax(map))
+
+            xmin, xmax, ymin, ymax = get_bounding_box(
+                map, scale_border=0.5, square=False
+            )
+            xmin = np.floor(xmin).astype(int)
+            xmax = np.ceil(xmax).astype(int)
+            ymin = np.floor(ymin).astype(int)
+            ymax = np.ceil(ymax).astype(int)
+
+            # Crop map to bounding box
+            if xmin < 0:
+                xmin = 0
+            if xmax > np.shape(map)[1]:
+                xmax = np.shape(map)[1]
+            if ymin < 0:
+                ymin = 0
+
+            map = map[ymin:ymax, xmin:xmax]
+
+            width = xmax - xmin
+            height = ymax - ymin
+
+            width_kpc = width * galaxy_pix_scales[0]
+            height_kpc = height * galaxy_pix_scales[0]
+
+            if scale_physical:
+                norm_width = width_kpc / scale_pixel_pkpc
+                norm_height = height_kpc / scale_pixel_pkpc
+            else:
+                norm_width = width / scale_pixel_pkpc
+                norm_height = height / scale_pixel_pkpc
+
+            extent = [
+                x_val - norm_width / 2,
+                x_val + norm_width / 2,
+                y_val - norm_height / 2,
+                y_val + norm_height / 2,
+            ]
+
+            extents.append(extent)
+            maps.append(map)
+
+        plt.close(dummy_fig)
+
+        norm = Normalize(vmin=min_map, vmax=max_map)
+
+        if area_norm:
+            map_param = f"{map_param}_density"
+
+        cbar = fig.colorbar(
+            cm.ScalarMappable(norm=norm, cmap=cmap),
+            cax=cax,
+            orientation="vertical",
+        )
+        cbar.set_label(
+            f"{map_param.replace('_', ' ')} ({self.galaxies[0].param_unit(map_param.split(':')[-1]):latex})",
+            color=text_color,
+        )
+
+        # Set aspect ratio to ensure square pixels
+        ax.set_aspect("equal")
+
+        for map, extent in zip(maps, extents):
+            if individual_cnorm:
+                if norm_type == "minmax":
+                    vmin = np.nanmin(map)
+                    vmax = np.nanmax(map)
+                elif norm_type == "percentile":
+                    vmin = np.nanpercentile(map, percentile_norm[0])
+                    vmax = np.nanpercentile(map, percentile_norm[1])
+                norm = Normalize(vmin=vmin, vmax=vmax)
+
+            ax.imshow(
+                map,
+                extent=extent,
+                origin=origin,
+                cmap=cmap,
+                norm=norm,
+                aspect="equal",
+            )
+
+        if individual_cnorm:
+            cbar.set_ticks([min_map, max_map])
+            cbar.set_ticklabels(["Low", "High"], color=text_color)
+
+        cbar.ax.tick_params(axis="y", colors=text_color)
+
+        # Update axis limits for scaled x coordinates
+        ax.set_xlim(
+            min(x_scaled) - 0.1 * x_range * spread_factor,
+            max(x_scaled) + 0.1 * x_range * spread_factor,
+        )
+        ax.set_ylim(min(y) - 0.1 * y_range, max(y) + 0.1 * y_range)
+
+        # Add physical scale bar
+        if add_scalebar:
+            from mpl_toolkits.axes_grid1.anchored_artists import (
+                AnchoredSizeBar,
+            )
+            from matplotlib.font_manager import FontProperties
+
+            scalebar_plot_length = scalebar_length / scale_pixel_pkpc
+            fontprops = FontProperties(size=12, weight="bold")
+            scalebar = AnchoredSizeBar(
+                ax.transData,
+                scalebar_plot_length,
+                f"{scalebar_length} pkpc",
+                "upper right",
+                pad=0.5,
+                color="white",
+                frameon=False,
+                size_vertical=scalebar_plot_length / 30,
+                label_top=True,
+                fontproperties=fontprops,
+                sep=5,
+                path_effects=[
+                    PathEffects.withStroke(linewidth=3, foreground="black")
+                ],
+            )
+            ax.add_artist(scalebar)
+
+        return fig
+
     # Run any function on all galaxies
     def run_function(self, function, *args, **kwargs):
         for galaxy in self.galaxies:
@@ -14967,6 +15421,19 @@ class ResolvedGalaxies(np.ndarray):
         )
         # return a view of the galaxy array with galaxies which have > 1 bin
         return self[bins > 1]
+
+    def filter_IDs(self, IDs):
+        mask = np.array([galaxy.galaxy_id in IDs for galaxy in self.galaxies])
+        return self[mask]
+
+    def filter_redshift(self, zmin, zmax):
+        mask = np.array(
+            [
+                galaxy.redshift >= zmin and galaxy.redshift <= zmax
+                for galaxy in self.galaxies
+            ]
+        )
+        return self[mask]
 
     def run_bagpipes_parallel(
         self,
@@ -15561,9 +16028,9 @@ def run_bagpipes_wrapper(
             # Save the resolved SED
             galaxy.get_resolved_bagpipes_sed(resolved_dict["meta"]["run_name"])
             # Save the resolved SFH - broken for some reason
-            # fig, _ = galaxy.plot_bagpipes_sfh(
-            #    resolved_dict["meta"]["run_name"], bins_to_show=["RESOLVED"]
-            # )
+            fig, _ = galaxy.plot_bagpipes_sfh(
+                resolved_dict["meta"]["run_name"], bins_to_show=["RESOLVED"]
+            )
             plt.close(fig)
             # Save the resolved mass
             galaxy.get_total_resolved_property(
