@@ -43,15 +43,15 @@ elif computer == "singularity":
 if __name__ == "__main__":
     mock_field = "JOF_psfmatched"
     overwrite = True
-    bagpipes_only = False  # This is for running Bagpipes only if the galaxies have already been created
-    load_only = False  # This is for running Bagpipes - whether to skip running fitting and load existing results
+    bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
+    load_only = True  # This is for running Bagpipes - whether to skip running fitting and load existing results
     only_new = (
         False  # This is whether to skip initial running of existing .h5 files.
     )
     cosmo = FlatLambdaCDM(H0=70, Om0=0.300)
     grid_name = "bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03"
     grid_dir = "/nvme/scratch/work/tharvey/synthesizer/grids/"
-    path = "/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5"
+    path = "/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock_lowmass.h5"
     mock_rms_fit_path = "/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/"
     fit_photometry = "TOTAL_BIN"
     plot_overview = True
@@ -177,6 +177,20 @@ if __name__ == "__main__":
 
     multiple_galaxies = ResolvedGalaxies(galaxies)
 
+    for galaxy in galaxies:
+        if "voronoi" not in galaxy.photometry_table["star_stack"].keys():
+            galaxy.voronoi_binning(
+                SNR_reqs=7,
+                galaxy_region="detection",
+                overwrite=True,
+                use_only_widebands=False,
+                plot=True,
+                quiet=False,
+                ref_band="combined_average",
+            )
+
+            galaxy.measure_flux_in_bins(binmap_type="voronoi")
+
     override_meta = {
         "use_bpass": True,
         "redshift": "self",
@@ -224,20 +238,41 @@ if __name__ == "__main__":
     resolved_dicts_bursty = create_dicts(
         resolved_dict_bursty, len(galaxies), override_meta=resolved_meta
     )
+
+    resolved_meta_voronoi = {
+        "use_bpass": True,
+        "redshift": "self",
+        "name_append": "_zfix",
+        "min_redshift_sigma": 0,
+        "redshift_sigma": 0,
+        "run_name": "CNST_SFH_RESOLVED_VORONOI",
+    }
+
+    resolved_dicts_voronoi = create_dicts(
+        resolved_dict_cnst, len(galaxies), override_meta=resolved_meta_voronoi
+    )
+
     for dicts in [
-        # lognorm_dicts,
-        cnst_dicts,
+        lognorm_dicts,
+        # cnst_dicts,
         resolved_dicts_cnst,
-        continuity_dicts,
-        delayed_dicts,
-        continuity_bursty_dicts,
-        resolved_dicts_bursty,
-        dpl_dicts,
+        resolved_dicts_voronoi,
+        # continuity_dicts,
+        # delayed_dicts,
+        # continuity_bursty_dicts,
+        # resolved_dicts_bursty,
+        # dpl_dicts,
     ]:
+        if "VORONOI" in dicts[0]["meta"]["run_name"]:
+            override_binmap_type = "voronoi"
+        else:
+            override_binmap_type = None
+
         multiple_galaxies.run_bagpipes_parallel(
             dicts,
             n_jobs=n_jobs,
             fit_photometry=fit_photometry,
             run_dir=bagpipes_run_dir,
             load_only=load_only,
+            override_binmap_type=override_binmap_type,
         )

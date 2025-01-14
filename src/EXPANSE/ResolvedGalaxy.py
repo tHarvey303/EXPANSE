@@ -6347,6 +6347,7 @@ class ResolvedGalaxy:
         legend=True,
         facecolor="white",
         cmap_bins="nipy_spectral_r",
+        colors=None,
     ):
         self.get_filter_wavs()
         # from galfind import Filter
@@ -6375,9 +6376,10 @@ class ResolvedGalaxy:
 
         # Set up color map
         map = getattr(self, f"{binmap_type}_map")
-        cmap = plt.get_cmap(cmap_bins)
-        norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
-        colors = {i: cmap(norm(i)) for i in np.unique(map)}
+        if colors is None:
+            cmap = plt.get_cmap(cmap_bins)
+            norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
+            colors = {i: cmap(norm(i)) for i in np.unique(map)}
 
         colorss = []
         for i, rbin in enumerate(bins_to_show):
@@ -6387,19 +6389,21 @@ class ResolvedGalaxy:
             if len(name) == 0:
                 raise Exception(f"Bin {rbin} not found in table")
             name = name[0]
-            if name == "TOTAL_BIN":
+            if type(colors) is dict and rbin in colors.keys():
+                color = colors[rbin]
+            elif name == "TOTAL_BIN":
                 color = "black"
-            if name == "MAG_AUTO":
+            elif name == "MAG_AUTO":
                 color = "blue"
-            if name == "MAG_ISO":
+            elif name == "MAG_ISO":
                 color = "green"
-            if name == "MAG_BEST":
+            elif name == "MAG_BEST":
                 color = "orange"
-            if name == "MAG_APER_TOTAL":
+            elif name == "MAG_APER_TOTAL":
                 color = "violet"
-            if name.startswith("MAG_APER"):
+            elif name.startswith("MAG_APER"):
                 color = "purple"
-            if name == "bin":
+            elif name == "bin":
                 color = colors[int(rbin)]
 
             for j, band in enumerate(self.bands):
@@ -6444,9 +6448,9 @@ class ResolvedGalaxy:
 
                 if label_individual:
                     if name == "bin":
-                        label = f"bin {rbin}"
+                        label = f"Bin {rbin}"
                     else:
-                        label = f"{rbin}"
+                        label = f"{rbin.replace('_', ' ')}"
                 else:
                     label = name
 
@@ -7038,6 +7042,219 @@ class ResolvedGalaxy:
 
         return fig, axs
 
+    def plot_bagpipes_overview(
+        self,
+        figsize=(12, 10),
+        bands_to_show=["F814W", "F115W", "F200W", "F335M", "F444W"],
+        photometry_to_show=["TOTAL_BIN", "MAG_APER_TOTAL", "1"],
+        bagpipes_runs={"CNST_SFH_RESOLVED": ["RESOLVED", "1"]},
+        PDFs_to_plot=["stellar_mass", "sfr", "dust:Av"],
+        property_maps=["stellar_mass", "sfr", "dust:Av", "mass_weighted_age"],
+        show=True,
+        flux_unit=u.ABmag,
+        save=False,
+        rgb_stretch=0.001,
+        rgb_q=0.001,
+        binmap_type="pixedfit",
+        legend=True,
+        min_sed_flux=31 * u.ABmag,
+        coloring_cmap="tab20",
+        pipes_run_dir="pipes",
+    ):
+        """
+        This is a compositing method that uses plot_overview and bagpipes plotting method to generate a composite summary plot.
+
+        Layout:
+
+        XXXXYY
+        XXXXYY
+        ZZZZZZ
+        ZZZZZZ
+
+        """
+
+        # Assign a unique color to everything in photometry_to_show and bagpipes_runs
+
+        cmap = plt.get_cmap()
+
+        params = copy.copy(photometry_to_show)
+        for run in bagpipes_runs:
+            for param in bagpipes_runs[run]:
+                if param not in params:
+                    params.append(param)
+
+        norm = plt.Normalize(vmin=0, vmax=len(params))
+        colors = {param: cmap(norm(i)) for i, param in enumerate(params)}
+        colors_runs = {
+            run: [colors[param] for param in bagpipes_runs[run]]
+            for run in bagpipes_runs
+        }
+
+        figure = plt.figure(
+            figsize=figsize,
+            dpi=200,
+            facecolor="white",
+            constrained_layout=True,
+        )
+
+        subfig_rows = figure.subfigures(
+            2, 1, height_ratios=[1.5, 1], hspace=0
+        ).flatten()
+        top_row = (
+            subfig_rows[0].subfigures(1, 2, width_ratios=[2.8, 1]).flatten()
+        )
+        bottom_row = (
+            subfig_rows[1]
+            .subfigures(1, 2, width_ratios=[1.25, 1], wspace=0, hspace=0)
+            .flatten()
+        )
+
+        # figure.get_layout_engine().set(h_pad=0, hspace=0)
+
+        overview_subfig, ax_sed = self.plot_overview(
+            figsize=(1, 1),
+            bands_to_show=bands_to_show,
+            bins_to_show=photometry_to_show,
+            show=False,
+            flux_unit=flux_unit,
+            save=False,
+            rgb_stretch=rgb_stretch,
+            rgb_q=rgb_q,
+            binmap_type=binmap_type,
+            legend=legend,
+            min_sed_flux=min_sed_flux,
+            fig=top_row[0],
+            return_ax=True,
+            colors=colors,
+        )
+
+        # overview_subfig.get_layout_engine().set(h_pad=0, hspace=0)
+        # fix x-axis now
+        ax_sed.set_xlim(ax_sed.get_xlim())
+
+        for run in bagpipes_runs:
+            self.plot_bagpipes_fit(
+                axes=ax_sed,
+                run_name=run,
+                flux_units=flux_unit,
+                save=False,
+                fig=top_row[0],
+                bins_to_show=bagpipes_runs[run],
+                run_dir=pipes_run_dir,
+                marker_colors=colors_runs[run],
+                resolved_color=colors["RESOLVED"],
+            )
+
+        # Plot PDFs
+        pdf_subfig = top_row[1]
+
+        pdf_axes = pdf_subfig.subplots(len(PDFs_to_plot), 1)
+
+        for ax, pdf in zip(pdf_axes, PDFs_to_plot):
+            for bagpipes_run in bagpipes_runs:
+                params = copy.deepcopy(bagpipes_runs[bagpipes_run])
+                if "RESOLVED" in params:
+                    index = params.index("RESOLVED")
+                    params[index] = "all"
+                colors["all"] = colors["RESOLVED"]
+
+                print(params)
+                self.plot_bagpipes_component_comparison(
+                    parameter=pdf,
+                    run_name=bagpipes_run,
+                    bins_to_show=params,
+                    fig=pdf_subfig,
+                    save=False,
+                    fill_between=True,
+                    run_dir=pipes_run_dir,
+                    colors=colors,
+                    axes=ax,
+                    legend=False,
+                    colors_from_full_dist=False,
+                    fontsize=10,
+                )
+        # Plot corner (bottom right)
+
+        corner_subfig = bottom_row[1]
+
+        dummy_fig = None
+        for run in bagpipes_runs:
+            dummy_fig, _ = self.plot_bagpipes_corner(
+                run_name=run,
+                bins_to_show=bagpipes_runs[run],
+                fig=dummy_fig,
+                save=False,
+                run_dir=pipes_run_dir,
+                facecolor="white",
+                colors=colors_runs[bagpipes_run],
+            )
+
+        dummy_fig.set_facecolor("white")
+        dummy_fig.set_edgecolor("white")
+        # Save dummy fig, render to image, display image in corner_subfig
+        dummy_fig.savefig("dummy.png", dpi=200, bbox_inches="tight")
+        dummy_fig.clear()
+
+        # display image
+
+        img = plt.imread("dummy.png")
+        corner_ax = corner_subfig.add_axes([0, 0, 1, 1])
+        corner_ax.imshow(img, interpolation="none", aspect="equal")
+        corner_ax.axis("off")
+        os.remove("dummy.png")
+
+        # Plot property maps
+
+        # split bottom left into 1x2 grid
+        prop_subfigs = bottom_row[0].subfigures(2, 1, hspace=0)
+
+        for run_name in bagpipes_runs:
+            self.plot_bagpipes_results(
+                run_name=run_name,
+                binmap_type=binmap_type,
+                parameters=property_maps,
+                reload_from_cat=False,
+                save=False,
+                facecolor="white",
+                max_on_row=5,
+                weight_mass_sfr=True,
+                norm="linear",
+                total_params=[],
+                scale_border=0,
+                add_scalebar=True,
+                text_fontsize=8,
+                area_norm=True,
+                show_info=False,
+                origin=None,
+                extent=None,
+                fig=prop_subfigs[0],
+                ax=None,
+                show_half_radius=True,
+                add_cbar=True,
+                return_map=False,
+            )
+
+        # Plot SFH
+
+        for run_name in bagpipes_runs:
+            fig, _ = self.plot_bagpipes_sfh(
+                run_name=run_name,
+                bins_to_show=bagpipes_runs[run],
+                fig=prop_subfigs[1],
+                save=False,
+                run_dir=pipes_run_dir,
+                facecolor="white",
+                time_unit="Myr",
+                marker_colors=colors_runs[run_name],
+                resolved_color=colors["RESOLVED"],
+            )
+            ax = fig.get_axes()[0]
+            ax.set_xlim(0, 100)
+            ax.set_xlabel("Lookback Time (Myr)", fontsize=12)
+            ax.set_ylabel("SFR (M$_\odot$ yr$^{-1}$)", fontsize=12)
+
+        return figure
+
     def plot_overview(
         self,
         figsize=(12, 8),
@@ -7051,17 +7268,21 @@ class ResolvedGalaxy:
         binmap_type="pixedfit",
         legend=True,
         min_sed_flux=31 * u.ABmag,
+        fig=None,
+        return_ax=False,
+        colors=None,
+        box_fontsize=12,
     ):
         # GridSpec
-
-        fig = plt.figure(
-            figsize=figsize,
-            dpi=200,
-            facecolor="white",
-            constrained_layout=True,
-        )
+        if fig is None:
+            fig = plt.figure(
+                figsize=figsize,
+                dpi=200,
+                facecolor="white",
+                constrained_layout=True,
+            )
         gs = fig.add_gridspec(
-            3, 2, width_ratios=[1.9, 1], height_ratios=[1, 1, 1.5]
+            3, 2, width_ratios=[3, 1], height_ratios=[1, 1, 0.8]
         )
 
         fig_sed = fig.add_subfigure(gs[0:2, 0])
@@ -7084,6 +7305,7 @@ class ResolvedGalaxy:
             label_individual=True,
             binmap_type=binmap_type,
             min_flux=min_sed_flux,
+            colors=colors,
         )
 
         ax_filt = fig_sed.add_subplot(gs[1])
@@ -7128,7 +7350,7 @@ class ResolvedGalaxy:
             color="white",
             frameon=False,
             size_vertical=1,
-            fontproperties=FontProperties(size=18),
+            fontproperties=FontProperties(size=12),
             path_effects=[
                 PathEffects.withStroke(linewidth=2, foreground="black")
             ],
@@ -7147,12 +7369,12 @@ class ResolvedGalaxy:
             second_last_ax.transData,
             scalebar_as.value / self.im_pixel_scales[bands_to_show[-1]].value,
             f"{re:.1f} kpc",
-            "upper left",
+            "lower left",
             pad=0.3,
             color="white",
             frameon=False,
             size_vertical=1,
-            fontproperties=FontProperties(size=18),
+            fontproperties=FontProperties(size=12),
             path_effects=[
                 PathEffects.withStroke(linewidth=2, foreground="black")
             ],
@@ -7228,11 +7450,20 @@ class ResolvedGalaxy:
         # steal space from ax_pixedfit for colorbar
         ax_divider = make_axes_locatable(ax_pixedfit)
 
-        cax = ax_divider.append_axes("right", size="5%", pad="2%")
-        fig.colorbar(norm, cax=cax, orientation="vertical", label="Bin Number")
+        cax = ax_divider.append_axes("bottom", size="5%", pad="2%")
+        fig.colorbar(
+            norm, cax=cax, orientation="horizontal", label="Bin Number"
+        )
+        # change labelsize
+        cax.xaxis.label.set_size(10)
+        # Set colorbar to only show integer ticklabels
+        from matplotlib.ticker import MaxNLocator
+
+        cax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
         # move colorbar ticks to top
-        cax.yaxis.set_ticks_position("right")
-        cax.yaxis.set_label_position("right")
+        cax.xaxis.set_ticks_position("bottom")
+        cax.xaxis.set_label_position("bottom")
 
         ax_pixedfit.axis("off")
 
@@ -7255,22 +7486,22 @@ class ResolvedGalaxy:
 
         textstr = f"Galaxy {self.galaxy_id}\nRedshift: {z50:.2f}{error}\nBinmap Type: {binmap_type.replace('_', ' ')}\nNumber of bins: {len(np.unique(getattr(self, f'{binmap_type}_map')))-1}"
         fig.text(
-            0.01,
-            0.45,
+            0.05,
+            0.35,
             textstr,
-            transform=fig.transFigure,
-            fontsize=13,
+            transform=fig.transSubfigure,
+            fontsize=box_fontsize,
             verticalalignment="top",
             bbox=props,
         )
         if self.sky_coord is not None:
             textstr = f"RA: {self.sky_coord.ra.degree:.4f}\nDec: {self.sky_coord.dec.degree:.4f}\nCutout size: {self.cutout_size} pix"
             fig.text(
-                0.5,
-                0.45,
+                0.55,
+                0.35,
                 textstr,
-                transform=fig.transFigure,
-                fontsize=13,
+                transform=fig.transSubfigure,
+                fontsize=box_fontsize,
                 verticalalignment="top",
                 bbox=props,
             )
@@ -7283,6 +7514,9 @@ class ResolvedGalaxy:
                 f"{resolved_galaxy_dir}/diagnostic_plots/{self.survey}_{self.galaxy_id}_overview.png",
                 dpi=200,
             )
+
+        if return_ax:
+            return fig, ax_sed
 
         return fig
 
@@ -7597,7 +7831,8 @@ class ResolvedGalaxy:
                 cat_exists = False
 
             if (
-                run_name in self.sed_fitting_table["bagpipes"].keys()
+                "bagpipes" in self.sed_fitting_table.keys()
+                and run_name in self.sed_fitting_table["bagpipes"].keys()
                 and not overwrite
             ):
                 print(
@@ -7605,7 +7840,7 @@ class ResolvedGalaxy:
                 )
                 exist_already = True
 
-            elif np.all(mask == 1) and cat_exists:
+            elif np.all(mask == 1) and cat_exists and not overwrite:
                 print("All files already exist")
                 exist_already = True
             elif np.all(mask == 1) and not cat_exists:
@@ -8212,6 +8447,7 @@ class ResolvedGalaxy:
         show_photometry=False,
         run_dir="pipes/",
         cache=None,
+        resolved_color="tomato",
     ):
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -8262,7 +8498,7 @@ class ResolvedGalaxy:
                         flux_units, equivalencies=u.spectral_density(total_wav)
                     ),
                     label="RESOLVED",
-                    color="tomato",
+                    color=resolved_color,
                 )
                 continue
 
@@ -8274,7 +8510,8 @@ class ResolvedGalaxy:
                     cache=cache,
                     plotpipes_dir=plotpipes_dir,
                 )
-            except FileNotFoundError:
+            except FileNotFoundError as e:
+                print(e)
                 print(f"File not found for {run_name} {rbin} (fit)")
                 continue
 
@@ -9810,6 +10047,12 @@ class ResolvedGalaxy:
             # Remove empty axes
             for i in range(len(parameters), len(axes)):
                 fig.delaxes(axes[i])
+        elif ax is None:
+            # Add axes to match above
+            axes = fig.subplots(1, len(parameters), sharex=False, sharey=False)
+            axes = axes.flatten()
+            fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
+
         else:
             axes = np.array([ax])
         # add gap between rows using get_layout_engine
@@ -10063,7 +10306,7 @@ class ResolvedGalaxy:
                     cbar.set_label(
                         rf"$\rm{{{param_str}}}${unit}",
                         labelpad=10,
-                        fontsize=10,
+                        fontsize=text_fontsize,
                     )
                     # Change cbar scale number size
 
@@ -10449,7 +10692,7 @@ class ResolvedGalaxy:
         self,
         parameter="stellar_mass",
         run_name=None,
-        bins_to_show="all",
+        bins_to_show=["all"],
         save=False,
         run_dir="pipes/",
         facecolor="white",
@@ -10460,7 +10703,20 @@ class ResolvedGalaxy:
         colors=None,
         fig=None,
         axes=None,
+        legend=True,
+        fill_between=False,
+        smooth=True,
+        colors_from_full_dist=True,
+        cmap="cmr.guppy",
+        alpha=1,
+        fontsize=8,
     ):
+        """
+
+        Improved version of the plot_bagpipes_component_comparison function
+
+        """
+
         plotpipes_dir = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), plotpipes_dir
         )
@@ -10481,21 +10737,6 @@ class ResolvedGalaxy:
         ):
             self.load_bagpipes_results(run_name)
 
-        table = self.sed_fitting_table["bagpipes"][run_name]
-
-        bins = []
-        if bins_to_show == "all":
-            show_all = True
-            bins_to_show = table["#ID"]
-            for rbin in bins_to_show:
-                try:
-                    rbin = float(rbin)
-                except:
-                    bins.append(rbin)
-
-        else:
-            show_all = False
-            bins = bins_to_show
         if fig is None:
             fig, ax_samples = plt.subplots(
                 1,
@@ -10504,25 +10745,64 @@ class ResolvedGalaxy:
                 constrained_layout=True,
                 facecolor=facecolor,
             )
+        elif axes is None:
+            ax_samples = fig.add_subplot(111)
+
         else:
             ax_samples = axes
 
         if cache is None:
             cache = {}
 
-        all_samples = []
-        if colors is None:
-            colors = mcm.get_cmap("cmr.guppy", len(bins))
-            colors = {rbin: colors(i) for i, rbin in enumerate(bins)}
-        if type(colors) is list:
-            assert len(colors) == len(
-                bins
-            ), "Need to provide a color for each bin"
-            colors = {rbin: colors[i] for i, rbin in enumerate(bins)}
+        table = self.sed_fitting_table["bagpipes"][run_name]
+
+        bins_to_load = []
+
+        show_combined_pdf = False
+        if "all" in bins_to_show:
+            numbered_bins = []
+            for bin in table["#ID"]:
+                try:
+                    numbered_bins.append(int(bin))
+                except:
+                    pass
+
+            bins_to_load = copy.copy(numbered_bins)
+            show_combined_pdf = True
 
         for rbin in bins_to_show:
-            if rbin == "RESOLVED":
-                continue
+            if rbin not in bins_to_load and rbin != "all":
+                bins_to_load.append(rbin)
+
+        if colors is None:
+            if colors_from_full_dist:
+                colors = mcm.get_cmap(cmap, len(numbered_bins))
+                colors = {
+                    rbin: colors(i) for i, rbin in enumerate(numbered_bins)
+                }
+            else:
+                colors = mcm.get_cmap(cmap, len(bins_to_load))
+                colors = {
+                    rbin: colors(i) for i, rbin in enumerate(bins_to_load)
+                }
+        if type(colors) is list:
+            if colors_from_full_dist:
+                assert len(colors) == len(
+                    numbered_bins
+                ), "Need to provide a color for each bin"
+                colors = {
+                    rbin: colors[i] for i, rbin in enumerate(numbered_bins)
+                }
+            else:
+                assert len(colors) == len(
+                    bins_to_load
+                ), "Need to provide a color for each bin"
+                colors = {
+                    rbin: colors[i] for i, rbin in enumerate(bins_to_load)
+                }
+
+        samples = {}
+        for rbin in bins_to_load:
             try:
                 pipes_obj = self.load_pipes_object(
                     run_name,
@@ -10535,74 +10815,47 @@ class ResolvedGalaxy:
                 print(f"File not found for {run_name} {rbin} (comp_corr)")
                 continue
 
-            bin_number = True
-            try:
-                rbin = float(rbin)
-            except:
-                bin_number = False
-            # This will need to change huh.
-            if show_all:
-                datta = ax_samples if not bin_number else None
-                collors = colors[rbin] if not bin_number else "black"
-                labbels = str(rbin) if not bin_number else None
-                ret_samples = True
-            else:
-                datta = ax_samples
-                collors = colors[rbin]
-                labbels = str(rbin)
-                ret_samples = False
-            # print('parameter', parameter)
-            samples = pipes_obj.plot_pdf(
-                datta,
-                parameter,
-                return_samples=ret_samples,
-                linelabel=labbels,
-                colour=collors,
-                norm_height=True,
+            samples[rbin] = pipes_obj.plot_pdf(
+                ax_samples, parameter, return_samples=True
             )
 
-            if ret_samples:
-                all_samples.append(samples)
-        # Sum all samples
+        for rbin in bins_to_show:
+            if rbin == "all":
+                # Combine PDFs for all of these into an array
+                all_samples = np.array(
+                    [samples[rbin] for rbin in bins_to_load], dtype=object
+                )
+                new_samples = np.zeros((n_draws, len(bins_to_load)))
+                for i, asamples in enumerate(all_samples):
+                    new_samples[:, i] = np.random.choice(
+                        asamples, size=n_draws
+                    )
 
-        if "all" in bins_to_show:
-            all_samples = np.array(all_samples, dtype=object)
-
-            # all_samples = all_samples[~np.isnan(all_samples)]
-            print(f"Combining {len(all_samples)} samples for {parameter}")
-            # all_samples = all_samples.T
-            new_samples = np.zeros((n_draws, len(all_samples)))
-            for i, samples in enumerate(all_samples):
-                # samples = samples[~np.isnan(samples)]
-                new_samples[:, i] = np.random.choice(samples, size=n_draws)
-
-            sum_samples = np.log10(np.sum(10**new_samples, axis=1))
-            # print(len(sum_samples))
-            # Normalize height of histogram
+                sum_samples = np.log10(np.sum(10**new_samples, axis=1))
+            else:
+                sum_samples = samples[rbin]
 
             hist1d(
                 sum_samples,
                 ax_samples,
-                smooth=True,
-                color="black",
+                smooth=smooth,
+                color=colors[rbin],
                 percentiles=False,
                 lw=1,
-                alpha=1,
-                fill_between=False,
+                alpha=alpha,
+                fill_between=fill_between,
                 norm_height=True,
-                label=r"$\Sigma$ Resolved",
             )
 
-        # Fix xticks
-        # ax_samples.set_xticks(np.arange(ax_samples.get_xlim()[0], ax_samples.get_xlim()[1], 0.5))
-        ax_samples.legend(fontsize=6)
+        if legend:
+            ax_samples.legend(fontsize=6)
 
         gunit = self.param_unit(parameter.split(":")[-1])
         unit = f" ({gunit:latex})" if gunit != u.dimensionless_unscaled else ""
         param_str = parameter.replace("_", r" ")
 
-        ax_samples.set_xlabel(f"{param_str} {unit}")
-        # print(f"{param_str} {unit}")
+        ax_samples.set_xlabel(f"{param_str} {unit}", fontsize=fontsize)
+
         return fig, cache
 
     def get_total_resolved_property(
@@ -11164,11 +11417,15 @@ class ResolvedGalaxy:
                         data = f["advanced_quantities"]["spectrum_full"][:]
 
                         self.use_binmap_type = binmap_type
-                        bands = self.provide_bagpipes_phot(
-                            str(rbin),
-                            return_bands=True,
-                            binmap_type=binmap_type,
-                        )
+                        try:
+                            bands = self.provide_bagpipes_phot(
+                                str(rbin),
+                                return_bands=True,
+                                binmap_type=binmap_type,
+                            )
+                        except KeyError:
+                            bands = self.bands
+
                         wav = self._recalculate_bagpipes_wavelength_array(
                             bands=bands
                         )
@@ -11284,7 +11541,7 @@ class ResolvedGalaxy:
         override_psf_type=False,
         depth_file={
             "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
-            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv",
+            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
         },
         det_thresh=1.8,
         minarea=9,
@@ -11875,6 +12132,7 @@ class ResolvedGalaxy:
         bins_to_show="all",
         plotpipes_dir="pipes_scripts/",
         flux_unit=u.ABmag,
+        resolved_color="tomato",
     ):
         """WARNING! NOT USED IN APP"""
         if (
@@ -11945,7 +12203,7 @@ class ResolvedGalaxy:
                     total_wav,
                     total_flux,
                     label="RESOLVED",
-                    color="tomato",
+                    color=resolved_color,
                 )
                 continue
 
@@ -12144,6 +12402,7 @@ class ResolvedGalaxy:
             MUV_Calculator,
             LUV_Calculator,
             SFR_UV_Calculator,
+            Optical_Line_EW_Calculator,
         )
 
         # match property to calculator
@@ -12155,6 +12414,7 @@ class ResolvedGalaxy:
             "MUV": MUV_Calculator,
             "LUV": LUV_Calculator,
             "SFR": SFR_UV_Calculator,
+            "EW": Optical_Line_EW_Calculator,
         }
 
         SED_fit_label = f"{binmap_type}"
@@ -12178,6 +12438,7 @@ class ResolvedGalaxy:
                 "frame",
                 "iters",
             ],
+            "EW": ["strong_line_names", "frame" "rest_optical_wavs"],
         }
         """
         "fesc_from_beta_phot": [
@@ -12217,60 +12478,59 @@ class ResolvedGalaxy:
         )
         property_name = property_calculator.name
 
-        PDFs = [[] for i in range(len(np.unique(map)) - 1)]
+        PDFs = {}  # [[] for i in range(len(np.unique(map)) - 1)]
 
-        for pos, gal_id in enumerate(tqdm(np.unique(map))):
+        for pos, gal_id in enumerate(
+            tqdm(self.galfind_photometry_rest.keys())
+        ):
             if str(gal_id) in ["0", "nan"]:
                 value = np.nan
                 continue
 
-            print(self.galfind_photometry_rest.keys())
-            phot = copy.deepcopy(
-                self.galfind_photometry_rest[str(int(gal_id))]
-            )
+            phot = copy.deepcopy(self.galfind_photometry_rest[gal_id])
             loaded = False
-            for prop_name in property_name:
-                # print('checking', f'{prop_name}')
-                if load_in:
-                    if (
-                        self.photometry_properties is not None
-                        and binmap_type in self.photometry_properties.keys()
-                    ):
-                        for prop_name in self.photometry_properties[
-                            binmap_type
-                        ].keys():
-                            ppdf = np.squeeze(
-                                self.photometry_properties[binmap_type][
-                                    prop_name
-                                ][pos]
+
+            if load_in:
+                if (
+                    self.photometry_properties is not None
+                    and binmap_type in self.photometry_properties.keys()
+                    and property_name
+                    in self.photometry_properties[binmap_type].keys()
+                ):
+                    for prop_name in self.photometry_properties[
+                        binmap_type
+                    ].keys():
+                        ppdf = np.squeeze(
+                            self.photometry_properties[binmap_type][prop_name][
+                                pos
+                            ]
+                        )
+                        kwargs = self.photometry_meta_properties[binmap_type][
+                            prop_name
+                        ]
+                        saved_kwargs = getattr(self, f"{prop_name}_kwargs", {})
+
+                        phot.property_PDFs[prop_name] = PDF.from_1D_arr(
+                            prop_name, ppdf, kwargs=saved_kwargs
+                        )
+
+                        phot._update_properties_from_PDF(prop_name)
+                        loaded = True
+                        if len(ppdf) != iters:
+                            # print(np.shape(pdf), [iters, len(np.unique(map))])
+                            print(
+                                f"PDFs for {prop_name} do not match shape of map, recalculating, {len(ppdf)} != {iters}"
                             )
-                            kwargs = self.photometry_meta_properties[
-                                binmap_type
-                            ][prop_name]
-                            saved_kwargs = getattr(
-                                self, f"{prop_name}_kwargs", {}
-                            )
+                            loaded = False
 
-                            phot.property_PDFs[prop_name] = PDF.from_1D_arr(
-                                prop_name, ppdf, kwargs=saved_kwargs
-                            )
+            if not loaded:
+                property_calculator(phot, n_chains=iters)
 
-                            phot._update_properties_from_PDF(prop_name)
-                            loaded = True
-                            if len(ppdf) != iters:
-                                # print(np.shape(pdf), [iters, len(np.unique(map))])
-                                print(
-                                    f"PDFs for {prop_name} do not match shape of map, recalculating, {len(ppdf)} != {iters}"
-                                )
-                                loaded = False
-
-                if not loaded:
-                    property_calculator(phot, n_chains=iters)
-
-                # if type(param_name) in [tuple, list]:
-                #    param_name = param_name
+            # if type(param_name) in [tuple, list]:
+            #    param_name = param_name
 
             value = phot.properties[property_name]
+            print("value", value)
             # print(param_name, value)
             if type(value) in [
                 u.Quantity,
@@ -12289,9 +12549,28 @@ class ResolvedGalaxy:
                 and phot.property_PDFs[property_name] is not None
             ):
                 out_kwargs = phot.property_PDFs[property_name].kwargs
-                PDFs[pos].append(phot.property_PDFs[property_name].input_arr)
+                arr = phot.property_PDFs[property_name].input_arr
+                # strip unit if given
+                if type(arr) in [u.Quantity, u.Magnitude]:
+                    arr = arr.value
+                arr = np.squeeze(arr)
+                arr = list(arr)
 
-            map[map == gal_id] = value
+                PDFs[gal_id] = arr
+            elif property_name.startswith("beta") and iters == 1:
+                PDFs[gal_id] = [value]
+            else:
+                print(f"PDF not found for {property_name}")
+                print(phot.property_PDFs.keys())
+                print(property_name)
+                value = np.nan
+                PDFs[gal_id] = [np.nan] * iters
+
+            try:
+                gal_id = int(gal_id)
+                map[map == gal_id] = copy.copy(value)
+            except:
+                pass
 
         if density:
             map = self.map_to_density_map(
@@ -12305,12 +12584,45 @@ class ResolvedGalaxy:
 
         label = f"{property} ({unit:latex})"
 
-        if not loaded and n_jobs > 1:
+        if not loaded:
             # for pos, param_name in enumerate(param_names):
-            unit = phot.properties[property_name].unit
-            all_PDFs = np.array(PDFs) * unit
-            out_kwargs = phot.property_PDFs[property_name].kwargs
+            unit = phot.properties[property_name]
+            if type(unit) in [u.Quantity, u.Magnitude]:
+                unit = unit.unit
+            else:
+                unit = u.dimensionless_unscaled
+
+            # Get keys
+            PDF_keys = list(PDFs.keys())
+            PDFs_arr = [PDFs[key] for key in PDF_keys]
+
+            try:
+                all_PDFs = u.Quantity(np.array(PDFs_arr), unit=unit)
+            except Exception as e:
+                print(PDFs)
+                for i in PDFs:
+                    print(np.shape(i))
+                print(len(PDFs))
+                raise e
+
+            # Check if all nan
+            if np.all(np.isnan(all_PDFs)) or (
+                iters > 1
+                and (
+                    property_name not in phot.property_PDFs.keys()
+                    or phot.property_PDFs[property_name] is None
+                )
+            ):
+                print(f"Calculation not possible for {property_name}")
+                return None, None
+            try:
+                out_kwargs = phot.property_PDFs[property_name].kwargs
+                out_kwargs["single_value"] = False
+            except:
+                out_kwargs = {}
+                out_kwargs["single_value"] = True
             out_kwargs["unit"] = unit
+            out_kwargs["PDF_keys"] = PDF_keys
 
             if len(all_PDFs) == 0:
                 raise Exception(
@@ -12377,13 +12689,12 @@ class ResolvedGalaxy:
                     0.95,
                     f"{line_band} - {cont_band}",
                     transform=ax.transAxes,
-                    fontsize=10,
                     horizontalalignment="left",
                     verticalalignment="top",
                     color="black",
                 )
 
-            return fig
+            return fig, ax
 
         return map, out_kwargs
 
@@ -12402,7 +12713,7 @@ class ResolvedGalaxy:
         to_plot = {}
         for em_line in self.available_em_lines:
             map, out_kwargs = self.galfind_phot_property_map(
-                "EW_rest_optical",
+                "EW",
                 plot=False,
                 facecolor=facecolor,
                 strong_line_names=[em_line],
@@ -12762,7 +13073,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         mock_rms_fit_path="",
         depth_file={
             "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
-            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/JOF_depths.ecsv",
+            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
         },
         override_model_assumptions={},
     ):
@@ -13326,7 +13637,6 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             f"{resolved_galaxy_dir}/{mock_survey}_*.h5"
         )
 
-        print(possible_galaxies)
         # Remove those with 'mock' in the name
         possible_galaxies = [g for g in possible_galaxies if "mock" not in g]
 
@@ -14921,9 +15231,12 @@ class ResolvedGalaxies(np.ndarray):
                     ]
                     table = table[table["#ID"] == aperture_label]
                     if color_by[4:] == "burstiness":
-                        value = float(table["sfr_10myr_50"]) / float(
-                            table["sfr_50"]
-                        )
+                        if float(table["sfr_50"]) == 0:
+                            value = np.nan
+                        else:
+                            value = float(table["sfr_10myr_50"]) / float(
+                                table["sfr_50"]
+                            )
                         vals.append(value)
                     else:
                         vals.append(float(table[color_by[4:]][0]))
@@ -15204,6 +15517,12 @@ class ResolvedGalaxies(np.ndarray):
 
         if x_param == "redshift":
             x = galaxy_redshifts
+            x_param_text = u.dimensionless_unscaled
+        elif type(x_param) in [list, tuple, np.ndarray]:
+            x = copy.deepcopy(x_param)
+            x_param_text = u.dimensionless_unscaled
+            x_param = ""
+
         else:
             x = [
                 galaxy.get_total_resolved_property(run_name, property=x_param)[
@@ -15211,14 +15530,23 @@ class ResolvedGalaxies(np.ndarray):
                 ]
                 for galaxy in self.galaxies
             ]
+            x_param_text = self.galaxies[0].param_unit(x_param.split(":")[-1])
 
-        y = [
-            galaxy.get_total_resolved_property(run_name, property=y_param)[1]
-            for galaxy in self.galaxies
-        ]
-
-        x_param_text = self.galaxies[0].param_unit(x_param.split(":")[-1])
-        y_param_text = self.galaxies[0].param_unit(y_param.split(":")[-1])
+        if y_param == "redshift":
+            y = galaxy_redshifts
+            y_param_text = u.dimensionless_unscaled
+        elif type(y_param) in [list, tuple, np.ndarray]:
+            y = copy.deepcopy(y_param)
+            y_param_text = u.dimensionless_unscaled
+            y_param = ""
+        else:
+            y = [
+                galaxy.get_total_resolved_property(run_name, property=y_param)[
+                    1
+                ]
+                for galaxy in self.galaxies
+            ]
+            y_param_text = self.galaxies[0].param_unit(y_param.split(":")[-1])
 
         unitx = (
             f" ({x_param_text:latex})"
@@ -15446,6 +15774,7 @@ class ResolvedGalaxies(np.ndarray):
         load_only=False,  # If set to true, will force reloading of properties and skip running
         properties_to_load=["stellar_mass", "sfr", "sfr_10myr"],
         alert=True,  # If crash, email me!
+        overwrite=False,
         **kwargs,
     ):
         """
@@ -15489,6 +15818,7 @@ class ResolvedGalaxies(np.ndarray):
                     fit_photometry=fit_photometry,
                     run_dir=run_dir,
                     return_run_args=True,
+                    overwrite=overwrite,
                     **kwargs,
                 )
                 for galaxy, bagpipes_config in zip(
@@ -15519,6 +15849,7 @@ class ResolvedGalaxies(np.ndarray):
                     ]
                 )
                 and not load_only
+                and not overwrite
             ):
                 print("All galaxies already run, skipping.")
                 return
@@ -15539,7 +15870,7 @@ class ResolvedGalaxies(np.ndarray):
 
             delete = []
             for key, config in write_configs.items():
-                if config["already_run"]:
+                if config["already_run"] and not overwrite:
                     print(f"Skipping {key} as already run.")
                     delete.append(key)
 
@@ -15580,6 +15911,9 @@ class ResolvedGalaxies(np.ndarray):
             ) or os.path.exists(
                 os.path.join(run_dir, f"cats/{out_subdir_name}.fits")
             )
+            if overwrite:
+                done = False
+
             # also check if .h5 files exist in either location
             for galaxy_id, config in write_configs.items():
                 # Check all IDs and see if .h5 exists in either new or old location
@@ -15690,7 +16024,16 @@ class ResolvedGalaxies(np.ndarray):
                 print("Individual galaxy catalogues found. Skipping.")
                 done = True
 
-            elif os.path.exists(output_catalogue):
+            if overwrite:
+                for galaxy_id, config in write_configs.items():
+                    if os.path.exists(
+                        f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
+                    ):
+                        os.remove(  # Remove old catalogue
+                            f"{os.path.join(run_dir, config['out_dir']).replace('posterior', 'cats')}.fits"
+                        )
+
+            if os.path.exists(output_catalogue):
                 output_catalogue = Table.read(output_catalogue)
                 assert (
                     len(output_catalogue) == n_fits
@@ -15787,7 +16130,7 @@ class ResolvedGalaxies(np.ndarray):
                             os.makedirs(os.path.dirname(new_path))
 
                         if not os.path.exists(old_path) and os.path.exists(
-                            new_path
+                            new_path and not overwrite
                         ):
                             print(
                                 f"Output .h5 found in new location for {id}. Skipping."
@@ -15817,6 +16160,9 @@ class ResolvedGalaxies(np.ndarray):
 
             print("Moving on to loading properties into galaxies.")
             for galaxy, config in zip(self.galaxies, bagpipes_configs):
+                if "bagpipes" not in galaxy.sed_fitting_table.keys():
+                    galaxy.sed_fitting_table["bagpipes"] = {}
+
                 if configs[galaxy.galaxy_id] is None or (
                     run_name in galaxy.sed_fitting_table["bagpipes"].keys()
                 ):  # configs[galaxy.galaxy_id]["already_run"]:

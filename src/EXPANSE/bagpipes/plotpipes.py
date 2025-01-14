@@ -302,7 +302,6 @@ class PipesFitNoLoad:
             items = [items]
         return_items = []
         with h5py.File(self.h5_path, "r") as data:
-            print(self.h5_path)
             for item in items:
                 if item in data.keys():
                     return_items.append(data[item][()])
@@ -361,6 +360,14 @@ class PipesFitNoLoad:
         samples = self._load_item_from_h5(self.fitted_params + extra_samples)
 
         labels = [f"{param}" for param in self.fitted_params + extra_samples]
+
+        # if a label is more than 20 characters, and has a space or a :, add a newline
+        labels = [
+            label
+            if len(label) < 14
+            else label.replace(" ", "\n").replace(":", ":\n")
+            for label in labels
+        ]
 
         samples = np.array(samples).T
         # Make the corner plot
@@ -617,7 +624,6 @@ class PipesFitNoLoad:
         wavelengths = self.wav
 
         redshift = self._get_redshift()
-        print(redshift)
 
         # Get observer frame wavelengths
         wavs = wavelengths * (1 + redshift) * u.AA
@@ -768,6 +774,7 @@ class PipesFitNoLoad:
             sfh_percentiles[1],
             color=colour,
             zorder=3,
+            **kwargs,
         )
 
         ax.fill_between(

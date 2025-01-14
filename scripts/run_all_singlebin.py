@@ -72,11 +72,9 @@ elif computer == "singularity":
     run_dir = "/mnt/pipes/"
 
 field = "JOF_psfmatched"
-load_only = True
+load_only = False
 fit_photometry = "TOTAL_BIN"
 
-
-galaxies_dir += "singlebin/"
 
 try:
     n_jobs = int(sys.argv[1])
@@ -145,13 +143,13 @@ resolved_dicts_bursty = create_dicts(
 
 for dicts in [
     delayed_dicts,
-    continuity_dicts,
-    continuity_bursty_dicts,
-    cnst_dicts,
-    dpl_dicts,
-    lognorm_dicts,
-    resolved_dicts_cnst,
-    resolved_dicts_bursty,
+    # continuity_dicts,
+    # cnst_dicts,
+    # continuity_bursty_dicts,
+    # dpl_dicts,
+    # lognorm_dicts,
+    # resolved_dicts_cnst,
+    # resolved_dicts_bursty,
 ]:
     multiple_galaxies.run_bagpipes_parallel(
         dicts,
@@ -159,9 +157,10 @@ for dicts in [
         fit_photometry=fit_photometry,
         run_dir=run_dir,
         load_only=load_only,
+        overwrite=True,
     )
 
-
+"""
 # # -------------------------------------------------------------------------------------
 
 # Do Resolved_cnst and resolved_bursty again for pixedfit_nomin
@@ -243,3 +242,4 @@ for dicts in [
         load_only=load_only,
         override_binmap_type=binmap_type,
     )
+"""
