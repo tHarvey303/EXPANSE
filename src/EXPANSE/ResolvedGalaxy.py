@@ -10759,14 +10759,15 @@ class ResolvedGalaxy:
         bins_to_load = []
 
         show_combined_pdf = False
-        if "all" in bins_to_show:
-            numbered_bins = []
-            for bin in table["#ID"]:
-                try:
-                    numbered_bins.append(int(bin))
-                except:
-                    pass
 
+        numbered_bins = []
+        for bin in table["#ID"]:
+            try:
+                numbered_bins.append(int(bin))
+            except:
+                pass
+
+        if "all" in bins_to_show:
             bins_to_load = copy.copy(numbered_bins)
             show_combined_pdf = True
 
@@ -12901,8 +12902,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         auto_photometry=None,
         seds=None,
         sfh=None,
+        mock_galaxy_type="synthesizer",
         **kwargs,
     ):
+        self.mock_galaxy_type = mock_galaxy_type
         self.synthesizer_galaxy = synthesizer_galaxy
         self.noise_images = noise_images
         self.property_images = property_images
@@ -13633,232 +13636,17 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                     # Syntheszier can change the size of the image by a few pixels
                     cutout_size = img[key].arr.shape[0]
 
-        possible_galaxies = glob.glob(
-            f"{resolved_galaxy_dir}/{mock_survey}_*.h5"
+        noise_images, rms_err_images, final_images = generate_noise_images(
+            resolved_galaxy_dir,
+            mock_survey,
+            bands,
+            psf_imgs,
+            noise_app_imgs,
+            mock_rms_fit_path,
+            update_cli_interface,
+            debug,
+            cli,
         )
-
-        # Remove those with 'mock' in the name
-        possible_galaxies = [g for g in possible_galaxies if "mock" not in g]
-
-        # only allow wildcard to be a number
-
-        # This bit uses real ResolvedGalaxies to approximate an RMS map
-        ids = [int(g.split("_")[-1].split(".")[0]) for g in possible_galaxies]
-
-        rms_err_images = {}
-        final_images = {}
-
-        loaded = False
-
-        if mock_rms_fit_path != "":
-            if os.path.exists(mock_rms_fit_path):
-                if update_cli_interface:
-                    message = (
-                        f"Loading RMS error fits from {mock_rms_fit_path}"
-                    )
-                    cli.update(current_task=message)
-
-                for band in bands:
-                    data = np.genfromtxt(
-                        f"{mock_rms_fit_path}/{band}_rms_fit.csv",
-                        delimiter=",",
-                    )
-                    f = interp1d(
-                        data[:, 0],
-                        data[:, 1],
-                        bounds_error=False,
-                        fill_value="extrapolate",
-                    )
-                    # Generate RMS err images from unnoised psf images
-                    rms_err_images[band] = f(
-                        psf_imgs[filter_code_from_band[band]].arr
-                    )
-
-                    # Use the images with PSF and noise applied as the final images
-                    final_images[band] = noise_app_imgs[
-                        filter_code_from_band[band]
-                    ].arr
-                loaded = True
-
-        if len(ids) > 0 and not loaded:
-            # ids = ids[:2]
-            if update_cli_interface:
-                message = f"Approximating RMS error maps from {len(ids)} real galaxies."
-                cli.update(current_task=message)
-            else:
-                print(
-                    "Found real ResolvedGalaxies to approximate errors from."
-                )
-                print(f"Using {ids}")
-
-            galaxies = ResolvedGalaxy.init(ids, "JOF_psfmatched", "v11")
-
-            data_type = "PSF"
-            for prog, band in tqdm(enumerate(bands)):
-                if update_cli_interface:
-                    message = f"Generating RMS error fits for {band}"
-                    cli.update(
-                        current_task=message, progress=prog / len(bands)
-                    )
-
-                # Get data to generate RMS error from
-                image_band = noise_app_imgs[filter_code_from_band[band]]
-                unit = image_band.units
-                image_data = image_band.arr * unit
-                # have to do this for conversion
-                image_data = image_data.to_astropy()
-                unit = image_data.unit
-
-                # image_data = image_data.
-                total_err, total_data = [], []
-                for pos, galaxy in tqdm(enumerate(galaxies)):
-                    actual_unit = galaxy.phot_pix_unit
-                    if data_type == "PSF":
-                        if (
-                            band
-                            in galaxy.psf_matched_data["star_stack"].keys()
-                        ):
-                            im = galaxy.psf_matched_data["star_stack"][band]
-                            err = galaxy.psf_matched_rms_err["star_stack"][
-                                band
-                            ]
-
-                        else:
-                            continue
-
-                    elif data_type == "ORIGINAL":
-                        if band in galaxy.unmatched_data.keys():
-                            im = galaxy.unmatched_data[band]
-                            err = galaxy.unmatched_rms_err[band]
-                        else:
-                            continue
-                    else:
-                        breakmeee
-
-                    actual_unit = galaxy.phot_pix_unit[band]
-                    err *= actual_unit
-                    im *= actual_unit
-
-                    # Match units
-                    err = err.to(unit).value
-                    im = im.to(unit).value
-
-                    total_err.extend(list(err.flatten()))
-                    total_data.extend(list(im.flatten()))
-
-                total_data = np.array(total_data)
-                total_err = np.array(total_err)
-
-                # Remove duplicates and reorder
-                unique_x, unique_indices = np.unique(
-                    total_data, return_index=True
-                )
-                x_unique = total_data[unique_indices]
-                y_unique = total_err[unique_indices]
-
-                # Use LOWESS to smooth the data
-                import statsmodels.api as sm
-
-                lowess = sm.nonparametric.lowess(y_unique, x_unique, frac=0.1)
-                # unpack the lowess smoothed points to their values
-                lowess_x = list(zip(*lowess))[0]
-                lowess_y = list(zip(*lowess))[1]
-                if debug:
-                    plt.plot(lowess_x, lowess_y, label="lowess", color="red")
-
-                    plt.scatter(total_data, total_err, s=1)
-                    plt.title(f"{band} RMS error")
-                    plt.show()
-
-                # plt.plot(b.bin_edges[1:], b.statistic, label='binned', color='red')
-
-                f = interp1d(
-                    lowess_x,
-                    lowess_y,
-                    bounds_error=False,
-                    fill_value="extrapolate",
-                )
-                if debug:
-                    print(image_data.max(), np.max(lowess_x))
-                    print(image_data.min(), image_data.max())
-                    print(f(image_data.max()), f(image_data.min()))
-
-                rms_err_images[band] = f(image_data)
-                final_images[band] = image_data
-
-                if mock_rms_fit_path != "":
-                    if not os.path.exists(mock_rms_fit_path):
-                        os.makedirs(mock_rms_fit_path)
-
-                    np.savetxt(
-                        f"{mock_rms_fit_path}/{band}_rms_fit.csv",
-                        np.array([lowess_x, lowess_y]).T,
-                        delimiter=",",
-                    )
-        elif loaded:
-            if update_cli_interface:
-                message = f"Loaded RMS error fits from {mock_rms_fit_path}"
-                cli.update(current_task=message)
-
-        elif len(ids) == 0 and not loaded:
-            # Add rms of noise map as rms_err_iamges
-            raise NotImplementedError("Need to add noise map rms errors")
-
-        if update_cli_interface:
-            cli.update(
-                current_task="Finished approximating RMS error maps.",
-                progress=0,
-            )
-
-        # Generate noise to add from the RMS error
-        noise_images = {}
-        for band in bands:
-            # Generate noise from the RMS error
-            # noise_images[band] = np.random.normal(loc = np.zeros_like(rms_err_images[band]), scale = rms_err_images[band])
-
-            # Compare to the Synthesizer generated noise maps
-            syn_noise = noise_app_imgs[filter_code_from_band[band]].noise_arr
-            # Check it is 2D
-            assert (
-                np.ndim(syn_noise) == 2
-            ), f"Noise map is not 2D {np.shape(syn_noise)}"
-            syn_noise_data = (
-                syn_noise * noise_app_imgs[filter_code_from_band[band]].units
-            )
-            noise_images[band] = syn_noise
-
-            # Need to convert from
-
-            if debug:
-                fig, ax = plt.subplots(
-                    nrows=1,
-                    ncols=3,
-                    figsize=(10, 5),
-                    constrained_layout=True,
-                    facecolor="white",
-                )
-                # one = ax[0].imshow(noise_images[band], origin='lower', cmap='viridis')
-                one = ax[0].imshow(
-                    noise_app_imgs[filter_code_from_band[band]].arr
-                    / rms_err_images[band],
-                    origin="lower",
-                    cmap="viridis",
-                )
-                two = ax[1].imshow(
-                    syn_noise_data, origin="lower", cmap="viridis"
-                )
-                three = ax[2].imshow(
-                    rms_err_images[band], origin="lower", cmap="viridis"
-                )
-
-                ax[0].set_title("SNR")
-                fig.colorbar(one, ax=ax[0])
-                fig.colorbar(two, ax=ax[1])
-                fig.colorbar(three, ax=ax[2])
-                ax[1].set_title("Synthesizer noise")
-                ax[2].set_title("RMS error")
-                fig.suptitle(f"{band} noise comparison")
-                plt.show()
 
         # Would also be good to get the property maps
 
@@ -14035,6 +13823,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             dont_psf_match_bands=[],
             already_psf_matched=False,
             synthesizer_galaxy=gal,
+            mock_galaxy_type="synthesizer",
             # aperture_dict=aperture_dict,
             # auto_photometry=auto_photometry,
             redshift=zed,
@@ -14051,6 +13840,233 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             meta_properties=meta_properties,
             property_images=property_images,
             seds=seds,
+            sfh=None,
+        )
+
+    @classmethod
+    def init_mock_from_sphinx(
+        cls,
+        halo_id,
+        redshift,
+        images_dir,
+        direction=0,
+        data_dir="/raid/scratch/work/tharvey/SPHINX/SPHINX-20-data/",
+        psfs_dir="/nvme/scratch/work/tharvey/PSFs/JOF/",
+        cutout_size="auto",
+        mock_survey="JOF",
+        mock_version="v11",
+        mock_instruments=["ACS_WFC", "NIRCam"],
+        mock_forced_phot_band=["F277W", "F356W", "F444W"],
+        mock_aper_diams=[0.32] * u.arcsec,
+        h5_folder=resolved_galaxy_dir,
+        resolution=0.03,  # in arcsec
+        psf_type="",
+        file_path="/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5",
+        debug=False,
+        mock_rms_fit_path="",
+        depth_file={
+            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
+            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
+        },
+        override_model_assumptions={},
+        bands=[
+            "F090W",
+            "F115W",
+            "F150W",
+            "F162M",
+            "F182M",
+            "F200W",
+            "F210M",
+            "F250M",
+            "F277W",
+            "F300M",
+            "F335M",
+            "F356W",
+            "F410M",
+            "F444W",
+        ],
+        instruments=14 * ["NIRCam"],
+        observatories=14 * ["JWST"],
+    ):
+        galaxy_id = f"{halo_id}_{redshift}_{direction}"
+
+        from .sphinx import (
+            generate_full_images,
+            get_spectra,
+            get_sfh,
+            get_meta,
+        )
+
+        filter_codes = [
+            f"{obs}/{inst}.{band}"
+            for obs, inst, band in zip(observatories, instruments, bands)
+        ]
+
+        filters = Filters(filter_codes)
+
+        filter_code_from_band = {
+            band: code for band, code in zip(self.bands, filter_codes)
+        }
+
+        imgs = generate_full_images(
+            image_dir=images_dir,
+            halo_id=halo_id,
+            redshift=redshift,
+            direction=direction,
+            bands=filt_names,
+            sphinx_data_dir=data_dir,
+        )
+
+        cutout_size = imgs[list(imgs.keys())[0]].arr.shape[0]
+
+        # Images will be an ImageCollection
+        # TODO
+
+        # Currently - have images in unknown pixel size. Will need to rescale to JWST, and
+        # apply PSF. Probably easiest to place these in an image collection using Synthesizer and
+        # then I can reuse code.
+
+        # Add some meta_properties - mass, SFR, beta etc from file
+        # Add true SFH - sfhs dictionary
+        # Add true SED - seds dictionary in uJy, Angstrom units
+
+        psfs = {}
+        files = glob.glob(f"{psfs_dir}/*_psf.fits")
+        bands = [i.split(".")[1] for i in filters.filter_codes]
+        for band, code in zip(bands, filter_codes):
+            psf_file = [f for f in files if band in f][0]
+            psf = fits.open(psf_file)[0].data
+            # Normalise the PSF
+            psf /= np.sum(psf)
+
+            psfs[code] = psf
+
+        # Apply the PSFs
+        psf_imgs = imgs.apply_psfs(psfs)
+
+        snrs = {f: 5 for f in psf_imgs.keys()}
+
+        for pos, key in enumerate(depth_file.keys()):
+            table = Table.read(depth_file[key], format="ascii.ecsv")
+
+            if pos == 0:
+                main_table = table
+            else:
+                main_table = vstack([main_table, table])
+
+        table = main_table
+
+        # Select 'all' region column
+        table = table[table["region"] == "all"]
+        # band_depths:
+        bands = [i.split(".")[1] for i in filters.filter_codes]
+        band_depths = {}
+        for band in bands:
+            row = table[table["band"] == band]
+            data = row["median_depth"]
+            band_depths[band] = data * u.ABmag
+
+        wavs = {
+            f: np.squeeze(filters.pivot_lams[pos].value)
+            for pos, f in enumerate(bands)
+        }
+        # Convert to uJy from AB mag
+        depths = {
+            img_key: band_depths[f]
+            .to(u.uJy, equivalencies=u.spectral_density(wavs))
+            .value
+            * uJy
+            for f, img_key in zip(bands, imgs.keys())
+        }
+
+        depths = {k: v[0] for k, v in depths.items()}
+
+        d_A = (
+            float(cosmo.angular_diameter_distance(redshift).to(u.kpc).value)
+            * kpc
+        )
+
+        radius_kpc = mock_aper_diams[0] * d_A
+
+        radius_kpc = radius_kpc.value / 2 * kpc
+
+        noise_app_imgs = psf_imgs.apply_noise_from_snrs(
+            snrs=snrs, depths=depths, aperture_radius=radius_kpc
+        )
+
+        noise_images, rms_err_images, final_images = generate_noise_images(
+            resolved_galaxy_dir,
+            mock_survey,
+            bands,
+            psf_imgs,
+            noise_app_imgs,
+            mock_rms_fit_path,
+            False,
+            debug,
+            None,
+        )
+
+        # final_images, rms_err_images, noise_images, meta_properties, seds
+        # im_pixel_scales, im_zps, phot_pix_unit
+
+        im_pixel_scales = {band: resolution for band in bands}
+        im_zps = {band: 23.9 for band in bands}
+        phot_pix_unit = {band: u.uJy for band in bands}
+
+        property_images = None
+
+        seds = get_spectra(
+            halo_id,
+            redshift,
+            direction=direction,
+            sphinx_data_dir=spinx_data_dir,
+        )
+        sfhs = get_sfh(
+            halo_id,
+            redshift,
+            direction=direction,
+            sphinx_data_dir=spinx_data_dir,
+        )
+        meta_properties = get_meta(
+            halo_id,
+            redshift,
+            direction=direction,
+            sphinx_data_dir=spinx_data_dir,
+        )
+
+        return cls(
+            galaxy_id,
+            mock_survey,  # done
+            mock_version,  # done
+            instruments=mock_instruments,  # done
+            bands=bands,  # done
+            excl_bands=[],  # done
+            cutout_size=cutout_size,  # done
+            forced_phot_band=mock_forced_phot_band,  # done
+            aper_diams=mock_aper_diams,  # done
+            output_flux_unit=u.uJy,  # done
+            h5_folder=h5_folder,  # done
+            dont_psf_match_bands=[],  # done
+            already_psf_matched=False,  # done
+            synthesizer_galaxy=None,  # done
+            mock_galaxy_type="SPHINX",  # done
+            # aperture_dict=aperture_dict,
+            # auto_photometry=auto_photometry,
+            redshift=redshift,  # done
+            rms_err_imgs=rms_err_images,
+            seg_imgs=None,  # done
+            psf_matched_data=None,  # done
+            psf_matched_rms_err=None,  # done
+            im_pixel_scales=im_pixel_scales,  # done
+            im_zps=im_zps,  # done
+            phot_pix_unit=phot_pix_unit,  # done
+            # det_data=det_data,
+            phot_imgs=final_images,
+            noise_images=noise_images,
+            meta_properties=meta_properties,
+            property_images=property_images,
+            seds=seds,  # done
+            sfh=sfhs,
         )
 
     @classmethod
@@ -16398,3 +16414,229 @@ def run_bagpipes_wrapper(
             )
 
         return None
+
+
+def generate_noise_images(
+    resolved_galaxy_dir,
+    mock_survey,
+    bands,
+    psf_imgs,
+    noise_app_imgs,
+    mock_rms_fit_path,
+    update_cli_interface,
+    debug,
+    cli,
+):
+    possible_galaxies = glob.glob(f"{resolved_galaxy_dir}/{mock_survey}_*.h5")
+
+    # Remove those with 'mock' in the name
+    possible_galaxies = [g for g in possible_galaxies if "mock" not in g]
+
+    # only allow wildcard to be a number
+
+    # This bit uses real ResolvedGalaxies to approximate an RMS map
+    ids = [int(g.split("_")[-1].split(".")[0]) for g in possible_galaxies]
+
+    rms_err_images = {}
+    final_images = {}
+
+    loaded = False
+
+    if mock_rms_fit_path != "":
+        if os.path.exists(mock_rms_fit_path):
+            if update_cli_interface:
+                message = f"Loading RMS error fits from {mock_rms_fit_path}"
+                cli.update(current_task=message)
+
+            for band in bands:
+                data = np.genfromtxt(
+                    f"{mock_rms_fit_path}/{band}_rms_fit.csv",
+                    delimiter=",",
+                )
+                f = interp1d(
+                    data[:, 0],
+                    data[:, 1],
+                    bounds_error=False,
+                    fill_value="extrapolate",
+                )
+                # Generate RMS err images from unnoised psf images
+                rms_err_images[band] = f(
+                    psf_imgs[filter_code_from_band[band]].arr
+                )
+
+                # Use the images with PSF and noise applied as the final images
+                final_images[band] = noise_app_imgs[
+                    filter_code_from_band[band]
+                ].arr
+            loaded = True
+
+    if len(ids) > 0 and not loaded:
+        # ids = ids[:2]
+        if update_cli_interface:
+            message = (
+                f"Approximating RMS error maps from {len(ids)} real galaxies."
+            )
+            cli.update(current_task=message)
+        else:
+            print("Found real ResolvedGalaxies to approximate errors from.")
+            print(f"Using {ids}")
+
+        galaxies = ResolvedGalaxy.init(ids, "JOF_psfmatched", "v11")
+
+        data_type = "PSF"
+        for prog, band in tqdm(enumerate(bands)):
+            if update_cli_interface:
+                message = f"Generating RMS error fits for {band}"
+                cli.update(current_task=message, progress=prog / len(bands))
+
+            # Get data to generate RMS error from
+            image_band = noise_app_imgs[filter_code_from_band[band]]
+            unit = image_band.units
+            image_data = image_band.arr * unit
+            # have to do this for conversion
+            image_data = image_data.to_astropy()
+            unit = image_data.unit
+
+            # image_data = image_data.
+            total_err, total_data = [], []
+            for pos, galaxy in tqdm(enumerate(galaxies)):
+                actual_unit = galaxy.phot_pix_unit
+                if data_type == "PSF":
+                    if band in galaxy.psf_matched_data["star_stack"].keys():
+                        im = galaxy.psf_matched_data["star_stack"][band]
+                        err = galaxy.psf_matched_rms_err["star_stack"][band]
+
+                    else:
+                        continue
+
+                elif data_type == "ORIGINAL":
+                    if band in galaxy.unmatched_data.keys():
+                        im = galaxy.unmatched_data[band]
+                        err = galaxy.unmatched_rms_err[band]
+                    else:
+                        continue
+                else:
+                    breakmeee
+
+                actual_unit = galaxy.phot_pix_unit[band]
+                err *= actual_unit
+                im *= actual_unit
+
+                # Match units
+                err = err.to(unit).value
+                im = im.to(unit).value
+
+                total_err.extend(list(err.flatten()))
+                total_data.extend(list(im.flatten()))
+
+            total_data = np.array(total_data)
+            total_err = np.array(total_err)
+
+            # Remove duplicates and reorder
+            unique_x, unique_indices = np.unique(total_data, return_index=True)
+            x_unique = total_data[unique_indices]
+            y_unique = total_err[unique_indices]
+
+            # Use LOWESS to smooth the data
+            import statsmodels.api as sm
+
+            lowess = sm.nonparametric.lowess(y_unique, x_unique, frac=0.1)
+            # unpack the lowess smoothed points to their values
+            lowess_x = list(zip(*lowess))[0]
+            lowess_y = list(zip(*lowess))[1]
+            if debug:
+                plt.plot(lowess_x, lowess_y, label="lowess", color="red")
+
+                plt.scatter(total_data, total_err, s=1)
+                plt.title(f"{band} RMS error")
+                plt.show()
+
+            # plt.plot(b.bin_edges[1:], b.statistic, label='binned', color='red')
+
+            f = interp1d(
+                lowess_x,
+                lowess_y,
+                bounds_error=False,
+                fill_value="extrapolate",
+            )
+            if debug:
+                print(image_data.max(), np.max(lowess_x))
+                print(image_data.min(), image_data.max())
+                print(f(image_data.max()), f(image_data.min()))
+
+            rms_err_images[band] = f(image_data)
+            final_images[band] = image_data
+
+            if mock_rms_fit_path != "":
+                if not os.path.exists(mock_rms_fit_path):
+                    os.makedirs(mock_rms_fit_path)
+
+                np.savetxt(
+                    f"{mock_rms_fit_path}/{band}_rms_fit.csv",
+                    np.array([lowess_x, lowess_y]).T,
+                    delimiter=",",
+                )
+    elif loaded:
+        if update_cli_interface:
+            message = f"Loaded RMS error fits from {mock_rms_fit_path}"
+            cli.update(current_task=message)
+
+    elif len(ids) == 0 and not loaded:
+        # Add rms of noise map as rms_err_iamges
+        raise NotImplementedError("Need to add noise map rms errors")
+
+    if update_cli_interface:
+        cli.update(
+            current_task="Finished approximating RMS error maps.",
+            progress=0,
+        )
+
+    # Generate noise to add from the RMS error
+    noise_images = {}
+    for band in bands:
+        # Generate noise from the RMS error
+        # noise_images[band] = np.random.normal(loc = np.zeros_like(rms_err_images[band]), scale = rms_err_images[band])
+
+        # Compare to the Synthesizer generated noise maps
+        syn_noise = noise_app_imgs[filter_code_from_band[band]].noise_arr
+        # Check it is 2D
+        assert (
+            np.ndim(syn_noise) == 2
+        ), f"Noise map is not 2D {np.shape(syn_noise)}"
+        syn_noise_data = (
+            syn_noise * noise_app_imgs[filter_code_from_band[band]].units
+        )
+        noise_images[band] = syn_noise
+
+        # Need to convert from
+
+        if debug:
+            fig, ax = plt.subplots(
+                nrows=1,
+                ncols=3,
+                figsize=(10, 5),
+                constrained_layout=True,
+                facecolor="white",
+            )
+            # one = ax[0].imshow(noise_images[band], origin='lower', cmap='viridis')
+            one = ax[0].imshow(
+                noise_app_imgs[filter_code_from_band[band]].arr
+                / rms_err_images[band],
+                origin="lower",
+                cmap="viridis",
+            )
+            two = ax[1].imshow(syn_noise_data, origin="lower", cmap="viridis")
+            three = ax[2].imshow(
+                rms_err_images[band], origin="lower", cmap="viridis"
+            )
+
+            ax[0].set_title("SNR")
+            fig.colorbar(one, ax=ax[0])
+            fig.colorbar(two, ax=ax[1])
+            fig.colorbar(three, ax=ax[2])
+            ax[1].set_title("Synthesizer noise")
+            ax[2].set_title("RMS error")
+            fig.suptitle(f"{band} noise comparison")
+            plt.show()
+
+    return noise_images, rms_err_images, final_images

@@ -3,12 +3,6 @@ from .ResolvedGalaxy import (ResolvedGalaxy,
                             ResolvedGalaxies,
                             run_bagpipes_wrapper)
 
-from .synthesizer_functions import (convert_coordinates,
-                                   apply_pixel_coordinate_mask,
-                                   get_spectra_in_mask,
-                                   calculate_sfh,
-                                   plot_particle_sed)
-
 from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli, PhotometryBandInfo, FieldInfo, compass, measure_cog
 
 from .bagpipes.plotpipes import (calculate_bins, PlotPipes, PipesFit)
@@ -18,6 +12,8 @@ from . import bagpipes
 from . import dense_basis
 
 from . import eazy
+
+from . import synthesizer
 
 from .ResolvedSEDApp import expanse_viewer
 from .NewResolvedSEDApp import expanse_viewer_class
