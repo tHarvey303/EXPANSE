@@ -1053,7 +1053,7 @@ class ResolvedGalaxy:
                 hfile["meta"]["pixel_scales"][()].decode("utf-8")
             )
             im_pixel_scales = {
-                band: u.Quantity(scale)
+                band: u.Quantity(scale, u.arcsec)
                 for band, scale in im_pixel_scales.items()
             }
             phot_pix_unit = ast.literal_eval(
@@ -3481,6 +3481,10 @@ class ResolvedGalaxy:
                     # Copy over the mock galaxy properties if they exist
                     hfile.create_group("mock_galaxy")
 
+                    hfile["mock_galaxy"].attrs["mock_galaxy_type"] = str(
+                        self.mock_galaxy_type
+                    )
+
                     if self.noise_images is not None:
                         hfile["mock_galaxy"].create_group("noise_images")
                         for key in self.noise_images.keys():
@@ -5402,7 +5406,7 @@ class ResolvedGalaxy:
             return fig
 
     def plot_gal_region(
-        self, bin_type="pixedfit", facecolor="white", show=False
+        self, bin_type="detection", facecolor="white", show=False
     ):
         if self.gal_region is None:
             raise ValueError(
@@ -8954,6 +8958,12 @@ class ResolvedGalaxy:
         if plot and legend:
             axes.legend(fontsize=8)
 
+        # Set xlim to maximum age given self.redshift
+        if plot:
+            axes.set_xlim(
+                0, 1.2 * cosmo.age(self.redshift).to(time_unit).value
+            )
+
         # cbar.set_label('Age (Gyr)', labelpad=10)
         # cbar.ax.xaxis.set_ticks_position('top')
         # cbar.ax.xaxis.set_label_position('top')
@@ -9291,6 +9301,10 @@ class ResolvedGalaxy:
         from .eazy.eazy_config import make_params, filter_codes
 
         bands = [band for band in self.bands if band not in exclude_bands]
+        actual_exclude_bands = [
+            band for band in self.bands if band in exclude_bands
+        ]
+
         eazy_path = os.getenv("EAZYCODE", "")
         if not os.path.exists(eazy_path):
             raise ValueError(
@@ -9312,7 +9326,7 @@ class ResolvedGalaxy:
             fluxes.shape[-1] == flux_errs.shape[-1]
         ), "Fluxes and flux errors must have the same number of bands"
         assert (
-            fluxes.shape[-1] == len(self.bands) - len(exclude_bands)
+            fluxes.shape[-1] == len(self.bands) - len(actual_exclude_bands)
         ), f"Fluxes and flux errors must have the same number of bands as the number of bands in the survey. Expected {len(self.bands)} bands, got {fluxes.shape[-1]} bands"
 
         if type(fluxes) is u.Quantity:
@@ -9366,15 +9380,15 @@ class ResolvedGalaxy:
 
             print(params)
 
+            tempfilt_path = f"{save_tempfilt_path}/{self.survey}_{template_name}_{z_min}_{z_max}_{z_step}"
+
+            if exclude_bands:
+                tempfilt_path += f"_exclude_{'_'.join(exclude_bands)}"
+            tempfilt_path += "_tempfilt.pkl"
+
             if load_tempfilt:
                 if tempfilt is None:
                     import pickle
-
-                    tempfilt_path = f"{save_tempfilt_path}/{self.survey}_{template_name}_{z_min}_{z_max}_{z_step}"
-
-                    if exclude_bands:
-                        tempfilt_path += f"_exclude_{'_'.join(exclude_bands)}"
-                    tempfilt_path += "_tempfilt.pkl"
 
                     if os.path.exists(tempfilt_path):
                         with open(tempfilt_path, "rb") as f:
@@ -9395,20 +9409,19 @@ class ResolvedGalaxy:
                 tempfilt=tempfilt,
             )
 
-            if save_tempfilt:
-                print(f"Saving tempfilt to {save_tempfilt_path}")
-                tempfilt = ez.tempfilt.tempfilt
-                if not os.path.exists(save_tempfilt_path):
-                    os.makedirs(save_tempfilt_path)
+            print(f"Saving tempfilt to {save_tempfilt_path}")
+            tempfilt = ez.tempfilt.tempfilt
+            if not os.path.exists(save_tempfilt_path):
+                os.makedirs(save_tempfilt_path)
 
-                # pickle tempfilt
-                import pickle
+            # pickle tempfilt
+            import pickle
 
-                with open(
-                    tempfilt_path,
-                    "wb",
-                ) as f:
-                    pickle.dump(ez.tempfilt, f)
+            with open(
+                tempfilt_path,
+                "wb",
+            ) as f:
+                pickle.dump(ez.tempfilt, f)
 
             ez.fit_catalog(
                 n_proc=n_proc, get_best_fit=True, prior=False, beta_prior=False
@@ -9866,7 +9879,7 @@ class ResolvedGalaxy:
 
         # Process each bin
         for bin_id in np.unique(pixel_map):
-            if bin_id == 0:  # Skip background
+            if bin_id in [0, np.nan] or np.isnan(bin_id):
                 continue
 
             mask = pixel_map == bin_id
@@ -10021,6 +10034,9 @@ class ResolvedGalaxy:
             or "bagpipes" not in self.sed_fitting_table.keys()
             or run_name not in self.sed_fitting_table["bagpipes"].keys()
         ):
+            print(
+                f'{run_name} not in {self.sed_fitting_table["bagpipes"].keys()}'
+            )
             return None
 
         table = self.sed_fitting_table["bagpipes"][run_name]
@@ -10413,13 +10429,13 @@ class ResolvedGalaxy:
                 horizontalalignment="center",
                 bbox=props,
             )
-            if save:
-                fig.savefig(
-                    f"{resolved_galaxy_dir}/{run_name}_maps.png",
-                    dpi=300,
-                    bbox_inches="tight",
-                )
-            return fig
+        if save:
+            fig.savefig(
+                f"{resolved_galaxy_dir}/{run_name}_maps.png",
+                dpi=300,
+                bbox_inches="tight",
+            )
+        return fig
 
     def map_to_density_map_old(
         self,
@@ -10717,6 +10733,10 @@ class ResolvedGalaxy:
 
         """
 
+        # Replace RESOLVED with 'all' in bins_to_show
+
+        bins_to_show = [b if b != "RESOLVED" else "all" for b in bins_to_show]
+
         plotpipes_dir = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), plotpipes_dir
         )
@@ -10786,6 +10806,8 @@ class ResolvedGalaxy:
                 colors = {
                     rbin: colors(i) for i, rbin in enumerate(bins_to_load)
                 }
+
+        print(colors, type(colors))
         if type(colors) is list:
             if colors_from_full_dist:
                 assert len(colors) == len(
@@ -12978,6 +13000,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
             params["save_out"] = save_out
 
+            # Load in mock galaxy type
+            mock_galaxy_type = mock_galaxy.attrs["mock_galaxy_type"]
+            params["mock_galaxy_type"] = mock_galaxy_type
+
             if "synthesizer_galaxy" in mock_galaxy.keys():
                 params["synthesizer_galaxy"] = mock_galaxy[
                     "synthesizer_galaxy"
@@ -13073,7 +13099,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         grid_name="bpass-2.2.1-bin_chabrier03-0.1,300.0_cloudy-c17.03",
         grid_dir="./grids/",
         debug=False,
-        mock_rms_fit_path="",
+        mock_rms_fit_path="/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/",
         depth_file={
             "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
             "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
@@ -13218,7 +13244,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 yr,
             )
 
-            from .synthesizer_functions import (
+            from .synthesizer import (
                 apply_pixel_coordinate_mask,
                 convert_coordinates,
                 get_spectra_in_mask,
@@ -13853,7 +13879,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         data_dir="/raid/scratch/work/tharvey/SPHINX/SPHINX-20-data/",
         psfs_dir="/nvme/scratch/work/tharvey/PSFs/JOF/",
         cutout_size="auto",
-        mock_survey="JOF",
+        mock_survey="JOF_psfmatched",
         mock_version="v11",
         mock_instruments=["ACS_WFC", "NIRCam"],
         mock_forced_phot_band=["F277W", "F356W", "F444W"],
@@ -13863,7 +13889,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         psf_type="",
         file_path="/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5",
         debug=False,
-        mock_rms_fit_path="",
+        mock_rms_fit_path="/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/",
         depth_file={
             "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
             "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
@@ -13888,7 +13914,32 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         instruments=14 * ["NIRCam"],
         observatories=14 * ["JWST"],
     ):
-        galaxy_id = f"{halo_id}_{redshift}_{direction}"
+        """
+        Initialize a mock galaxy from SPHINX data.
+
+        Parameters
+        ----------
+        halo_id : str
+            The halo ID of the galaxy.
+        redshift : float
+            The redshift of the galaxy.
+        images_dir : str
+            The directory containing the .npy images.
+        direction : int, optional
+            The observation direction of the galaxy. Default is 0.
+        data_dir : str, optional
+            The directory containing the SPHINX data. Default is "/raid/scratch/work/tharvey/SPHINX/SPHINX-20-data/".
+        psfs_dir : str, optional
+            The directory containing the PSF files. Default is "/nvme/scratch/work/tharvey/PSFs/JOF/".
+        cutout_size : str, optional
+            The size of the cutout. Default is "auto".
+        mock_survey : str, optional
+            The survey of the mock galaxy. Default is "JOF".
+
+
+
+        """
+        galaxy_id = f"{redshift}_{halo_id}_{direction}_mock"
 
         from .sphinx import (
             generate_full_images,
@@ -13902,10 +13953,13 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             for obs, inst, band in zip(observatories, instruments, bands)
         ]
 
-        filters = Filters(filter_codes)
+        from synthesizer.filters import FilterCollection as Filters
+        from unyt import arcsec, kpc, uJy
+
+        filters = Filters(filter_codes, verbose=False)
 
         filter_code_from_band = {
-            band: code for band, code in zip(self.bands, filter_codes)
+            band: code for band, code in zip(bands, filter_codes)
         }
 
         imgs = generate_full_images(
@@ -13913,9 +13967,17 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             halo_id=halo_id,
             redshift=redshift,
             direction=direction,
-            bands=filt_names,
+            bands=bands,
             sphinx_data_dir=data_dir,
+            out_pixel_scale=resolution * u.arcsec,
         )
+        # Change dict key from band to code
+        new_dict = {}
+        for key in imgs.keys():
+            new_key = filter_code_from_band[key]
+            new_dict[new_key] = imgs.imgs[key]
+
+        imgs.imgs = new_dict
 
         cutout_size = imgs[list(imgs.keys())[0]].arr.shape[0]
 
@@ -13940,6 +14002,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             psf /= np.sum(psf)
 
             psfs[code] = psf
+
+        assert len(psfs) == len(
+            bands
+        ), f"Not all PSFs found, {len(psfs)} found, {len(bands)} expected."
 
         # Apply the PSFs
         psf_imgs = imgs.apply_psfs(psfs)
@@ -14004,6 +14070,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             False,
             debug,
             None,
+            filter_code_from_band,
         )
 
         # final_images, rms_err_images, noise_images, meta_properties, seds
@@ -14019,19 +14086,20 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             halo_id,
             redshift,
             direction=direction,
-            sphinx_data_dir=spinx_data_dir,
+            sphinx_data_dir=data_dir,
         )
         sfhs = get_sfh(
             halo_id,
             redshift,
             direction=direction,
-            sphinx_data_dir=spinx_data_dir,
+            sphinx_data_dir=data_dir,
         )
         meta_properties = get_meta(
             halo_id,
             redshift,
+            image_dir=images_dir,
             direction=direction,
-            sphinx_data_dir=spinx_data_dir,
+            sphinx_data_dir=data_dir,
         )
 
         return cls(
@@ -14078,6 +14146,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         gal_id=None,
         galaxy_name=None,
         galaxy_index=None,
+        direction=None,
+        images_dir=None,
         overwrite=False,
         h5_folder=resolved_galaxy_dir,
         save_out=True,
@@ -14091,9 +14161,20 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             and (redshift_code is not None)
             and (gal_id is not None)
             or (galaxy_name is not None)
+            or (
+                mock_survey is not None
+                and direction is not None
+                and gal_id is not None
+                and redshift_code is not None
+                and images_dir is not None
+            )
         ), "Need to provide either galaxy_id or mock_survey, redshift_code, and galaxy_index"
         if galaxy_name is not None:
             galaxy_id = f"{mock_survey}_{redshift_code}_{galaxy_name}_mock"
+        elif direction is not None:
+            galaxy_id = (
+                f"{mock_survey}_{redshift_code}_{gal_id}_{direction}_mock"
+            )
         elif gal_id is not None:
             galaxy_id = (
                 f"{mock_survey}_{redshift_code}_{gal_region}_{gal_id}_mock"
@@ -14112,21 +14193,37 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 galaxy_id, h5_folder=h5_folder, save_out=save_out
             )
         else:
-            print("Generating from synthesizer.")
-            return cls.init_mock_from_synthesizer(
-                redshift_code,
-                gal_region=gal_region,
-                gal_id=gal_id,
-                h5_folder=h5_folder,
-                galaxy_index=galaxy_index,
-                mock_survey=mock_survey,
-                **kwargs,
-            )
+            generate_from = "synthesizer"
+            if (
+                direction is not None
+                and galaxy_name is not None
+                and redshift_code is not None
+                and image_dir is not None
+            ):
+                generate_from = "sphinx"
 
-    @classmethod
-    def init_mock_from_sphinx(cls):
-        # TODO: Implement this method
-        raise NotImplementedError("Need to implement this method.")
+            if generate_from == "synthesizer":
+                print("Generating from synthesizer.")
+                return cls.init_mock_from_synthesizer(
+                    redshift_code,
+                    gal_region=gal_region,
+                    gal_id=gal_id,
+                    h5_folder=h5_folder,
+                    galaxy_index=galaxy_index,
+                    mock_survey=mock_survey,
+                    **kwargs,
+                )
+            elif generate_from == "sphinx":
+                print("Generating from SPHINX.")
+                return cls.init_mock_from_sphinx(
+                    halo_id=gal_id,
+                    redshift=redshift_code,
+                    images_dir=images_dir,
+                    direction=direction,
+                    h5_folder=h5_folder,
+                    mock_survey=mock_survey,
+                    **kwargs,
+                )
 
     @classmethod
     def init_all_field_from_h5(
@@ -14177,7 +14274,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
     ):
         # Function to save a regenerated Synthesizer SED (maybe with overridden parameters) to self.seds and the h5 file
         from unyt import uJy, Angstrom
-        from .synthesizer_functions import get_spectra_in_mask
+        from .synthesizer import get_spectra_in_mask
 
         if save_name != "" and save_name[-1] != "_":
             save_name += "_"
@@ -14349,6 +14446,19 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             else:
                 lab = ""
             wav = self.seds["wav"] * u.Angstrom
+            if len(components) == 1 and component not in self.seds.keys():
+                if len(self.seds.keys()) == 2:
+                    # Get one which isn't wav
+                    component = [
+                        key for key in self.seds.keys() if key != "wav"
+                    ][0]
+                    print(
+                        f"Component {component} not found. Using {component} instead."
+                    )
+                else:
+                    raise ValueError(
+                        f"Component {component} not found in self.seds"
+                    )
             flux = self.seds[component]["total"] * u.uJy
             ax.plot(
                 wav.to(wav_unit),
@@ -14616,7 +14726,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 yr,
             )
 
-            from .synthesizer_functions import (
+            from .synthesizer import (
                 apply_pixel_coordinate_mask,
                 convert_coordinates,
                 get_spectra_in_mask,
@@ -14937,19 +15047,22 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         )
 
         props = dict(boxstyle="square", facecolor="white", alpha=0.5)
-
-        mask_mass = self.synthesizer_property_in_mask(
-            "stellar_mass",
-            mask_name="pixedfit",
-            density=False,
-            return_total=True,
-        )
-        if type(mask_mass) is u.Quantity:
-            mask_mass = mask_mass.value
+        mask_mass = None
+        if self.mock_galaxy_type == "synthesizer":
+            mask_mass = self.synthesizer_property_in_mask(
+                "stellar_mass",
+                mask_name="pixedfit",
+                density=False,
+                return_total=True,
+            )
+            if type(mask_mass) is u.Quantity:
+                mask_mass = mask_mass.value
 
         total_mass = float(self.meta_properties["stellar_mass"])
 
-        textstr = f"True Properties\nRedshift: {self.redshift:.2f}\nM$_\star (tot)$:{np.log10(total_mass):.2f} M$_\odot$\nM$_\star (seg)$:{np.log10(mask_mass):.2f} M$_\odot$"
+        textstr = f"True Properties\nRedshift: {self.redshift:.2f}\nM$_\star (tot)$:{np.log10(total_mass):.2f}$"
+        if mask_mass is not None:
+            textstr += "$M$_\odot$\nM$_\star (seg)$:{np.log10(mask_mass):.2f} M$_\odot$"
         fig.text(
             0.5,
             0.45,
@@ -14978,10 +15091,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
     def plot_bagpipes_sfh(
         self,
         run_name=None,
-        bins_to_show=["RESOLVED"],
+        bins_to_show="RESOLVED",
         save=False,
         facecolor="white",
         marker_colors="black",
+        resolved_color="tomato",
         time_unit="Gyr",
         cmap="viridis",
         plotpipes_dir="pipes_scripts/",
@@ -14990,9 +15104,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         cache=None,
         fig=None,
         axes=None,
-        add_true=True,
-        mask="pixedfit",
+        plot=True,
         force=False,
+        overwrite=False,
+        legend=True,
+        mask="pixedfit",
+        **kwargs,
     ):
         # Call parent method
 
@@ -15011,7 +15128,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             fig=fig,
             axes=axes,
         )
-        if add_true:
+        if add_true and plot:
             axes = fig.get_axes()
             if len(axes) == 1:
                 axes = axes[0]
@@ -15019,7 +15136,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 if "True SFH" not in [l.get_label() for l in axes.get_lines()]:
                     # Plot the true SFH
                     self.plot_real_sfh(
-                        mask={"attr": "gal_region", "key": "pixedfit"},
+                        mask={"attr": "gal_region", "key": mask},
                         ax=axes,
                         fig=fig,
                         time_unit=time_unit,
@@ -15055,7 +15172,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
 
                 mask = mask.astype(bool)
 
-            from .synthesizer_functions import calculate_sfh
+            from .synthesizer import calculate_sfh
 
             if self.synthesizer_galaxy is None:
                 self.regenerate_synthesizer_galaxy(basic=True)
@@ -16426,6 +16543,7 @@ def generate_noise_images(
     update_cli_interface,
     debug,
     cli,
+    filter_code_from_band,
 ):
     possible_galaxies = glob.glob(f"{resolved_galaxy_dir}/{mock_survey}_*.h5")
 

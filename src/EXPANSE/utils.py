@@ -86,6 +86,8 @@ def scale_fluxes(
     else:
         flux_auto = mag_auto
         flux_aper = mag_aper
+
+    print(flux_auto, flux_aper, scale_factor)
     if (scale_factor > 1) and flux_auto > flux_aper:
         factor = flux_auto / flux_aper
         clip = False

@@ -716,6 +716,7 @@ class GalaxyTab(param.Parameterized):
                 run_name=self.which_run_resolved,
                 norm=self.norm,
                 weight_mass_sfr=self.upscale_select,
+                show_info=False,
             )
 
             if sed_results_plot is not None:
@@ -1142,7 +1143,9 @@ class GalaxyTab(param.Parameterized):
         ]
         actual_options = [i.replace("_50", "") for i in options]
         dist_options = [i for i in options if i.endswith("50")]
-        self.pdf_param_property = [i.replace("_50", "") for i in dist_options]
+        self.pdf_param_property_widget.options = [
+            i.replace("_50", "") for i in dist_options
+        ]
         # self.pdf_param_property.object = dist_options
 
         self.other_bagpipes_properties_widget.options = actual_options
@@ -1184,6 +1187,7 @@ class GalaxyTab(param.Parameterized):
                 run_name=p_run_name,
                 norm=norm_param,
                 total_params=total_params,
+                show_info=False,
             )
 
         if fig is not None:
@@ -2294,8 +2298,6 @@ class GalaxyTab(param.Parameterized):
             self.which_run_resolved = options_resolved[0]
         if len(options_aperture) > 0:
             self.which_run_aperture = options_aperture[0]
-        print("resolved")
-        print(self.which_run_resolved)
 
         return pn.Column(
             self.which_run_resolved_widget, self.which_run_aperture_widget
@@ -2337,10 +2339,14 @@ class GalaxyTab(param.Parameterized):
                 norm = Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))
 
                 cmap = cm.get_cmap(cmap)
-                colors_bins = [
-                    cmap(norm(rbin)) if rbin != "RESOLVED" else "black"
+                colors_bins = {
+                    rbin: cmap(norm(rbin)) if rbin != "RESOLVED" else "red"
                     for pos, rbin in enumerate(multi_choice_bins_param_safe)
-                ]
+                }
+                if "RESOLVED" in colors_bins.keys():
+                    colors_bins["all"] = colors_bins["RESOLVED"]
+
+                print("colors_bins", type(colors_bins))
                 fig, _ = (
                     self.resolved_galaxy.plot_bagpipes_component_comparison(
                         parameter=self.pdf_param_property,
@@ -2363,10 +2369,10 @@ class GalaxyTab(param.Parameterized):
                 and self.which_run_aperture
                 in self.resolved_galaxy.sed_fitting_table["bagpipes"].keys()
             ):
-                colors_total = [
-                    self.TOTAL_FIT_COLORS[rbin]
+                colors_total = {
+                    rbin: self.TOTAL_FIT_COLORS[rbin]
                     for rbin in self.total_fit_options
-                ]
+                }
 
                 fig, _ = (
                     self.resolved_galaxy.plot_bagpipes_component_comparison(
@@ -2802,7 +2808,7 @@ class GalaxyTab(param.Parameterized):
             )
 
             colors_bins = [
-                cmap(norm(rbin)) if rbin != "RESOLVED" else "black"
+                cmap(norm(rbin)) if rbin != "RESOLVED" else "red"
                 for rbin in multi_choice_bins_param_safe
             ]
             colors_total = [

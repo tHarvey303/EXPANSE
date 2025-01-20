@@ -784,6 +784,7 @@ class PipesFitNoLoad:
             color=colour,
             alpha=0.3,
             zorder=2,
+            lw=0,
         )
 
         if modify_ax:
