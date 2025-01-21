@@ -1751,12 +1751,12 @@ class ResolvedGalaxy:
                             upper = (
                                 svo_table[mask]["WavelengthCen"]
                                 + svo_table[mask]["FWHM"] / 2.0
-                            )
+                            )[0]
                             lower = (
                                 svo_table[mask]["WavelengthCen"]
                                 - svo_table[mask]["FWHM"] / 2.0
-                            )
-                            range = (lower * wav.unit, upper * wav.unit)
+                            )[0]
+                            range = (lower, upper) * wav.unit
 
                             if len(wav) > 1:
                                 raise Exception(
@@ -5098,7 +5098,7 @@ class ResolvedGalaxy:
                 # print(f'Skipping {band} as it is not in {only_snr_instrument}')
                 no_SNR_requirement.append(band)
 
-            if self.filter_ranges[band][1] < min_snr_wav_obs:
+            if self.filter_ranges[band][0] < min_snr_wav_obs:
                 no_SNR_requirement.append(band)
             """
             if self.filter_ranges[band][1] > min_snr_wav_obs and self.filter_ranges[band][1] - min_snr_wav_obs < delta_wav:
@@ -13001,7 +13001,11 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             params["save_out"] = save_out
 
             # Load in mock galaxy type
-            mock_galaxy_type = mock_galaxy.attrs["mock_galaxy_type"]
+            try:
+                mock_galaxy_type = mock_galaxy.attrs["mock_galaxy_type"]
+            except KeyError:
+                mock_galaxy_type = "synthesizer"
+
             params["mock_galaxy_type"] = mock_galaxy_type
 
             if "synthesizer_galaxy" in mock_galaxy.keys():
@@ -14449,11 +14453,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             if len(components) == 1 and component not in self.seds.keys():
                 if len(self.seds.keys()) == 2:
                     # Get one which isn't wav
+                    initial_component = component
                     component = [
                         key for key in self.seds.keys() if key != "wav"
                     ][0]
                     print(
-                        f"Component {component} not found. Using {component} instead."
+                        f"Component {initial_component} not found. Using {component} instead."
                     )
                 else:
                     raise ValueError(
@@ -15109,11 +15114,12 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         overwrite=False,
         legend=True,
         mask="pixedfit",
+        add_true=True,
         **kwargs,
     ):
         # Call parent method
 
-        fig, cache = super().plot_bagpipes_sfh(
+        out = super().plot_bagpipes_sfh(
             run_name=run_name,
             bins_to_show=bins_to_show,
             save=save,
@@ -15127,7 +15133,16 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             cache=cache,
             fig=fig,
             axes=axes,
+            plot=plot,
+            force=force,
+            overwrite=overwrite,
+            legend=legend,
         )
+        if out is not None:
+            fig, cache = out
+        else:
+            return None
+            
         if add_true and plot:
             axes = fig.get_axes()
             if len(axes) == 1:
@@ -16171,6 +16186,8 @@ class ResolvedGalaxies(np.ndarray):
                 assert (
                     len(output_catalogue) == n_fits
                 ), f"Catalogue length mismatch - {len(output_catalogue)} vs {n_fits}"
+            elif done:
+                print("Catalogue already exists. Skipping.")
             else:
                 raise FileNotFoundError(
                     f"Could not find output catalogue at {output_catalogue}"
@@ -16297,8 +16314,8 @@ class ResolvedGalaxies(np.ndarray):
                     galaxy.sed_fitting_table["bagpipes"] = {}
 
                 if configs[galaxy.galaxy_id] is None or (
-                    run_name in galaxy.sed_fitting_table["bagpipes"].keys()
-                ):  # configs[galaxy.galaxy_id]["already_run"]:
+                    run_name in galaxy.sed_fitting_table["bagpipes"].keys() and not load_only):
+                    # configs[galaxy.galaxy_id]["already_run"]:
                     continue
 
                 run_name = config["meta"]["run_name"]

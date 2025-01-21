@@ -559,7 +559,10 @@ def resize(img, out_pix_scale=0.03 * u.arcsec, in_pix_scale=0.03 * u.arcsec):
         boundary_mode="constant",
         boundary_fill_value=0.0,
     )
-
+    # Check flux matches witin 1%
+    assert np.isclose(
+        np.nansum(img), np.nansum(img_out), rtol=0.01, atol=0.0), f"Flux mismatch by {np.abs(np.nansum(img) - np.nansum(img_out))/np.nansum(img):.5f}%"
+    
     # Apply footprint mask to remove edge artifacts
     # img_out[footprint < 0.8] = np.nan
 
