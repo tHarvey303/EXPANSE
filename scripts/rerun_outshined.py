@@ -105,7 +105,7 @@ ids = [
     "906",
     "9078",
 ]
-galaxies_lowmass = galaxies.filter_ids(ids)
+galaxies_lowmass = galaxies.filter_IDs(ids)
 
 """
 table = galaxies.save_to_fits(save=False)
