@@ -58,6 +58,53 @@ def update_mpl(tex_on=True):
         mpl.rcParams["text.usetex"] = False
 
 
+def calculate_distance_to_bin_from_center(
+    bin_map, center, value, type="mean", weight_map=None, scale=None
+):
+    """
+    Given a binmap, where background is 0, and positive integer values are different bins on the map,
+    calculate the average scalar distance from the center to all points with the given value.
+
+
+    """
+
+    bin_map = copy.deepcopy(bin_map)
+
+    # Calculate the distance from the center to each point in the bin map
+
+    y, x = np.indices(bin_map.shape)
+
+    distances = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
+
+    # Mask the distances to only include the points with the given value
+
+    distances = np.ma.masked_where(bin_map != value, distances)
+
+    # Calculate the average distance
+
+    if type == "mean":
+        value = np.mean(distances)
+    elif type == "median":
+        value = np.median(distances)
+    elif type == "max":
+        value = np.max(distances)
+    elif type == "min":
+        value = np.min(distances)
+    elif type == "weighted_mean":
+        assert (
+            weight_map is not None
+        ), "Must provide a weight map for weighted mean"
+        # Get values for value from weight map
+        weights = np.ma.masked_where(bin_map != value, weight_map)
+        # Calculate the weighted mean
+        value = np.ma.average(distances, weights=weights)
+
+    if scale is not None:
+        value = value * scale
+
+    return value
+
+
 def scale_fluxes(
     mag_aper,
     mag_auto,

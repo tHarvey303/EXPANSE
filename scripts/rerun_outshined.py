@@ -56,7 +56,7 @@ bagpipes_runs = [
     "photoz_dpl",
     "photoz_continuity",
 ]
-binmap_type = "voronoi"
+binmap_type = "pixel_by_pixel"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
@@ -67,6 +67,47 @@ try:
 except:
     n_jobs = 6
 
+ids = [
+    "10092",
+    "10130",
+    "10161",
+    "10376",
+    "10816",
+    "10896",
+    "11482",
+    "11600",
+    "12050",
+    "12488",
+    "12779",
+    "12816",
+    "13892",
+    "1623",
+    "1951",
+    "2015",
+    "2439",
+    "2643",
+    "2994",
+    "3398",
+    "3434",
+    "3845",
+    "3908",
+    "4234",
+    "4266",
+    "531",
+    "6074",
+    "615",
+    "6744",
+    "7155",
+    "7526",
+    "7687",
+    "845",
+    "8854",
+    "906",
+    "9078",
+]
+galaxies_lowmass = galaxies.filter_ids(ids)
+
+"""
 table = galaxies.save_to_fits(save=False)
 
 
@@ -112,6 +153,7 @@ masses = [
     galaxy.get_total_resolved_property(resolved_run)[1] for galaxy in galaxies
 ]
 galaxies_lowmass = galaxies[np.array(masses) < 9]
+"""
 
 """
 for galaxy in galaxies_outshined:
@@ -153,7 +195,7 @@ resolved_dicts_bursty = create_dicts(
 
 for dicts in [
     resolved_dicts_cnst,
-    resolved_dicts_bursty,
+    # resolved_dicts_bursty,
 ]:
     galaxies_lowmass.run_bagpipes_parallel(
         dicts,

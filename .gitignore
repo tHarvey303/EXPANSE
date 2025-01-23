@@ -4,8 +4,10 @@ psfs/webbpsf/
 __pycache__/*
 crop_*
 stamp_*
+*.fits
 galaxies/temp/*.fits
 galaxies/*.fits
+galaxies/*
 galaxies/mock
 galaxies/mock_nonoise
 galaxies/mock*

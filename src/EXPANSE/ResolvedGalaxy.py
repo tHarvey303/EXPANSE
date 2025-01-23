@@ -1382,6 +1382,12 @@ class ResolvedGalaxy:
                                     value = float(value)
                                 except:
                                     pass
+
+                                try:
+                                    value = ast.literal_eval(value)
+                                except:
+                                    pass
+
                                 pymeta[mkey] = value
 
                     pysersic_results[key]["meta"] = pymeta
@@ -2308,8 +2314,17 @@ class ResolvedGalaxy:
             # Get pixel coordinates where region is True
             region_mask = self.gal_region[mask_type]
             mask = ~region_mask.astype(bool)
+        elif mask_type.startswith("seg_"):
+            # Get segmentation map
+            seg_map = copy.deepcopy(self.seg_imgs[mask_type[4:]])
+            # Get center value, mask only pixels which aren't background or this value
+            center = np.array(seg_map.shape) // 2
+            center_val = seg_map[center[0], center[1]]
+            seg_map[seg_map == center_val] = 0
+            seg_map[seg_map > 0] = 1
+            mask = seg_map.astype(bool)
 
-        if mask_type in self.bands:
+        elif mask_type in self.bands:
             # Get segmentation map
             seg_map = copy.deepcopy(self.seg_imgs[mask_type])
             # If multiple objects, set all but the central object to 1. All other pixels are 0.
@@ -2319,7 +2334,6 @@ class ResolvedGalaxy:
                     seg_map == seg_map[center[0], center[1]], 1, 0
                 )
             mask = seg_map.astype(bool)
-
         elif mask_type is None:
             mask = None
         else:
@@ -2410,9 +2424,7 @@ class ResolvedGalaxy:
             results_quantiles = results.retrieve_param_quantiles(
                 return_dataframe=False, quantiles=quantiles
             )
-            results_quantiles = {
-                k: float(v) for k, v in results_quantiles.items()
-            }
+            results_quantiles = {k: v for k, v in results_quantiles.items()}
 
             from pysersic.rendering import (
                 FourierRenderer,
@@ -2496,8 +2508,6 @@ class ResolvedGalaxy:
             "posterior_sample_method": posterior_sample_method,
         }
 
-        print(meta)
-
         self.pysersic_results[name] = {
             "meta": meta,
             "model": model,
@@ -2506,7 +2516,11 @@ class ResolvedGalaxy:
         if save_chains:
             chains = fitter.svi_results.get_chains()
             self.add_to_h5(
-                chains, f"pysersic/{name}/", "chains", overwrite=overwrite
+                chains,
+                f"pysersic/{name}/",
+                "chains",
+                overwrite=overwrite,
+                force=force,
             )
             self.pysersic_results[name]["chains"] = chains
 
@@ -5980,21 +5994,71 @@ class ResolvedGalaxy:
 
         if hasattr(self, "use_psf_type") and override_psf_type is None:
             psf_type = self.use_psf_type
-        galaxy_region = np.zeros_like(
-            self.psf_matched_data[psf_type][band_req]
-        )
 
-        snr_map = (
-            self.psf_matched_data[psf_type][band_req]
-            / self.psf_matched_rms_err[psf_type][band_req]
-        )
-        galaxy_region[snr_map > snr_req] = 1
+        if type(band_req) in [list, np.ndarray] or "all" in band_req:
+            band_req_temp = self.bands
+
+            if "_wide" in band_req:
+                band_req_temp = [
+                    band for band in band_req_temp if band.endswith("W")
+                ]
+            if "_nobreak" in band_req:
+                no_use_bands = self._calculate_min_wav_band(
+                    min_snr_wav=1217 * u.AA,
+                    only_snr_instrument="NIRCam",
+                    redshift=self.redshift,
+                )
+                band_req_temp = [
+                    band for band in band_req_temp if band not in no_use_bands
+                ]
+
+            band_req_use = band_req_temp
+
+            # Require in all bands
+            galaxy_region = np.ones_like(
+                self.psf_matched_data[psf_type][band_req_use[0]]
+            )
+            for band in band_req_use:
+                snr_map = (
+                    self.psf_matched_data[psf_type][band]
+                    / self.psf_matched_rms_err[psf_type][band]
+                )
+                snr_mask = snr_map > snr_req
+                galaxy_region = galaxy_region * snr_mask
+
+        elif type(band_req) is str and band_reg in self.bands:
+            band_req_use = band_req
+
+            galaxy_region = np.zeros_like(
+                self.psf_matched_data[psf_type][band_req_use]
+            )
+
+            snr_map = (
+                self.psf_matched_data[psf_type][band_req_use]
+                / self.psf_matched_rms_err[psf_type][band_req_use]
+            )
+            snr_mask = snr_map > snr_req
+            galaxy_region[snr_mask] = 1
+        else:
+            raise ValueError(
+                f"band_req {band_req} not found in bands {self.bands} or not understood"
+            )
 
         if mask is not None:
+            if type(mask) is str:
+                if mask in self.gal_region.keys():
+                    mask = self.gal_region[mask]
+                else:
+                    raise ValueError(
+                        f"Mask {mask} not found in galaxy region: {self.gal_region.keys()}"
+                    )
             assert np.shape(mask) == np.shape(galaxy_region)
             galaxy_region[mask == 0] = 0
 
         if region_name == "auto":
+            if type(band_req) is list:
+                band_req = "_".join(band_req)
+
             region_name = f"SNR_{snr_req}_{band_req}"
 
         self.add_to_h5(
@@ -6930,9 +6994,9 @@ class ResolvedGalaxy:
         """
 
         if fig is None:
-            fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 5), dpi=100)
+            fig, axs = plt.subplots(nrows=1, ncols=1, figsize=(10, 5), dpi=100)
         if axs is None:
-            axs = fig.subplots(nrows=1, ncols=2)
+            axs = fig.subplots(nrows=1, ncols=1)
 
         if output_radial_units == "pix":
             pix_scale = 1 * u.pix
@@ -6948,27 +7012,27 @@ class ResolvedGalaxy:
                 z = z_for_scale
 
             d_A = cosmo.angular_diameter_distance(z).to(u.kpc)
-            pixel_size = self.im_pixel_scales[self.bands[-1]].to(u.arcsec)
+            pixel_size = self.im_pixel_scales[self.bands[-1]].to(u.rad).value
             pix_scale = (d_A * pixel_size).to(u.kpc)
         else:
             raise ValueError(
                 f"Output radial units {output_radial_units} not recognised"
             )
 
-        axs[1].set_xlabel("Radius (pixels)")
+        axs.set_xlabel("Radius (pixels)")
         y_label = "Radial Profile"
 
         if center == "auto":
-            axs[0].set_title("Centre of Image")
+            axs.set_title("Centre of Image")
             center = (self.cutout_size / 2, self.cutout_size / 2)
         elif center == "peak":
-            axs[0].set_title("Peak Center")
+            axs.set_title("Peak Center")
             center = np.unravel_index(np.argmax(map), map.shape)
             # Reverse x and y
             center = (center[1], center[0])
 
         elif center == "com":
-            axs[0].set_title("COM Center")
+            axs.set_title("COM Center")
             # Calculate center of mass of all pixels
             x, y = np.meshgrid(
                 np.arange(self.cutout_size), np.arange(self.cutout_size)
@@ -6998,7 +7062,6 @@ class ResolvedGalaxy:
 
         if pix_scale is not None:
             radii = radii * pix_scale
-            axs[1].set_xlabel(f"Radius ({output_radial_units})")
 
         if profile_type == "cumulative":
             value = np.cumsum(value)
@@ -7036,13 +7099,13 @@ class ResolvedGalaxy:
         # if return_map:
         #    return radii, value
 
-        axs[0].plot(plot_radii, value)
+        axs.plot(plot_radii, value)
 
         if log:
-            axs[0].set_yscale("log")
+            axs.set_yscale("log")
 
-        axs[0].set_ylabel(y_label)
-        axs[0].set_xlabel(f"Radius ({pix_scale.unit})")
+        axs.set_ylabel(y_label)
+        axs.set_xlabel(f"Radius ({pix_scale.unit})")
 
         return fig, axs
 
@@ -7236,6 +7299,7 @@ class ResolvedGalaxy:
                 show_half_radius=True,
                 add_cbar=True,
                 return_map=False,
+                override_display_names={},
             )
 
         # Plot SFH
@@ -8819,7 +8883,6 @@ class ResolvedGalaxy:
             h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
             if rbin == "RESOLVED":
                 """ Special case where we sum the SFH of all the bins"""
-                dummy_fig, dummy_ax = plt.subplots(1, 1)
                 found = False
                 binmap_type = table.meta.get("binmap_type", "pixedfit")
 
@@ -8860,7 +8923,7 @@ class ResolvedGalaxy:
                                 binmap_type=binmap_type,
                             )
                             tx, tsfh = pipes_obj.plot_sfh(
-                                dummy_ax,
+                                None,
                                 color,
                                 timescale=time_unit,
                                 plottype=plottype,
@@ -8929,7 +8992,6 @@ class ResolvedGalaxy:
                             self.resolved_sfh = {}
                         self.resolved_sfh[save_name] = save_array
 
-                plt.close(dummy_fig)
             else:
                 try:
                     pipes_obj = self.load_pipes_object(
@@ -8963,6 +9025,8 @@ class ResolvedGalaxy:
             axes.set_xlim(
                 0, 1.2 * cosmo.age(self.redshift).to(time_unit).value
             )
+            axes.set_xlabel(f"Time ({time_unit})")
+            axes.set_ylabel("SFR (M$_\odot$ yr$^{-1}$)")
 
         # cbar.set_label('Age (Gyr)', labelpad=10)
         # cbar.ax.xaxis.set_ticks_position('top')
@@ -9718,6 +9782,8 @@ class ResolvedGalaxy:
         reload_from_cat=False,
         weight_mass_sfr=True,
         plot=True,
+        replace_nan=False,
+        **kwargs,
     ):
         from .utils import measure_cog
 
@@ -9803,6 +9869,10 @@ class ResolvedGalaxy:
 
             log = r"$\log_{10}$ "
 
+        # replace nan with 0
+        if replace_nan:
+            map[np.isnan(map)] = 0
+
         out = self._plot_radial_profile(
             map,
             center="auto",
@@ -9810,13 +9880,12 @@ class ResolvedGalaxy:
             minrad=minrad,
             maxrad=maxrad,
             profile_type=profile_type,
-            log=False,
-            map_units=None,
             output_radial_units=output_radial_units,
             return_map=~plot,
             z_for_scale=self.redshift,
             fig=fig,
             axs=axs,
+            **kwargs,
         )
 
         return out
@@ -9993,6 +10062,7 @@ class ResolvedGalaxy:
         norm_min=None,
         norm_max=None,
         return_map=False,
+        override_param_names={},
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -10249,7 +10319,11 @@ class ResolvedGalaxy:
                     if gunit != u.dimensionless_unscaled
                     else ""
                 )
-                param_str = param.replace("_", r"\ ")
+                param_str = (
+                    param.replace("_", r"\ ")
+                    if param not in override_param_names.keys()
+                    else override_param_names[param]
+                )
 
                 for pos, total_param in enumerate(total_params):
                     if total_param in table["#ID"]:
@@ -15114,6 +15188,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         overwrite=False,
         legend=True,
         mask="pixedfit",
+        total_region_mask="detection",
         add_true=True,
         **kwargs,
     ):
@@ -15142,7 +15217,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             fig, cache = out
         else:
             return None
-            
+
         if add_true and plot:
             axes = fig.get_axes()
             if len(axes) == 1:
@@ -15151,13 +15226,17 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 if "True SFH" not in [l.get_label() for l in axes.get_lines()]:
                     # Plot the true SFH
                     self.plot_real_sfh(
-                        mask={"attr": "gal_region", "key": mask},
+                        mask={"attr": "gal_region", "key": total_region_mask},
                         ax=axes,
                         fig=fig,
                         time_unit=time_unit,
                         plottype=plottype,
-                        mask_str=mask,
+                        force=force,
                     )
+
+            # Check if legend exists. If it does, redraw with new line.
+            if legend:
+                axes.legend(frameon=False)
 
         return fig, cache
 
@@ -15170,6 +15249,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         time_unit="Gyr",
         plottype="lookback",
         overwrite=False,
+        force=False,
     ):
         if self.sfh is not None and not overwrite:
             if mask_str in self.sfh.keys():
@@ -15203,7 +15283,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             if mask_str is None:
                 mask_str = "total"
 
-            self.add_to_h5(savedata, "mock_galaxy/sfh", mask_str)
+            self.add_to_h5(savedata, "mock_galaxy/sfh", mask_str, force=force)
 
             if self.sfh is None:
                 self.sfh = {}
@@ -16314,7 +16394,9 @@ class ResolvedGalaxies(np.ndarray):
                     galaxy.sed_fitting_table["bagpipes"] = {}
 
                 if configs[galaxy.galaxy_id] is None or (
-                    run_name in galaxy.sed_fitting_table["bagpipes"].keys() and not load_only):
+                    run_name in galaxy.sed_fitting_table["bagpipes"].keys()
+                    and not load_only
+                ):
                     # configs[galaxy.galaxy_id]["already_run"]:
                     continue
 
