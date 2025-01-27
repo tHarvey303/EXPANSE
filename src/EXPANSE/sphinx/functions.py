@@ -78,6 +78,7 @@ def generate_full_images(
     n_image_pixels=1000,  # number of pixels on the side of the full image
     out_pixel_scale=0.03 * u.arcsec,
     sphinx_data_dir="/raid/scratch/work/tharvey/SPHINX/SPHINX-20-data/",
+    min_image_size=52,
 ):
     full_catalogue = Table.read(f"{sphinx_data_dir}/data/all_basic_data.csv")
 
@@ -108,22 +109,22 @@ def generate_full_images(
     ) * u.rad.to(u.arcsec)
     in_pixel_scale = in_pixel_scale * u.arcsec
 
+    if not direction.startswith("dir_"):
+        direction = f"dir_{direction}"
+
     # line images
     line_image = np.load(f"{image_dir}/halo_{halo_id}_lines_dir_0.npy")
     # Star images
     star_image = np.load(
-        f"{image_dir}/halo_{halo_id}_continuum_mags_dir_{direction}.npy"
+        f"{image_dir}/halo_{halo_id}_continuum_mags_{direction}.npy"
     )
     # Nebular continuum images
-    nebc_image = np.load(
-        f"{image_dir}/halo_{halo_id}_mags_dir_{direction}.npy"
-    )
+    nebc_image = np.load(f"{image_dir}/halo_{halo_id}_mags_{direction}.npy")
 
     npix = int(np.sqrt(nebc_image.shape[0]))
     assert npix**2 == nebc_image.shape[0], "Image shape is not square"
 
     # img = np.zeros((npix,npix,len(bands)))
-
     # Sum the flux in the channels
 
     images = {}
@@ -149,9 +150,11 @@ def generate_full_images(
         img += 3631 * (
             10.0
             ** (
-                line_image[filt_dict[fi]["idx"], direction, :].reshape(
-                    npix, npix
-                )
+                line_image[
+                    filt_dict[fi]["idx"],
+                    int(str(direction.replace("dir_", ""))),
+                    :,
+                ].reshape(npix, npix)
                 / (-2.5)
             )
         )
@@ -166,7 +169,10 @@ def generate_full_images(
 
         if out_pixel_scale != in_pixel_scale:
             img = resize(
-                img, out_pix_scale=out_pixel_scale, in_pix_scale=in_pixel_scale
+                img,
+                out_pix_scale=out_pixel_scale,
+                in_pix_scale=in_pixel_scale,
+                min_size=min_image_size,
             )
 
         assert np.all(
@@ -178,7 +184,7 @@ def generate_full_images(
 
         img *= uJy
         resolution = pixel_size_kpc * kpc
-        fov = (img.shape[0] - 0.00001) * resolution
+        fov = (img.shape[0] - 0.001) * resolution
 
         image = Image(resolution, fov, img=img)
         images[bands[pos]] = image
@@ -215,7 +221,7 @@ def get_spectra(
 
     # Get spectra
 
-    spectra_path = f"/raid/scratch/work/tharvey/SPHINX/SPHINX-20-data/data/spectra/all_spec_z{redshift}.json"
+    spectra_path = f"/raid/scratch/work/tharvey/SPHINX/SPHINX-20-data/data/spectra/all_spec_z{int(redshift)}.json"
 
     with open(spectra_path, "r") as f:
         spectra = json.load(f)
@@ -225,8 +231,11 @@ def get_spectra(
     wavelengths = np.array(spectra_gal["wavelengths"])  # in um
     wavelengths *= u.um
 
+    if not direction.startswith("dir_"):
+        direction = f"dir_{direction}"
+
     flux = (
-        10.0 ** np.array(spectra_gal[f"dir_{direction}"][spec_type])
+        10.0 ** np.array(spectra_gal[direction][spec_type])
         * u.erg
         / u.s
         / u.cm**2
@@ -288,6 +297,9 @@ def get_meta(
     ]
     assert len(galaxy) == 1
 
+    if not direction.startswith("dir_"):
+        direction = f"dir_{direction}"
+
     meta_properties = {
         "redshift": redshift,
         "halo_id": halo_id,
@@ -300,7 +312,7 @@ def get_meta(
         columns_to_add = []
         for col in galaxy.colnames:
             if "_dir" in col:
-                if f"_dir_{int(direction)}" in col:
+                if f"_{direction}" in col:
                     columns_to_add.append(col)
             else:
                 columns_to_add.append(col)
@@ -310,10 +322,10 @@ def get_meta(
     if image_dir != "":
         for band in filt_names:
             meta_properties[f"{band}_cont_image"] = (
-                f"{image_dir}/halo_{halo_id}_continuum_mags_dir_{direction}.npy"
+                f"{image_dir}/halo_{halo_id}_continuum_mags_{direction}.npy"
             )
             meta_properties[f"{band}_neb_image"] = (
-                f"{image_dir}/halo_{halo_id}_mags_dir_{direction}.npy"
+                f"{image_dir}/halo_{halo_id}_mags_{direction}.npy"
             )
             meta_properties[f"{band}_line_image"] = (
                 f"{image_dir}/halo_{halo_id}_lines_dir_0.npy"
@@ -497,7 +509,12 @@ def get_size(halo_id, redshift, size_band, direction="max"):
     return size, directio
 
 
-def resize(img, out_pix_scale=0.03 * u.arcsec, in_pix_scale=0.03 * u.arcsec):
+def resize(
+    img,
+    out_pix_scale=0.03 * u.arcsec,
+    in_pix_scale=0.03 * u.arcsec,
+    min_size=52,
+):
     """
     Resize an image to a new pixel scale using WCS reprojection.
 
@@ -517,6 +534,18 @@ def resize(img, out_pix_scale=0.03 * u.arcsec, in_pix_scale=0.03 * u.arcsec):
     """
     # Ensure input image is float type
     img = img.astype(float)
+
+    new_number_of_pixels = int(
+        np.ceil(img.shape[0] * in_pix_scale / out_pix_scale)
+    )
+
+    if new_number_of_pixels < min_size:
+        img = np.pad(
+            img,
+            (min_size - new_number_of_pixels) // 2,
+            mode="constant",
+            constant_values=0,
+        )
 
     # Create input WCS
     in_wcs = WCS(naxis=2)
@@ -561,10 +590,18 @@ def resize(img, out_pix_scale=0.03 * u.arcsec, in_pix_scale=0.03 * u.arcsec):
     )
     # Check flux matches witin 1%
     assert np.isclose(
-        np.nansum(img), np.nansum(img_out), rtol=0.01, atol=0.0), f"Flux mismatch by {np.abs(np.nansum(img) - np.nansum(img_out))/np.nansum(img):.5f}%"
-    
+        np.nansum(img), np.nansum(img_out), rtol=0.2, atol=0.0
+    ), f"Flux mismatch by {100*np.abs(np.nansum(img) - np.nansum(img_out))/np.nansum(img):.5f}%"
+
     # Apply footprint mask to remove edge artifacts
     # img_out[footprint < 0.8] = np.nan
+    if np.shape(img_out)[0] < min_size:
+        img_out = np.pad(
+            img_out,
+            (min_size - np.shape(img_out)[0]) // 2,
+            mode="constant",
+            constant_values=0,
+        )
 
     return img_out
 

@@ -377,7 +377,7 @@ class ResolvedGalaxy:
 
             # print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
             # print(self.galaxy_id)
-            print("Convolving images with PSF")
+            # print("Convolving images with PSF")
             self.convolve_with_psf(psf_type=psf_type, init_run=False)
 
         # if self.rms_background is None:
@@ -626,7 +626,7 @@ class ResolvedGalaxy:
                 * cutout_size
             )
 
-        band_properties_to_load = [
+        band_ = [
             "A_IMAGE",
             "B_IMAGE",
             "THETA_IMAGE",
@@ -2307,9 +2307,10 @@ class ResolvedGalaxy:
             start = diff // 2
             end = start + len(im_data)
             psf_data = psf_data[start:end, start:end]
-            psf_data = psf_data / np.sum(psf_data)
 
-            # Create mask
+        psf_data = psf_data / np.sum(psf_data)
+
+        # Create mask
         if mask_type in self.gal_region:
             # Get pixel coordinates where region is True
             region_mask = self.gal_region[mask_type]
@@ -3718,7 +3719,7 @@ class ResolvedGalaxy:
                     self.psf_matched_rms_err[psf_type] = {}
 
                 for band in self.bands[:-1]:
-                    print(f"Convolving {band} with PSF")
+                    # print(f"Convolving {band} with PSF")
                     if (
                         band in self.dont_psf_match_bands
                         or self.already_psf_matched
@@ -4243,7 +4244,16 @@ class ResolvedGalaxy:
             if len(possible_vals) == 2:
                 det_gal_mask = det_galaxy_region == np.max(possible_vals)
             elif len(possible_vals) > 2:
-                center_val = det_galaxy_region[center, center]
+                try:
+                    int(self.galaxy_id)
+                    ok = True
+                except:
+                    ok = False
+
+                if ok and int(self.galaxy_id) in possible_vals:
+                    center_val = int(self.galaxy_id)
+                else:
+                    center_val = det_galaxy_region[center, center]
                 mask = det_galaxy_region == center_val
                 det_gal_mask = np.zeros_like(det_galaxy_region)
                 det_gal_mask[mask] = True
@@ -4253,6 +4263,9 @@ class ResolvedGalaxy:
                 )
 
             det_gal_mask = det_gal_mask.astype(int)
+
+            if self.gal_region is None:
+                self.gal_region = {}
 
             self.gal_region["detection"] = det_gal_mask
 
@@ -4268,6 +4281,8 @@ class ResolvedGalaxy:
                 force=force,
                 overwrite=overwrite,
             )
+
+            return det_gal_mask
 
     def plot_lupton_rgb(
         self,
@@ -4666,30 +4681,14 @@ class ResolvedGalaxy:
 
         self.gal_region[gal_region_use] = galaxy_region
 
-        if self.det_data is not None:
-            det_galaxy_region = copy.copy(self.det_data["seg"])
-            # Value of segmap in center
-            center = int(self.cutout_size // 2)
-            possible_vals = np.unique(det_galaxy_region)
-            if len(possible_vals) == 2:
-                det_gal_mask = det_galaxy_region == np.max(
-                    possible_vals
-                )  # Since 0 is background
-            elif len(possible_vals) > 2:
-                center_val = det_galaxy_region[center, center]
-                mask = det_galaxy_region == center_val
-                det_gal_mask = np.zeros_like(det_galaxy_region)
-                det_gal_mask[mask] = True
-            else:
-                raise ValueError(
-                    f"Detected only one value in detection region for {self.galaxy_id}. Check!"
-                )
-
-            det_gal_mask = det_gal_mask.astype(int)
-
-            self.gal_region["detection"] = det_gal_mask
-            if gal_region_use == "detection":
-                seg_type = "detection"
+        if gal_region_use == "detection":
+            galaxy_region = self.add_det_galaxy_region(
+                overwrite=overwrite, force=True
+            )
+            det_gal_mask = copy.deepcopy(self.gal_region["detection"]).astype(
+                int
+            )
+            seg_type = "detection"
 
         # Difference between gal_region - which I think is one image for all bands.
 
@@ -5879,14 +5878,12 @@ class ResolvedGalaxy:
         hfile[group].create_dataset(name, data=data, compression=compression)
         if meta is not None:
             for key in meta.keys():
-                sys.stdout.write(f"Setting meta, {key}, {str(meta[key])}")
-                sys.stdout.flush()
+                print(f"Setting meta, {key}, {str(meta[key])}")
                 hfile[group][name].attrs[key] = str(meta[key])
             if setattr_gal_meta is not None:
                 setattr(self, setattr_gal_meta, meta)
 
-        sys.stdout.write(f"\r added to {hfile}, {group}, {name}")
-        sys.stdout.flush()
+        print(f"\r added to {hfile}, {group}, {name}")
 
         hfile.close()
 
@@ -6173,6 +6170,16 @@ class ResolvedGalaxy:
                 np.array(flux_errs), unit=self.phot_pix_unit[band]
             )
 
+        mask = binmap != 0
+        assert np.isclose(
+            np.sum(self.psf_matched_data[psf_type][band][mask]),
+            np.sum(table[band]).value,
+            atol=0,
+            rtol=0.01,
+        ), f"Fluxes not summed correctly, {np.sum(self.psf_matched_data[psf_type][band][mask])} != {np.sum(table[band])}"
+
+        assert len(table) == int(np.max(binmap)), "Table length not correct"
+
         # Add sum of all rows
         row = ["TOTAL_BIN", "TOTAL_BIN"]
         for pos, band in enumerate(self.bands):
@@ -6416,6 +6423,8 @@ class ResolvedGalaxy:
         facecolor="white",
         cmap_bins="nipy_spectral_r",
         colors=None,
+        save_full_posteriors=False,
+        properties_to_save=["mstar", "sfr", "Av", "Z", "z"],
     ):
         self.get_filter_wavs()
         # from galfind import Filter
@@ -6603,6 +6612,10 @@ class ResolvedGalaxy:
         min_flux_err=0.1,
         priors=None,  # Allow passing in of priors for speed
         save_outputs=True,
+        fix_redshift=False,
+        save_basic_only=False,  # equivalent to just saving catalogue, no PDFs, SEDs, SFHs
+        save_full_posteriors=False,
+        parameters_to_save=["mstar", "sfr", "Av", "Z", "z"],
     ):
         # import dense_basis as db
 
@@ -6611,9 +6624,6 @@ class ResolvedGalaxy:
         db_atlas_name = "_".join(
             os.path.basename(db_atlas_path).split("_")[:-3]
         )
-
-        print(f"Running dense_basis for {db_atlas_name}")
-        print(f"Using atlas {db_atlas_path}")
 
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
@@ -6629,14 +6639,23 @@ class ResolvedGalaxy:
             binmap_type = "pixedfit"
 
         print(f"Using {psf_type} PSF and {binmap_type} binning.")
+
+        z = "free" if fix_redshift is False else fix_redshift
+        additional_name = f"{psf_type}_{binmap_type}_z{z}"
+
+        print(f"Running dense_basis for {db_atlas_name}")
+        print(f"Using atlas {db_atlas_path}")
+
         if hasattr(self, "sed_fitting_table"):
             if "dense_basis" in self.sed_fitting_table.keys():
                 if (
-                    db_atlas_name
+                    f"{db_atlas_name}_{additional_name}"
                     in self.sed_fitting_table["dense_basis"].keys()
                 ):
                     if not overwrite:
-                        print(f"Run {db_atlas_name} already exists")
+                        print(
+                            f"Run {db_atlas_name}_{additional_name} already exists"
+                        )
                         return
 
         flux_table = copy.deepcopy(
@@ -6671,6 +6690,11 @@ class ResolvedGalaxy:
             mask = (flux_table["type"] == "MAG_APER_TOTAL") | (
                 flux_table["type"] == "TOTAL_BIN"
             )
+        elif fit_photometry == "TOTAL_BIN+bin":
+            mask = (flux_table["type"] == "TOTAL_BIN") | (
+                flux_table["type"] == "bin"
+            )
+
         else:
             raise ValueError(
                 "fit_photometry must be one of: all, bin, MAG_AUTO, MAG_ISO, MAG_BEST, TOTAL_BIN, MAG or MAG_APER"
@@ -6689,6 +6713,35 @@ class ResolvedGalaxy:
                 flux_table[col] = flux_table[col].to(u.uJy)
 
         from .dense_basis import run_db_fit_parallel, get_priors
+
+        if fix_redshift:
+            if fix_redshift == "eazy":
+                redshift = self.redshift
+            elif (
+                "dense_basis" in self.sed_fitting_table.keys()
+                and fix_redshift
+                in self.sed_fitting_table["dense_basis"].keys()
+            ):
+                redshift = self.sed_fitting_table["dense_basis"][fix_redshift][
+                    "z"
+                ]
+            elif (
+                "bagpipes" in self.sed_fitting_table.keys()
+                and fix_redshift in self.sed_fitting_table["bagpipes"].keys()
+            ):
+                table = self.sed_fitting_table["bagpipes"][fix_redshift]
+                if "redshift_50" in table.keys():
+                    assert (
+                        len(table) == 1
+                    ), f"Only one redshift allowed for fix_redshift. {len(table)} found."
+                    redshift = table["redshift_50"][0]
+                elif "input_redshift" in table.keys():
+                    redshift = table["input_redshift"][0]
+
+            else:
+                redshift = fix_redshift
+
+            fix_redshift = redshift
 
         fluxes = []
         errors = []
@@ -6716,6 +6769,7 @@ class ResolvedGalaxy:
                 use_emcee,
                 emcee_samples,
                 min_flux_err,
+                fix_redshift=redshift,
             )
             for flux, error in zip(fluxes, errors)
         )
@@ -6724,6 +6778,21 @@ class ResolvedGalaxy:
         filter_wavs = [
             self.filter_wavs[band].to(u.Angstrom) for band in self.bands
         ]
+
+        print("Finished fitting, saving results to h5 file.")
+
+        self._save_db_fit_results(
+            fit_results,
+            ids,
+            db_atlas_name,
+            add_to_h5=save_outputs,
+            save_full=save_full_posteriors,
+            overwrite=overwrite,
+            priors=priors,
+            save_basic_only=save_basic_only,
+            parameters_to_save=parameters_to_save,
+            additional_name=additional_name,
+        )
 
         return fit_results
 
@@ -6738,6 +6807,9 @@ class ResolvedGalaxy:
         priors=None,
         parameters_to_save=["mstar", "sfr", "Av", "Z", "z"],
         posterior_values=[50.0, 16.0, 84.0],
+        ngals=100,
+        save_basic_only=False,
+        additional_name="",
     ):
         """
         Save the dense_basis fit results to the h5 file
@@ -6751,10 +6823,20 @@ class ResolvedGalaxy:
         save_full : bool
 
         """
-        from dense_basis import makespec_atlas
+        from dense_basis import makespec_atlas, mocksp
 
-        if prior is None:
+        if priors is None:
             priors = get_priors(db_atlas_path)
+
+        assert (
+            len(fit_results) == len(ids)
+        ), f"Length of fit_results and ids must be the same. {len(fit_results)} != {len(ids)}"
+
+        db_atlas_name = (
+            f"{db_atlas_name}_{additional_name}"
+            if additional_name != ""
+            else db_atlas_name
+        )
 
         assert (
             len(fit_results) == len(ids)
@@ -6780,11 +6862,10 @@ class ResolvedGalaxy:
 
         # start assembling the table
 
-        table = QTable()
-
         save_seds = {}
         save_sfhs = {}
         save_pdfs = {}
+        rows = []
         for i, fit_result in tqdm(enumerate(fit_results)):
             table_row = {}
             table_row["#ID"] = ids[i]
@@ -6814,57 +6895,58 @@ class ResolvedGalaxy:
             )
             for parameter in parameters_to_save:
                 val = getattr(fit_result, parameter)
-                for i, quantile in enumerate(posterior_values):
-                    table_row[f"{parameter}_{quantile}"] = val[i]
-
-            # sace
+                for j, quantile in enumerate(posterior_values):
+                    table_row[f"{parameter}_{int(quantile)}"] = val[j]
 
             zval = fit_result.z[1]
-            sfh_50, sfh_16, sfh_84, time = fit_result.evaluate_posterior_SFH(
-                zval, ngals=100
-            )
-            # Calculate posterior best-fit SED
-            out_sfh = np.vstack((time, sfh_16, sfh_50, sfh_84))
-            save_sfhs[ids[i]] = out_sfh
-
-            lam_all = []
-            spec_all = []
-            z_all = []
-
-            bestn_gals = np.argsort(fit_result.likelihood)
-            for i in range(ngals):
-                lam_gen, spec_gen = makespec_atlas(
-                    fit_result.atlas,
-                    bestn_gals[-(i + 1)],
-                    priors,
-                    mocksp,
-                    cosmo,
-                    filter_list=[],
-                    filt_dir=[],
-                    return_spec=True,
+            if not save_basic_only:
+                sfh_50, sfh_16, sfh_84, time = (
+                    fit_result.evaluate_posterior_SFH(zval, ngals=ngals)
                 )
-                z = fit_result.atlas["zval"][bestn_gals[-(i + 1)]]
-                lam_gen_obs = lam_gen * (1 + z)
-                spec_flam = ujy_to_flam(
-                    spec_gen * fit_result.norm_fac, lam_gen_obs
+                # Calculate posterior best-fit SED
+                out_sfh = np.vstack((time, sfh_16, sfh_50, sfh_84))
+                save_sfhs[ids[i]] = out_sfh
+
+                lam_all = []
+                spec_all = []
+                z_all = []
+
+                # print spectra time baby!
+                print("spectra be spectraing")
+                bestn_gals = np.argsort(fit_result.likelihood)
+                for j in range(ngals):
+                    lam_gen, spec_gen = makespec_atlas(
+                        fit_result.atlas,
+                        bestn_gals[-(j + 1)],
+                        priors,
+                        mocksp,
+                        cosmo,
+                        filter_list=[],
+                        filt_dir=[],
+                        return_spec=True,
+                    )
+                    z = fit_result.atlas["zval"][bestn_gals[-(j + 1)]]
+                    lam_gen_obs = lam_gen * (1 + z)
+                    spec_flam = ujy_to_flam(
+                        spec_gen * fit_result.norm_fac, lam_gen_obs
+                    )
+                    lam_all.append(lam_gen_obs)
+                    spec_all.append(spec_flam)
+                    z_all.append(z)
+
+                # find 16th, 50th, 84th percentiles of spectrum
+                spec_all = np.array(spec_all)
+                lam_all = np.array(lam_all)
+                z_all = np.array(z_all)
+
+                z = np.median(z_all)
+                spec_16, spec_50, spec_84 = np.percentile(
+                    spec_all, [16, 50, 84], axis=0
                 )
-                lam_all.append(lam_gen_obs)
-                spec_all.append(spec_flam)
-                z_all.append(z)
+                lam = np.median(lam_all, axis=0)
+                out = np.vstack((lam, spec_16, spec_50, spec_84))
 
-            # find 16th, 50th, 84th percentiles of spectrum
-            spec_all = np.array(spec_all)
-            lam_all = np.array(lam_all)
-            z_all = np.array(z_all)
-
-            z = np.median(z_all)
-            spec_16, spec_50, spec_84 = np.percentile(
-                spec_all, [16, 50, 84], axis=0
-            )
-            lam = np.median(lam_all, axis=0)
-            out = np.vstack((lam, spec_16, spec_50, spec_84))
-
-            save_seds[ids[i]] = out
+                save_seds[ids[i]] = out
 
             if save_full:
                 # Just save norm_fac and chi2 array. Other parameters can be calculated from these.
@@ -6872,6 +6954,9 @@ class ResolvedGalaxy:
                 save_pdfs[ids[i]]["chi2_array"] = fit_result.chi2_array
                 save_pdfs[ids[i]]["norm_fac"] = fit_result.norm_fac
 
+            rows.append(table_row)
+
+        table = QTable(rows=rows)
         self.sed_fitting_table["dense_basis"][db_atlas_name] = table
 
         # sed_fitting_pdfs/sed_tool/name
@@ -6891,26 +6976,27 @@ class ResolvedGalaxy:
             )
 
             # Save SED
-            for i in save_seds.keys():
-                self.add_to_h5(
-                    save_seds[i],
-                    f"sed_fitting_seds/dense_basis/{db_atlas_name}/",
-                    i,
-                    overwrite=overwrite,
-                    setattr_gal=None,
-                    force=True,
-                )
+            if not save_basic_only:
+                for i in save_seds.keys():
+                    self.add_to_h5(
+                        save_seds[i],
+                        f"sed_fitting_seds/dense_basis/{db_atlas_name}/",
+                        i,
+                        overwrite=overwrite,
+                        setattr_gal=None,
+                        force=True,
+                    )
 
-            # Save SFH
-            for i in save_sfhs.keys():
-                self.add_to_h5(
-                    save_sfhs[i],
-                    f"sed_fitting_sfhs/dense_basis/{db_atlas_name}/",
-                    i,
-                    overwrite=overwrite,
-                    setattr_gal=None,
-                    force=True,
-                )
+                # Save SFH
+                for i in save_sfhs.keys():
+                    self.add_to_h5(
+                        save_sfhs[i],
+                        f"sed_fitting_sfhs/dense_basis/{db_atlas_name}/",
+                        i,
+                        overwrite=overwrite,
+                        setattr_gal=None,
+                        force=True,
+                    )
 
             # Save PDFs
             if save_full:
@@ -10111,6 +10197,13 @@ class ResolvedGalaxy:
 
         table = self.sed_fitting_table["bagpipes"][run_name]
 
+        if "binmap_type" in table.meta:
+            table_binmap = table.meta["binmap_type"]
+            if table_binmap != binmap_type:
+                print(
+                    f"Warning: binmap type in table is {table_binmap}, not {binmap_type}"
+                )
+
         # fig, axes = plt.subplots(1, len(parameters), figsize=(4*len(parameters), 4),
         #  constrained_layout=True, facecolor=facecolor)
         if fig is None and ax is None:
@@ -10168,6 +10261,7 @@ class ResolvedGalaxy:
                     show_kron_ellipse=False,
                 )
                 done = True
+                param_str = ""
 
             elif param == "bin_map":
                 if add_cbar:
@@ -10176,6 +10270,7 @@ class ResolvedGalaxy:
                 map = copy.copy(binmap)
                 map[map == 0] = np.nan
                 log = ""
+                param_str = ""
             else:
                 if add_cbar:
                     ax_divider = make_axes_locatable(axes[i])
@@ -10970,6 +11065,8 @@ class ResolvedGalaxy:
         n_cores=1,
         open_h5=True,
         force=False,
+        correct_map=False,
+        correct_map_band=None,
     ):
         if sed_fitting_tool not in self.sed_fitting_table.keys():
             raise Exception(
@@ -11019,62 +11116,101 @@ class ResolvedGalaxy:
 
         all_samples = []
 
-        if not open_h5:
-            try:
-                #
-                binmap_type = table.meta.get("binmap_type", "pixedfit")
+        if sed_fitting_tool == "bagpipes":
+            if not open_h5:
+                try:
+                    #
+                    binmap_type = table.meta.get("binmap_type", "pixedfit")
 
-                pipes_objs = self.load_pipes_object(
-                    run_name,
-                    bins,
-                    get_advanced_quantities=True,
-                    run_dir=run_dir,
-                    plotpipes_dir=pipes_dir,
-                    n_cores=n_cores,
-                    binmap_type=binmap_type,
-                )
+                    pipes_objs = self.load_pipes_object(
+                        run_name,
+                        bins,
+                        get_advanced_quantities=True,
+                        run_dir=run_dir,
+                        plotpipes_dir=pipes_dir,
+                        n_cores=n_cores,
+                        binmap_type=binmap_type,
+                    )
 
-            except FileNotFoundError:
-                print(f"Files not found for {run_name} {bins}")
-                return None
+                except FileNotFoundError:
+                    print(f"Files not found for {run_name} {bins}")
+                    return None
 
-            # print(pipes_objs)
+                # print(pipes_objs)
 
-            for obj in pipes_objs:
-                samples = obj.plot_pdf(None, property, return_samples=True)
+                for obj in pipes_objs:
+                    samples = obj.plot_pdf(None, property, return_samples=True)
 
-                all_samples.append(samples)
-        else:
-            # Manually open .h5 and read in samples. Should be faster.
-            for rbin in bins:
-                h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
-                with h5.File(h5_path, "r") as f:
-                    if property in f["basic_quantities"].keys():
-                        samples = f["basic_quantities"][property][:]
-                    elif property in f["advanced_quantities"].keys():
-                        samples = f["advanced_quantities"][property][:]
-                    else:
-                        for key in f["basic_quantities"].keys():
-                            if key.endswith(":massformed"):
-                                sfh = key.split(":")[0]
-                                break
-                        new_prop_name = f"{sfh}:key"
-                        if new_prop_name in f["advanced_quantities"].keys():
-                            samples = f["advanced_quantities"][new_prop_name][
-                                :
-                            ]
-                        else:
-                            raise Exception(
-                                f"Property {property} not found in {h5_path}. Available properties are {f['basic_quantities'].keys()} and {f['advanced_quantities'].keys()}"
-                            )
                     all_samples.append(samples)
+            else:
+                # Manually open .h5 and read in samples. Should be faster.
+                for rbin in bins:
+                    h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
+                    with h5.File(h5_path, "r") as f:
+                        if property in f["basic_quantities"].keys():
+                            samples = f["basic_quantities"][property][:]
+                        elif property in f["advanced_quantities"].keys():
+                            samples = f["advanced_quantities"][property][:]
+                        else:
+                            for key in f["basic_quantities"].keys():
+                                if key.endswith(":massformed"):
+                                    sfh = key.split(":")[0]
+                                    break
+                            new_prop_name = f"{sfh}:key"
+                            if (
+                                new_prop_name
+                                in f["advanced_quantities"].keys()
+                            ):
+                                samples = f["advanced_quantities"][
+                                    new_prop_name
+                                ][:]
+                            else:
+                                raise Exception(
+                                    f"Property {property} not found in {h5_path}. Available properties are {f['basic_quantities'].keys()} and {f['advanced_quantities'].keys()}"
+                                )
+                        all_samples.append(samples)
 
-        all_samples = np.array(all_samples, dtype=object)
-        new_samples = np.zeros((n_draws, len(all_samples)))
+            all_samples = np.array(all_samples, dtype=object)
+            new_samples = np.zeros((n_draws, len(all_samples)))
 
-        for i, samples in enumerate(all_samples):
-            # samples = samples[~np.isnan(samples)]
-            new_samples[:, i] = np.random.choice(samples, size=n_draws)
+            for i, samples in enumerate(all_samples):
+                # samples = samples[~np.isnan(samples)]
+                new_samples[:, i] = np.random.choice(samples, size=n_draws)
+
+        elif sed_fitting_tool == "dense_basis":
+            # Quick method of just summing
+            if run_name in self.sed_fitting_table[sed_fitting_tool].keys():
+                table = self.sed_fitting_table[sed_fitting_tool][run_name]
+                mask = []
+                for bin in table["#ID"]:
+                    try:
+                        int(bin)
+                        mask.append(True)
+                    except:
+                        mask.append(False)
+
+                bin_table = table[mask]
+
+                colname = f"{property}"
+                if colname not in bin_table.columns:
+                    colname = f"{property}_50"
+                if colname not in bin_table.columns:
+                    colname = f"{property}_50.0"
+
+                new_samples = bin_table[colname].data
+
+                if log:
+                    new_samples = 10**new_samples
+
+                if combine_type == "sum":
+                    new_samples = np.sum(new_samples)
+
+                if log:
+                    new_samples = np.log10(new_samples)
+
+                return new_samples
+                # param_to_index = {}
+                # quants = get_quants(self.chi2_array, self.atlas, self.norm_fac, bw_dex = bw_dex = 0.001, , percentile_values = [50.,16.,84.], vb = False)
 
         if log:
             new_samples = 10**new_samples
@@ -11082,6 +11218,29 @@ class ResolvedGalaxy:
         if combine_type == "sum":
             # sum_samples = np.log10(np.sum(10**new_samples, axis=1))
             sum_samples = np.sum(new_samples, axis=1)
+            if correct_map:
+                first = self.gal_region[correct_map[0]]
+                second = self.gal_region[correct_map[1]]
+                assert (
+                    correct_map_band is not None
+                ), "Need to provide band for correction"
+                # Get ratio of flux between regions
+                flux_first = np.sum(
+                    self.psf_matched_data["star_stack"][correct_map_band][
+                        first.astype(bool)
+                    ]
+                )
+                flux_second = np.sum(
+                    self.psf_matched_data["star_stack"][correct_map_band][
+                        second.astype(bool)
+                    ]
+                )
+                ratio = flux_first / flux_second
+                sum_samples = sum_samples * ratio
+                print(ratio)
+
+                # Correct sum_samples by
+
         elif combine_type == "flatten":
             sum_samples = new_samples.flatten()
 
@@ -11637,8 +11796,8 @@ class ResolvedGalaxy:
         bands=None,
         override_psf_type=False,
         depth_file={
-            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
-            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
+            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF_psfmatched/0.32as/n_nearest/JOF_psfmatched_depths.ecsv",
+            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF_psfmatched/0.32as/n_nearest/JOF_psfmatched_depths.ecsv",
         },
         det_thresh=1.8,
         minarea=9,
@@ -11646,6 +11805,7 @@ class ResolvedGalaxy:
         deblend_cont=0.005,
         aper_radius=0.16 * u.arcsec,
         overwrite=False,
+        combine_all_regions=False,  # Debug option to merge all detected regions into one for when deblending is not working
     ):
         to_add = []
         if not overwrite:
@@ -11794,6 +11954,10 @@ class ResolvedGalaxy:
         ), "Segmap should match detection object list."
         # Can probably do det_data here as well
 
+        if combine_all_regions:
+            # Make all non-zero regions the same
+            detection_segmap[detection_segmap != 0] = 1
+
         det_data = {}
 
         det_data["phot"] = detection_image
@@ -11897,6 +12061,10 @@ class ResolvedGalaxy:
             )
             if len(np.unique(segmap)) == 1:
                 seg_id = 0
+
+            if combine_all_regions:
+                # Make all non-zero regions the same
+                segmap[segmap != 0] = 1
 
             if band != detection_band:
                 seg_imgs[band] = segmap
@@ -12109,9 +12277,9 @@ class ResolvedGalaxy:
         from .utils import scale_fluxes
 
         aperture_dict = self.aperture_dict[str(aper_diam)]
-        assert len(aperture_dict["flux"]) == len(
-            self.bands
-        ), "Aperture dict does not match bands"
+        assert (
+            len(aperture_dict["flux"]) == len(self.bands)
+        ), f"Aperture dict does not match bands, {len(aperture_dict['flux'])} vs {len(self.bands)}"
 
         flux_totals = []
         ratios = []
@@ -13179,8 +13347,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         debug=False,
         mock_rms_fit_path="/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/",
         depth_file={
-            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
-            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
+            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF_psfmatched/0.32as/n_nearest/JOF_psfmatched_depths.ecsv",
+            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF_psfmatched/0.32as/n_nearest/JOF_psfmatched_depths.ecsv",
         },
         override_model_assumptions={},
     ):
@@ -13968,9 +14136,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         file_path="/nvme/scratch/work/tharvey/EXPANSE/data/JOF_mock.h5",
         debug=False,
         mock_rms_fit_path="/nvme/scratch/work/tharvey/EXPANSE/data/mock_rms/JOF/",
+        min_image_size=52,
         depth_file={
-            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF/old/0.32as/n_nearest/JOF_depths.ecsv",
-            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF/0.32as/n_nearest/old/JOF_depths.ecsv",
+            "NIRCam": "/raid/scratch/work/austind/GALFIND_WORK/Depths/NIRCam/v11/JOF_psfmatched/0.32as/n_nearest/JOF_psfmatched_depths.ecsv",
+            "ACS_WFC": "/raid/scratch/work/austind/GALFIND_WORK/Depths/ACS_WFC/v11/JOF_psfmatched/0.32as/n_nearest/JOF_psfmatched_depths.ecsv",
         },
         override_model_assumptions={},
         bands=[
@@ -14048,6 +14217,7 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             bands=bands,
             sphinx_data_dir=data_dir,
             out_pixel_scale=resolution * u.arcsec,
+            min_image_size=min_image_size,
         )
         # Change dict key from band to code
         new_dict = {}
@@ -14262,6 +14432,8 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             galaxy_id = f"{mock_survey}_{galaxy_id}"
 
         file_path = f"{h5_folder}/{galaxy_id}"
+
+        print(file_path)
         if not file_path.endswith(".h5"):
             file_path += ".h5"
 
@@ -14274,9 +14446,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             generate_from = "synthesizer"
             if (
                 direction is not None
-                and galaxy_name is not None
+                and (galaxy_name is not None or gal_id is not None)
                 and redshift_code is not None
-                and image_dir is not None
+                and images_dir is not None
             ):
                 generate_from = "sphinx"
 
@@ -14293,8 +14465,9 @@ class MockResolvedGalaxy(ResolvedGalaxy):
                 )
             elif generate_from == "sphinx":
                 print("Generating from SPHINX.")
+                use_id = gal_id if gal_id is not None else galaxy_name
                 return cls.init_mock_from_sphinx(
-                    halo_id=gal_id,
+                    halo_id=use_id,
                     redshift=redshift_code,
                     images_dir=images_dir,
                     direction=direction,
@@ -15978,8 +16151,11 @@ class ResolvedGalaxies(np.ndarray):
         # return a view of the galaxy array with galaxies which have > 1 bin
         return self[bins > 1]
 
-    def filter_IDs(self, IDs):
+    def filter_IDs(self, IDs, invert=False):
         mask = np.array([galaxy.galaxy_id in IDs for galaxy in self.galaxies])
+        if invert:
+            mask = ~mask
+
         return self[mask]
 
     def filter_redshift(self, zmin, zmax):

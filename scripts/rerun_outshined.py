@@ -56,7 +56,7 @@ bagpipes_runs = [
     "photoz_dpl",
     "photoz_continuity",
 ]
-binmap_type = "pixel_by_pixel"
+binmap_type = "voronoi"  # "pixel_by_pixel"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
@@ -105,7 +105,22 @@ ids = [
     "906",
     "9078",
 ]
-galaxies_lowmass = galaxies.filter_IDs(ids)
+
+"""
+remove = []
+for galaxy in galaxies:
+    galaxy.pixel_by_pixel_galaxy_region(snr_req=2, band_req='all_wide_nobreak', mask='detection')
+    galaxy.pixel_by_pixel_binmap(galaxy.gal_region['SNR_2_all_wide_nobreak'])
+    if galaxy.get_number_of_bins(binmap_type) == 0:
+        print(f"Galaxy {galaxy.galaxy_id} has no bins")
+        remove.append(galaxy.galaxy_id)
+    else:
+        galaxy.measure_flux_in_bins(binmap_type=binmap_type, overwrite=False)
+
+
+galaxies_lowmass = galaxies_lowmass.filter_IDs(remove, invert=True)
+"""
+
 
 """
 table = galaxies.save_to_fits(save=False)
@@ -149,11 +164,15 @@ galaxies_outshined = ResolvedGalaxies(
 resolved_run = "CNST_SFH_RESOLVED"
 # filter out single bins
 galaxies = galaxies.filter_single_bins("pixedfit")
+
+"""
+resolved_run = "CNST_SFH_RESOLVED"
+
 masses = [
     galaxy.get_total_resolved_property(resolved_run)[1] for galaxy in galaxies
 ]
 galaxies_lowmass = galaxies[np.array(masses) < 9]
-"""
+
 
 """
 for galaxy in galaxies_outshined:

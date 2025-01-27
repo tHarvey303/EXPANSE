@@ -75,6 +75,7 @@ def run_db_fit_parallel(
     use_emcee=False,
     emcee_samples=10_000,
     min_flux_err=0.1,
+    fix_redshift=False,
 ):
     """
     Run a dense_basis fit in parallel
@@ -147,6 +148,19 @@ def run_db_fit_parallel(
 
     # run_emceesampler takes zbest and deltaz. Can't fix redshift precisely (i.e. between grid spacing), but can set zbest and small deltaz to only allow
     # templates closest to known redshift to be used. Could precheck grid for nearest redshifts and set deltaz accordinglu.
+    if fix_redshift:
+        redshift = fix_redshift
+        delta_z = 0.01
+
+    sedfit = db.SedFit(
+        obs_sed,
+        obs_err,
+        atlas,
+        fit_mask=fit_mask,
+        zbest=redshift,
+        deltaz=delta_z,
+    )
+
     if use_emcee:
         sampler = db.run_emceesampler(
             obs_sed,
@@ -155,12 +169,13 @@ def run_db_fit_parallel(
             epochs=emcee_samples,
             plot_posteriors=False,
             fit_mask=fit_mask,
-            zbest=None,
-            deltaz=None,
+            zbest=redshift,
+            deltaz=delta_z,
         )
+        # Need to somehow propogate the sampler back to the sedfit object
+
     else:
         # pass the atlas and the observed SED + uncertainties into the fitter,
-        sedfit = db.SedFit(obs_sed, obs_err, atlas, fit_mask=fit_mask)
         sedfit.evaluate_likelihood()
         sedfit.evaluate_posterior_percentiles()
 
