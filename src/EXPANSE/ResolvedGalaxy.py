@@ -203,6 +203,9 @@ class ResolvedGalaxy:
         interactive_outputs=None,
         autogalaxy_results=None,
         pysersic_results=None,
+        sed_fitting_sfhs=None,
+        sed_fitting_seds=None,
+        sed_fitting_pdfs=None,
     ):
         self.internal_bagpipes_cache = {}
 
@@ -254,6 +257,10 @@ class ResolvedGalaxy:
         # self.photometry_property_names = list(photometry_properties[photometry_properties.keys()][0].keys())
         self.autogalaxy_results = autogalaxy_results
         self.pysersic_results = pysersic_results
+
+        self.sed_fitting_sfhs = sed_fitting_sfhs
+        self.sed_fitting_seds = sed_fitting_seds
+        self.sed_fitting_pdfs = sed_fitting_pdfs
 
         """
         for property in photometry_properties:
@@ -1408,6 +1415,67 @@ class ResolvedGalaxy:
                                 psf_type
                             ][band][()]
 
+            sed_fitting_seds, sed_fitting_sfhs, sed_fitting_pdfs = (
+                None,
+                None,
+                None,
+            )
+            for mkey in [
+                "sed_fitting_seds",
+                "sed_fitting_sfhs",
+                "sed_fitting_pdfs",
+            ]:
+                if hfile.get(mkey) is not None:
+                    sed_fitting_temp = {}
+                    for key in hfile[mkey].keys():
+                        if type(hfile[mkey][key]) is h5.Group:
+                            sed_fitting_temp[key] = {}
+                            for subkey in hfile[mkey][key].keys():
+                                if type(hfile[mkey][key][subkey]) is h5.Group:
+                                    sed_fitting_temp[key][subkey] = {}
+                                    for subsubkey in hfile[mkey][key][
+                                        subkey
+                                    ].keys():
+                                        if (
+                                            type(
+                                                hfile[mkey][key][subkey][
+                                                    subsubkey
+                                                ]
+                                            )
+                                            is h5.Group
+                                        ):
+                                            sed_fitting_temp[key][subkey][
+                                                subsubkey
+                                            ] = {}
+                                            for subsubsubkey in hfile[mkey][
+                                                key
+                                            ][subkey][subsubkey].keys():
+                                                sed_fitting_temp[key][subkey][
+                                                    subsubkey
+                                                ][subsubsubkey] = hfile[mkey][
+                                                    key
+                                                ][subkey][subsubkey][
+                                                    subsubsubkey
+                                                ][()]
+                                        else:
+                                            sed_fitting_temp[key][subkey][
+                                                subsubkey
+                                            ] = hfile[mkey][key][subkey][
+                                                subsubkey
+                                            ][()]
+                                else:
+                                    sed_fitting_temp[key][subkey] = hfile[
+                                        mkey
+                                    ][key][subkey][()]
+                        else:
+                            sed_fitting_temp[key] = hfile[mkey][key][()]
+                    if mkey == "sed_fitting_seds":
+                        sed_fitting_seds = sed_fitting_temp
+                    elif mkey == "sed_fitting_sfhs":
+                        sed_fitting_sfhs = sed_fitting_temp
+                    elif mkey == "sed_fitting_pdfs":
+                        sed_fitting_pdfs = sed_fitting_temp
+
             interactive_outputs = None
             if hfile.get("interactive_outputs") is not None:
                 interactive_outputs = {}
@@ -1480,11 +1548,11 @@ class ResolvedGalaxy:
                         else:
                             unit = u.dimensionless_unscaled
 
-                    # print('unit', unit)
+                        # print('unit', unit)
 
-                    photometry_properties[map][prop] = (
-                        photometry_properties[map][prop] * unit
-                    )
+                        photometry_properties[map][prop] = (
+                            photometry_properties[map][prop] * unit
+                        )
                     # print(f'Loaded {prop} with shape {photometry_properties[prop].shape}')
 
         out_dict = {
@@ -1542,6 +1610,9 @@ class ResolvedGalaxy:
             "h5_folder": h5_folder,
             "psf_kernels": psf_kernels,
             "pysersic_results": pysersic_results,
+            "sed_fitting_seds": sed_fitting_seds,
+            "sed_fitting_sfhs": sed_fitting_sfhs,
+            "sed_fitting_pdfs": sed_fitting_pdfs,
             "interactive_outputs": interactive_outputs,
             "h5_path": h5path if type(h5_name) is not BytesIO else None,
             "save_out": save_out,
@@ -2171,6 +2242,20 @@ class ResolvedGalaxy:
         posterior_sample_method="median",
         force=True,
         save_chains=False,
+        prior_dict={
+            "xc": {
+                "type": "uniform",
+                "low": -3,
+                "high": 3,
+                "relative_to_centre": True,
+            },
+            "yc": {
+                "type": "uniform",
+                "low": -3,
+                "high": 3,
+                "relative_to_centre": True,
+            },
+        },
     ):
         """Run PySersic to perform Bayesian model fitting on galaxy images.
 
@@ -2247,6 +2332,13 @@ class ResolvedGalaxy:
             Whether to force save the results to the h5 file
         save_chains : bool
             Whether to save the chains to the h5 file.
+        prior_dict : dict
+            Dictionary of priors to use for the model parameters
+            Available types are uniform, gaussian, truncated_gaussian, custom (any numpyro distribution)
+            parameters: uniform - var_name, low, high
+                        gaussian - var_name, loc, scale
+                        truncated_gaussian - var_name, loc, scale, low, high
+
 
         Returns
         -------
@@ -2341,7 +2433,7 @@ class ResolvedGalaxy:
             raise ValueError(f"Mask type {mask_type} not recognized.")
         # Apply mask
 
-        from pysersic.priors import autoprior
+        from pysersic.priors import autoprior, SourceProperties
         from pysersic import FitSingle, check_input_data, FitMulti
         from pysersic.loss import student_t_loss
         from pysersic.results import plot_residual
@@ -2360,6 +2452,29 @@ class ResolvedGalaxy:
             mask=mask,
             sky_type=sky_type,
         )
+
+        for key in prior_dict:
+            prior_type = prior_dict[key]["type"]
+            prior_dict[key].pop("type")
+
+            if "relative_to_centre" in prior_dict[key]:
+                prior_dict[key].pop("relative_to_centre")
+                size = im_data.shape[0] / 2
+                prior_dict[key]["low"] = center[0] + prior_dict[key]["low"]
+                prior_dict[key]["high"] = center[0] + prior_dict[key]["high"]
+
+            if prior_type == "uniform":
+                prior.set_uniform_prior(**prior_dict[key], var_name=key)
+            elif prior_type == "gaussian":
+                prior.set_gaussian_prior(**prior_dict[key], var_name=key)
+            elif prior_type == "truncated_gaussian":
+                prior.set_truncated_gaussian_prior(
+                    **prior_dict[key], var_name=key
+                )
+            elif prior_type == "custom":
+                prior.set_custom_prior(**prior_dict[key], var_name=key)
+
+        print(prior)
 
         if "double" in model_type or "_" in model_type:
             fitter = FitMulti
@@ -3470,6 +3585,87 @@ class ResolvedGalaxy:
                             data=self.resolved_sed[key],
                             compression="gzip",
                         )
+
+                for key in [
+                    "sed_fitting_seds",
+                    "sed_fitting_sfhs",
+                    "sed_fitting_pdfs",
+                ]:
+                    if getattr(self, key) is not None:
+                        hfile.create_group(key)
+                        for subkey in getattr(self, key).keys():
+                            if type(getattr(self, key)[subkey]) is np.ndarray:
+                                hfile[key].create_dataset(
+                                    subkey,
+                                    data=getattr(self, key)[subkey],
+                                    compression="gzip",
+                                )
+                            else:
+                                hfile[key].create_group(subkey)
+                                for subsubkey in getattr(self, key)[
+                                    subkey
+                                ].keys():
+                                    if (
+                                        type(
+                                            getattr(self, key)[subkey][
+                                                subsubkey
+                                            ]
+                                        )
+                                        is dict
+                                    ):
+                                        hfile[key][subkey].create_group(
+                                            subsubkey
+                                        )
+                                        for subsubsubkey in getattr(self, key)[
+                                            subkey
+                                        ][subsubkey].keys():
+                                            if (
+                                                type(
+                                                    getattr(self, key)[subkey][
+                                                        subsubkey
+                                                    ][subsubsubkey]
+                                                )
+                                                is np.ndarray
+                                            ):
+                                                hfile[key][subkey][
+                                                    subsubkey
+                                                ].create_dataset(
+                                                    subsubsubkey,
+                                                    data=getattr(self, key)[
+                                                        subkey
+                                                    ][subsubkey][subsubsubkey],
+                                                    compression="gzip",
+                                                )
+                                            else:
+                                                hfile[key][subkey][
+                                                    subsubkey
+                                                ].create_group(subsubsubkey)
+                                                for subsubsubsubkey in getattr(
+                                                    self, key
+                                                )[subkey][subsubkey][
+                                                    subsubsubkey
+                                                ].keys():
+                                                    hfile[key][subkey][
+                                                        subsubkey
+                                                    ][
+                                                        subsubsubkey
+                                                    ].create_dataset(
+                                                        subsubsubsubkey,
+                                                        data=getattr(
+                                                            self, key
+                                                        )[subkey][subsubkey][
+                                                            subsubsubkey
+                                                        ][subsubsubsubkey],
+                                                    )
+
+                                    else:
+                                        hfile[key][subkey].create_dataset(
+                                            subsubkey,
+                                            data=getattr(self, key)[subkey][
+                                                subsubkey
+                                            ],
+                                            compression="gzip",
+                                        )
 
                 if self.pysersic_results is not None:
                     hfile.create_group("pysersic")
@@ -6613,8 +6809,9 @@ class ResolvedGalaxy:
         priors=None,  # Allow passing in of priors for speed
         save_outputs=True,
         fix_redshift=False,
-        save_basic_only=False,  # equivalent to just saving catalogue, no PDFs, SEDs, SFHs
         save_full_posteriors=False,
+        save_spectra=False,
+        save_sfh=False,
         parameters_to_save=["mstar", "sfr", "Av", "Z", "z"],
     ):
         # import dense_basis as db
@@ -6789,12 +6986,57 @@ class ResolvedGalaxy:
             save_full=save_full_posteriors,
             overwrite=overwrite,
             priors=priors,
-            save_basic_only=save_basic_only,
+            save_sfh=save_sfh,
+            save_spectra=save_spectra,
             parameters_to_save=parameters_to_save,
             additional_name=additional_name,
         )
 
         return fit_results
+
+    def _plot_dense_basis_results(
+        fit_results,
+        ids,
+        run_name,
+        show=True,
+        save=False,
+        save_path="",
+        priors=None,
+    ):
+        # Plot the results of the dense_basis fit
+
+        self.get_filter_wavs()
+        wavs = [
+            self.filter_wavs[band].to(u.Angstrom).value for band in self.bands
+        ]
+
+        for fit_result, bin_id in zip(fit_results, ids):
+            fig = fit_result.plot_posteriors()
+            if save:
+                fig.savefig(
+                    f"{save_path}/{galaxy.galaxy_id}_{run_name}_{bin_id}_posteriors.png",
+                    dpi=200,
+                )
+
+            fig = fit_result.plot_posterior_SFH(fit_result.z[0])
+
+            if save:
+                fig.savefig(
+                    f"{save_path}/{galaxy.galaxy_id}_{run_name}_{bin_id}_sfh.png",
+                    dpi=200,
+                )
+
+            if priors is not None:
+                fig = fit_result.plot_posterior_spec(wavs, priors)
+
+                if save:
+                    fig.savefig(
+                        f"{save_path}/{galaxy.galaxy_id}_{run_name}_{bin_id}_spec.png",
+                        dpi=200,
+                    )
+
+            if show:
+                plt.show()
 
     def _save_db_fit_results(
         self,
@@ -6808,8 +7050,10 @@ class ResolvedGalaxy:
         parameters_to_save=["mstar", "sfr", "Av", "Z", "z"],
         posterior_values=[50.0, 16.0, 84.0],
         ngals=100,
-        save_basic_only=False,
+        save_spectra=False,
+        save_sfh=False,
         additional_name="",
+        plot=False,
     ):
         """
         Save the dense_basis fit results to the h5 file
@@ -6862,11 +7106,16 @@ class ResolvedGalaxy:
 
         # start assembling the table
 
+        if plot:
+            self._plot_dense_basis_results(fit_results, ids, db_atlas_name)
+
         save_seds = {}
         save_sfhs = {}
         save_pdfs = {}
         rows = []
-        for i, fit_result in tqdm(enumerate(fit_results)):
+        for i, fit_result in tqdm(
+            enumerate(fit_results), total=len(fit_results)
+        ):
             table_row = {}
             table_row["#ID"] = ids[i]
             try:
@@ -6899,7 +7148,7 @@ class ResolvedGalaxy:
                     table_row[f"{parameter}_{int(quantile)}"] = val[j]
 
             zval = fit_result.z[1]
-            if not save_basic_only:
+            if save_sfh:
                 sfh_50, sfh_16, sfh_84, time = (
                     fit_result.evaluate_posterior_SFH(zval, ngals=ngals)
                 )
@@ -6910,7 +7159,7 @@ class ResolvedGalaxy:
                 lam_all = []
                 spec_all = []
                 z_all = []
-
+            if save_spectra:
                 # print spectra time baby!
                 print("spectra be spectraing")
                 bestn_gals = np.argsort(fit_result.likelihood)
@@ -6976,7 +7225,7 @@ class ResolvedGalaxy:
             )
 
             # Save SED
-            if not save_basic_only:
+            if save_seds:
                 for i in save_seds.keys():
                     self.add_to_h5(
                         save_seds[i],
@@ -6986,8 +7235,19 @@ class ResolvedGalaxy:
                         setattr_gal=None,
                         force=True,
                     )
+                if self.sed_fitting_seds is None:
+                    self.sed_fitting_seds = {}
+                if "dense_basis" not in self.sed_fitting_seds.keys():
+                    self.sed_fitting_seds["dense_basis"] = {}
+                if (
+                    db_atlas_name
+                    not in self.sed_fitting_seds["dense_basis"].keys()
+                ):
+                    self.sed_fitting_seds["dense_basis"][db_atlas_name] = {}
+                self.sed_fitting_seds["dense_basis"][db_atlas_name] = save_seds
 
-                # Save SFH
+            # Save SFH
+            if save_sfhs:
                 for i in save_sfhs.keys():
                     self.add_to_h5(
                         save_sfhs[i],
@@ -6997,6 +7257,16 @@ class ResolvedGalaxy:
                         setattr_gal=None,
                         force=True,
                     )
+                if self.sed_fitting_sfhs is None:
+                    self.sed_fitting_sfhs = {}
+                if "dense_basis" not in self.sed_fitting_sfhs.keys():
+                    self.sed_fitting_sfhs["dense_basis"] = {}
+                if (
+                    db_atlas_name
+                    not in self.sed_fitting_sfhs["dense_basis"].keys()
+                ):
+                    self.sed_fitting_sfhs["dense_basis"][db_atlas_name] = {}
+                self.sed_fitting_sfhs["dense_basis"][db_atlas_name] = save_sfhs
 
             # Save PDFs
             if save_full:
@@ -7010,6 +7280,16 @@ class ResolvedGalaxy:
                             setattr_gal=None,
                             force=True,
                         )
+                if self.sed_fitting_pdfs is None:
+                    self.sed_fitting_pdfs = {}
+                if "dense_basis" not in self.sed_fitting_pdfs.keys():
+                    self.sed_fitting_pdfs["dense_basis"] = {}
+                if (
+                    db_atlas_name
+                    not in self.sed_fitting_pdfs["dense_basis"].keys()
+                ):
+                    self.sed_fitting_pdfs["dense_basis"][db_atlas_name] = {}
+                self.sed_fitting_pdfs["dense_basis"][db_atlas_name] = save_pdfs
 
     def plot_filter_transmission(
         self,
@@ -7067,8 +7347,9 @@ class ResolvedGalaxy:
         output_radial_units="pix",
         return_map=False,
         z_for_scale=None,
-        axs=None,
+        axi=None,
         fig=None,
+        morphology_run_name=None,
     ):
         """Plot the radial profile of the map
 
@@ -7080,9 +7361,16 @@ class ResolvedGalaxy:
         """
 
         if fig is None:
-            fig, axs = plt.subplots(nrows=1, ncols=1, figsize=(10, 5), dpi=100)
-        if axs is None:
-            axs = fig.subplots(nrows=1, ncols=1)
+            fig, axi = plt.subplots(nrows=1, ncols=2, figsize=(10, 5), dpi=100)
+
+        if axi is None:
+            axi = fig.subplots(nrows=1, ncols=2)
+
+        map_axs = axi[0]
+        axs = axi[1]
+        cax = make_axes_locatable(map_axs).append_axes(
+            "right", size="5%", pad=0.05
+        )
 
         if output_radial_units == "pix":
             pix_scale = 1 * u.pix
@@ -7100,6 +7388,12 @@ class ResolvedGalaxy:
             d_A = cosmo.angular_diameter_distance(z).to(u.kpc)
             pixel_size = self.im_pixel_scales[self.bands[-1]].to(u.rad).value
             pix_scale = (d_A * pixel_size).to(u.kpc)
+        elif output_radial_units == "reff":
+            r_eff = self.pysersic_results[morphology_run_name]["meta"][
+                "results"
+            ]["r_eff"][1]
+            pix_scale = 1 / r_eff
+
         else:
             raise ValueError(
                 f"Output radial units {output_radial_units} not recognised"
@@ -7130,14 +7424,27 @@ class ResolvedGalaxy:
             y_com = np.sum(y * m) / np.sum(m)
             center = (y_com, x_com)
 
-        from .utils import measure_cog
+        from .utils import measure_cog, calculate_radial_profile
 
-        radii, value = measure_cog(
-            map, center, nrad, maxrad=maxrad, minrad=minrad
-        )
+        if profile_type in [
+            "cumulative",
+            "differential",
+            "differential_density",
+        ]:
+            radii, value = measure_cog(
+                map, center, nrad, maxrad=maxrad, minrad=minrad
+            )
+        elif profile_type in ["mean", "median"]:
+            radii, value = calculate_radial_profile(
+                map,
+                center,
+                max_radius=maxrad,
+                nrad=nrad,
+                statistic=profile_type,
+            )
         plot_radii = copy.copy(radii)
 
-        print(radii, value)
+        # print(radii, value)
 
         from unyt import unyt_array
 
@@ -7178,6 +7485,10 @@ class ResolvedGalaxy:
 
             # Ensure that radii and value are the same length
             plot_radii = radii
+        elif profile_type == "mean":
+            pass
+        elif profile_type == "median":
+            pass
 
         else:
             raise ValueError(f"Profile type {profile_type} not recognised")
@@ -7185,15 +7496,121 @@ class ResolvedGalaxy:
         # if return_map:
         #    return radii, value
 
-        axs.plot(plot_radii, value)
+        mm = map_axs.imshow(map, origin="lower")
+        fig.colorbar(mm, cax=cax, orientation="vertical")
+        """
+        #for r in plot_radii:
+            map_axs.add_artist(
+                plt.Circle(
+                    center,
+                    r,
+                    fill=False,
+                    color="red",
+                ))
+        """
+
+        axs.plot(radii, value)
 
         if log:
             axs.set_yscale("log")
 
         axs.set_ylabel(y_label)
-        axs.set_xlabel(f"Radius ({pix_scale.unit})")
+        unit = (
+            pix_scale.unit
+            if type(pix_scale) is u.Quantity
+            else output_radial_units
+        )
+        axs.set_xlabel(f"Radius ({unit})")
 
-        return fig, axs
+        # adjust constrained figure to avoid overlap
+
+        fig.tight_layout()
+
+        return fig, axi
+
+    def plot_internal_sfh(
+        self,
+        sed_fitter,
+        run_name,
+        bins_to_show=["RESOLVED", "TOTAL_BIN"],
+        colors=[],
+        ax=None,
+        fig=None,
+        log=False,
+        time_unit=u.Gyr,
+        alpha=0.5,
+        fill=True,
+        **kwargs,
+    ):
+        results = self.sed_fitting_sfhs[sed_fitter][run_name]
+
+        if fig is None:
+            fig = plt.figure(figsize=(8, 6), dpi=100)
+        if ax is None:
+            ax = fig.add_subplot(111)
+
+        if bins_to_show == "all":
+            bins_to_show = results.keys()
+
+        if "RESOLVED" in bins_to_show:
+            numerical_bins = []
+            for bin in results.keys():
+                try:
+                    int(bin)
+                    numerical_bins.append(bin)
+                except ValueError:
+                    continue
+            total_time = results[numerical_bins[0]][0] * u.Gyr
+            total_sfh = results[numerical_bins[0]][1:]
+            for bin in numerical_bins[1:]:
+                sfh = results[bin][1:]
+
+                total_sfh = np.nansum([total_sfh, sfh], axis=0)
+                assert (
+                    len(sfh[0]) == len(total_time)
+                ), f"Time array for bin {bin} is not the same length as the total time array"
+            results["RESOLVED"] = np.vstack([total_time.value, total_sfh])
+
+        max = 0
+        for i, bin in enumerate(bins_to_show):
+            if colors != []:
+                color = colors[i]
+            else:
+                color = None
+            sfh = results[bin]
+            time = sfh[0] * u.Gyr
+            sfr = sfh[1:]
+            max_sfr = np.nanmax(sfr[1])
+            if max_sfr > max:
+                max = max_sfr
+
+            # replace NANs with 0
+            sfr = np.nan_to_num(sfr)
+
+            line = ax.plot(
+                time.to(time_unit).value,
+                sfr[1],
+                label=bin,
+                **kwargs,
+                color=color,
+            )
+            if fill:
+                ax.fill_between(
+                    time.to(time_unit).value,
+                    sfr[0],
+                    sfr[2],
+                    color=line[0].get_color(),
+                    alpha=alpha,
+                    linewidth=0,
+                )
+
+        if log:
+            ax.set_yscale("log")
+        ax.set_ylim(0, max * 1.3)
+        ax.set_xlabel(f"Lookback Time ({time_unit})")
+        ax.set_ylabel("SFR (M$_\odot$ yr$^{-1}$)")
+
+        return fig, ax
 
     def plot_bagpipes_overview(
         self,
@@ -7385,7 +7802,7 @@ class ResolvedGalaxy:
                 show_half_radius=True,
                 add_cbar=True,
                 return_map=False,
-                override_display_names={},
+                override_param_names={},
             )
 
         # Plot SFH
@@ -9852,12 +10269,206 @@ class ResolvedGalaxy:
 
         return data
 
+    def radial_scatter_of_property_map(
+        self,
+        run_name=None,
+        binmap_type="pixedfit",
+        param="stellar_mass",
+        center="com",
+        fig=None,
+        axs=None,
+        output_radial_units="pix",
+        reload_from_cat=False,
+        average_type="mean",
+        weight_by_band=None,
+        plot=True,
+        return_values=False,
+        com_run_name="run_name",
+        **kwargs,
+    ):
+        from .utils import calculate_distance_to_bin_from_center
+
+        if not hasattr(self, f"{binmap_type}_map"):
+            raise Exception(f"Need to run {binmap_type} binning first")
+        # If it still isn't there, return None
+
+        if run_name != "galfind":
+            if (
+                not hasattr(self, "sed_fitting_table")
+                or "bagpipes" not in self.sed_fitting_table.keys()
+            ):
+                print("No bagpipes results found.")
+                return None
+
+            if run_name is None:
+                run_name = list(self.sed_fitting_table["bagpipes"].keys())
+                if len(run_name) > 1:
+                    raise Exception(
+                        "Multiple runs found, please specify run_name"
+                    )
+                else:
+                    run_name = run_name[0]
+
+            if (
+                not hasattr(self, "sed_fitting_table")
+                or "bagpipes" not in self.sed_fitting_table.keys()
+                or run_name not in self.sed_fitting_table["bagpipes"].keys()
+                or reload_from_cat
+            ):
+                self.load_bagpipes_results(run_name)
+
+            if (
+                not hasattr(self, "sed_fitting_table")
+                or "bagpipes" not in self.sed_fitting_table.keys()
+                or run_name not in self.sed_fitting_table["bagpipes"].keys()
+            ):
+                print("No bagpipes results found after loading.")
+                return None
+
+            table = self.sed_fitting_table["bagpipes"][run_name]
+            redshift = self.sed_fitting_table["bagpipes"][run_name][
+                "input_redshift"
+            ][0]
+
+        binmap = getattr(self, f"{binmap_type}_map")
+
+        param_name = f"{param[:-1]}" if param.endswith("-") else f"{param}_50"
+
+        binmap = getattr(self, f"{binmap_type}_map")
+
+        if run_name == "galfind":
+            table = self.photometry_properties[binmap_type][param].T[0]
+            ids = ast.literal_eval(
+                self.photometry_meta_properties[binmap_type][param]["PDF_keys"]
+            )
+            table = Table([ids, table], names=["#ID", param])
+            param_name = param
+
+        ids = np.unique(binmap)
+        ids = ids[~np.isnan(ids) & (ids != 0)]
+
+        if plot:
+            if fig is None:
+                fig = plt.figure(
+                    figsize=(6, 6),
+                    constrained_layout=True,
+                    facecolor="white",
+                    dpi=200,
+                )
+            if axs is None:
+                axs = fig.subplots(1, 1)
+
+        if center == "com":
+            if com_run_name == "run_name":
+                com_run_name = run_name
+
+            btable = self.sed_fitting_table["bagpipes"][com_run_name]
+            redshift = self.sed_fitting_table["bagpipes"][com_run_name][
+                "input_redshift"
+            ][0]
+
+            mass_map = self.convert_table_to_map(
+                btable,
+                "#ID",
+                "stellar_mass_50",
+                binmap,
+                remove_log10=True,
+            )
+
+            mass_map = self.map_to_density_map(
+                mass_map,
+                redshift=redshift,
+                weight_by_band="F444W",
+                logmap=True,
+                binmap_type=binmap_type,
+                area_norm=False,
+            )
+            mass_map = 10**mass_map
+
+            x, y = np.meshgrid(
+                np.arange(mass_map.shape[1]), np.arange(mass_map.shape[0])
+            )
+            x = x.flatten()
+            y = y.flatten()
+            m = mass_map.flatten()
+            x_com = np.nansum(x * m) / np.nansum(m)
+            y_com = np.nansum(y * m) / np.nansum(m)
+            center = (x_com, y_com)
+        else:
+            raise NotImplementedError
+
+        if weight_by_band is not None:
+            weight = copy.deepcopy(
+                self.psf_matched_data["star_stack"][weight_by_band]
+            )
+            weight[weight < 0] = 0
+            weight = weight / np.nansum(weight)
+        else:
+            weight = None
+
+        if output_radial_units == "pix":
+            factor = 1
+        elif output_radial_units == "kpc":
+            factor = self._pix_scale_kpc(redshift=redshift)
+        elif output_radial_units == "arcsec":
+            factor = self.im_pixel_scales[self.bands[-1]]
+
+        distances, values = [], []
+        errors = []
+        for value in ids:
+            distance = calculate_distance_to_bin_from_center(
+                binmap,
+                center,
+                value,
+                type=average_type,
+                weight_map=weight,
+                scale=None,
+            )
+            distances.append(distance)
+            mask = table["#ID"] == str(int(value))
+            if np.sum(mask) == 0:
+                print(f"ID {value} not found in table.")
+                print(table)
+
+            table_value = table[mask][param_name][0]
+            if param_name.endswith("_50"):
+                errors.append(
+                    (
+                        table_value
+                        - table[mask][param_name.replace("50", "16")][0],
+                        table[mask][param_name.replace("50", "84")][0]
+                        - table_value,
+                    )
+                )
+
+            values.append(table_value)
+            if plot:
+                points = axs.scatter(distance * factor, table_value, **kwargs)
+                if param_name.endswith("_50"):
+                    axs.errorbar(
+                        distance * factor,
+                        table_value,
+                        yerr=np.array(errors).T,
+                        marker="none",
+                        alpha=0.5,
+                        color=points.get_facecolor(),
+                    )
+
+        distances = np.array(distances) * factor
+        values = np.array(values)
+        errors = np.array(errors)
+
+        if return_values:
+            return distances, values, errors
+
+        return fig
+
     def measure_cog_of_property_map(
         self,
         run_name=None,
         binmap_type="pixedfit",
         param="stellar_mass",
-        pos="center",
+        center="auto",
         nradii=20,
         maxrad=32,
         minrad=1,
@@ -9868,6 +10479,8 @@ class ResolvedGalaxy:
         reload_from_cat=False,
         weight_mass_sfr=True,
         plot=True,
+        density_map=True,
+        area_norm=True,
         replace_nan=False,
         **kwargs,
     ):
@@ -9913,13 +10526,15 @@ class ResolvedGalaxy:
         binmap = getattr(self, f"{binmap_type}_map")
 
         param_name = f"{param[:-1]}" if param.endswith("-") else f"{param}_50"
-        map = self.convert_table_to_map(
-            table,
-            "#ID",
-            param_name,
-            binmap,
-            remove_log10=param.startswith("stellar_mass"),
-        )
+
+        if param not in ["resolved_ssfr", "resolved_ssfr_10myr"]:
+            map = self.convert_table_to_map(
+                table,
+                "#ID",
+                param_name,
+                binmap,
+                remove_log10=param.startswith("stellar_mass"),
+            )
 
         log = ""
 
@@ -9928,6 +10543,8 @@ class ResolvedGalaxy:
             "sfr",
             "stellar_mass_10myr",
             "sfr_10myr",
+            "resolved_ssfr",
+            "resolved_ssfr_10myr",
         ]:
             ref_band = {
                 "stellar_mass": "F444W",
@@ -9937,31 +10554,83 @@ class ResolvedGalaxy:
             }
             # print(param, np.nanmin(map), np.nanmax(map))
 
-            if weight_mass_sfr:
-                weight = ref_band[param]
+            if param in ["resolved_ssfr", "resolved_ssfr_10myr"]:
+                sfr_map = self.convert_table_to_map(
+                    table,
+                    "#ID",
+                    "sfr_50" if param == "resolved_ssfr" else "sfr_10myr_50",
+                    binmap,
+                    remove_log10=False,
+                )
+                mass_map = self.convert_table_to_map(
+                    table,
+                    "#ID",
+                    "stellar_mass_50",
+                    binmap,
+                    remove_log10=True,
+                )
+                if density_map:
+                    mass_map = self.map_to_density_map(
+                        mass_map,
+                        redshift=redshift,
+                        weight_by_band=ref_band["stellar_mass"],
+                        logmap=True,
+                        binmap_type=binmap_type,
+                        area_norm=False,
+                    )
+                    sfr_map = self.map_to_density_map(
+                        sfr_map,
+                        redshift=redshift,
+                        weight_by_band=ref_band["sfr"],
+                        logmap=True,
+                        binmap_type=binmap_type,
+                        area_norm=False,
+                    )
+                map = sfr_map - mass_map
+
             else:
-                weight = False
+                if weight_mass_sfr:
+                    weight = ref_band[param]
+                else:
+                    weight = False
 
-            # # Calculate half-mass/sfr radius
+                if density_map:
+                    map = self.map_to_density_map(
+                        map,
+                        redshift=redshift,
+                        weight_by_band=weight,
+                        logmap=True,
+                        binmap_type=binmap_type,
+                        area_norm=area_norm,
+                    )
 
-            map = self.map_to_density_map(
-                map,
-                redshift=redshift,
-                weight_by_band=weight,
-                logmap=True,
-                binmap_type=binmap_type,
-                area_norm=False,
-            )
-
-            log = r"$\log_{10}$ "
+                    log = r"$\log_{10}$ "
 
         # replace nan with 0
         if replace_nan:
             map[np.isnan(map)] = 0
 
+        if center == "com":
+            mass_map = self.convert_table_to_map(
+                table,
+                "#ID",
+                "stellar_mass_50",
+                binmap,
+                remove_log10=True,
+            )
+            x, y = np.meshgrid(
+                np.arange(mass_map.shape[1]), np.arange(mass_map.shape[0])
+            )
+            x = x.flatten()
+            y = y.flatten()
+            m = mass_map.flatten()
+            x_com = np.nansum(x * m) / np.nansum(m)
+            y_com = np.nansum(y * m) / np.nansum(m)
+            center = (x_com, y_com)
+
         out = self._plot_radial_profile(
             map,
-            center="auto",
+            center=center,
             nrad=nradii,
             minrad=minrad,
             maxrad=maxrad,
@@ -9970,7 +10639,7 @@ class ResolvedGalaxy:
             return_map=~plot,
             z_for_scale=self.redshift,
             fig=fig,
-            axs=axs,
+            axi=axs,
             **kwargs,
         )
 
@@ -10245,6 +10914,11 @@ class ResolvedGalaxy:
 
         for i, param in enumerate(parameters):
             done = False
+            unit = ""
+            # remove axis ticks
+            axes[i].set_xticks([])
+            axes[i].set_yticks([])
+
             if param == "lupton_rgb":
                 self.plot_lupton_rgb(
                     ax=axes[i],
@@ -12723,7 +13397,7 @@ class ResolvedGalaxy:
         elif type(binmap_type) is np.ndarray:
             map = binmap_type
 
-        map = copy.deepcopy(map)
+        map = copy.deepcopy(map).astype(float)
         map[map == 0] = np.nan
         # PDFs = []
 
@@ -12795,7 +13469,6 @@ class ResolvedGalaxy:
             #    param_name = param_name
 
             value = phot.properties[property_name]
-            print("value", value)
             # print(param_name, value)
             if type(value) in [
                 u.Quantity,

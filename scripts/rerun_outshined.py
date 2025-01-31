@@ -56,7 +56,7 @@ bagpipes_runs = [
     "photoz_dpl",
     "photoz_continuity",
 ]
-binmap_type = "voronoi"  # "pixel_by_pixel"
+binmap_type = "pixel_by_pixel"  # "pixel_by_pixel"
 fit_photometry = "bin"
 
 bagpipes_only = True  # This is for running Bagpipes only if the galaxies have already been created
@@ -203,7 +203,7 @@ resolved_dicts_cnst = create_dicts(
 
 override_meta_resolved = {
     "use_bpass": True,
-    "run_name": "BURSTY_SFH_RESOLVED_VORONOI",
+    "run_name": "BURSTY_SFH_RESOLVED_PBP",
 }
 
 resolved_dicts_bursty = create_dicts(

@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+import copy
 
 import matplotlib as mpl
 import numpy as np
@@ -1370,3 +1371,77 @@ def calculate_half_radius(
     radius = r1 + (r2 - r1) * (total / 2 - m1) / (m2 - m1)
 
     return radius, center
+
+
+def calculate_radial_profile(
+    map_2d, center, bin_size=1.0, max_radius=None, nrad=None, statistic="mean"
+):
+    """
+    Calculate the radial profile of a 2D map.
+
+    Parameters:
+    -----------
+    map_2d : 2D numpy array
+        The input 2D map/image
+    center : tuple of (x, y)
+        The center coordinates for the radial calculation
+    bin_size : float
+        The width of each radial bin
+    nrad: int
+        Number of radial bins
+    max_radius : float or None
+        Maximum radius to calculate. If None, will use the maximum possible radius
+    statistic : str
+        The statistic to calculate in each radial bin ('mean' or 'median')
+
+    Returns:
+    --------
+    radii : numpy array
+        The radial distances (center of each bin)
+    profile : numpy array
+        The calculated profile values
+    std_profile : numpy array
+        The standard deviation in each radial bin
+    """
+    # Create coordinate grids
+    y, x = np.indices(map_2d.shape)
+
+    # Calculate radial distance for each pixel
+    r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
+
+    # Determine maximum radius if not specified
+    if max_radius is None:
+        max_radius = np.max(r)
+
+    # Create radial bins
+    if nrad is not None:
+        bin_size = max_radius / nrad
+
+    rbins = np.arange(0, max_radius + bin_size, bin_size)
+
+    # Initialize arrays for results
+    profile = np.zeros(len(rbins) - 1)
+    std_profile = np.zeros(len(rbins) - 1)
+    radii = (rbins[1:] + rbins[:-1]) / 2
+
+    # Calculate statistics for each radial bin
+    for i in range(len(rbins) - 1):
+        # Create mask for current annulus
+        mask = (r >= rbins[i]) & (r < rbins[i + 1])
+
+        if np.any(mask):
+            values = map_2d[mask]
+
+            if statistic == "mean":
+                profile[i] = np.nanmean(values)
+            elif statistic == "median":
+                profile[i] = np.nanmedian(values)
+            else:
+                raise ValueError("Statistic must be either 'mean' or 'median'")
+
+            std_profile[i] = np.std(values)
+        else:
+            profile[i] = np.nan
+            std_profile[i] = np.nan
+
+    return radii, profile  # , std_profile

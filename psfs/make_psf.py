@@ -2350,15 +2350,22 @@ def make_err_from_wht(path):
 
 
 def psf_correction_factor(
-    match_band,
-    psf_dir,
+    match_band=None,
+    psf_dir=None,
     apersize=0.32,
     pixel_scale=0.03,
     fix_extrapolation=False,
     conv_psfmodel=None,
     mag_corr_factor=True,
+    psf_path=None,
 ):
-    if conv_psfmodel is None:
+    if conv_psfmodel is None and psf_path is not None:
+        conv_psfmodel = fits.getdata(psf_path)
+    elif (
+        conv_psfmodel is None
+        and match_band is not None
+        and psf_dir is not None
+    ):
         conv_psfmodel = fits.open(psf_dir + f"/{match_band}_psf_norm.fits")[
             0
         ].data  # My modelled PSF
