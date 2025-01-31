@@ -242,6 +242,8 @@ def make_db_grid(
         # add bands as metadata
         f.attrs["bands"] = str(bands)
 
+    return h5_path
+
 
 def get_priors(atlas_path=None):
     import dense_basis as db

@@ -193,7 +193,7 @@ for galaxy in galaxies_outshined:
 
 override_meta_resolved = {
     "use_bpass": True,
-    "run_name": "CNST_SFH_RESOLVED_VORONOI",
+    "run_name": "CNST_SFH_RESOLVED_PBP",
 }
 resolved_dicts_cnst = create_dicts(
     resolved_dict_cnst,
