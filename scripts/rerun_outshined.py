@@ -178,6 +178,19 @@ for galaxy in galaxies:
 
 galaxies_lowmass = galaxies[np.array(masses) < 9]
 
+remove = []
+for galaxy in galaxies_lowmass:
+    galaxy.pixel_by_pixel_galaxy_region(
+        snr_req=2, band_req="all_wide_nobreak", mask="detection"
+    )
+    galaxy.pixel_by_pixel_binmap(galaxy.gal_region["SNR_2_all_wide_nobreak"])
+    if galaxy.get_number_of_bins(binmap_type) <= 1:
+        print(f"Galaxy {galaxy.galaxy_id} has no bins")
+        remove.append(galaxy.galaxy_id)
+    else:
+        galaxy.measure_flux_in_bins(binmap_type=binmap_type, overwrite=False)
+
+galaxies_lowmass = galaxies_lowmass.filter_IDs(remove, invert=True)
 
 """
 for galaxy in galaxies_outshined:
