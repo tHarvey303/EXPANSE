@@ -168,9 +168,14 @@ galaxies = galaxies.filter_single_bins("pixedfit")
 """
 resolved_run = "CNST_SFH_RESOLVED"
 
-masses = [
-    galaxy.get_total_resolved_property(resolved_run)[1] for galaxy in galaxies
-]
+masses = []
+for galaxy in galaxies:
+    try:
+        mass = galaxy.get_total_resolved_property(resolved_run)[1]
+        masses.append(mass)
+    except:
+        masses.append(0)
+
 galaxies_lowmass = galaxies[np.array(masses) < 9]
 
 

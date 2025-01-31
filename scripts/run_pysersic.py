@@ -47,6 +47,8 @@ overwrite_ids = [
     "15149",
 ]
 
+overwrite_ids = ["3217", "922", "4403", "6678"]
+
 for galaxy in tqdm(galaxies):
     galaxy.add_psf_models(
         "/nvme/scratch/work/tharvey/EXPANSE/psfs/psf_models/star_stack/JOF_psfmatched/",
