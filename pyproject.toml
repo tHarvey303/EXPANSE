@@ -93,7 +93,7 @@ dependencies = [
   "requests",
   "pandas",
   "corner",
-  "bagpipes @ git+https://github.com/tHarvey303/EXPANSE/@main",
+  "bagpipes @ git+https://github.com/tHarvey303/bagpipes/",
 ]
 
 # Optional dependencies for specific use cases
