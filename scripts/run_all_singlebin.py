@@ -73,7 +73,7 @@ elif computer == "singularity":
 
 field = "JOF_psfmatched"
 load_only = False
-fit_photometry = "TOTAL_BIN"
+fit_photometry = "bin"
 
 
 try:
@@ -142,14 +142,14 @@ resolved_dicts_bursty = create_dicts(
 
 
 for dicts in [
-    delayed_dicts,
+    # delayed_dicts,
     # continuity_dicts,
     # cnst_dicts,
     # continuity_bursty_dicts,
     # dpl_dicts,
     # lognorm_dicts,
     # resolved_dicts_cnst,
-    # resolved_dicts_bursty,
+    resolved_dicts_bursty,
 ]:
     multiple_galaxies.run_bagpipes_parallel(
         dicts,

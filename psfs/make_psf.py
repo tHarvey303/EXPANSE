@@ -1839,6 +1839,13 @@ def psf_comparison(
                 filename = filename[0]
             psf = fits.getdata(filename)
 
+            pixscl = (
+                pixelscale if type(pixelscale) is float else pixelscale[name]
+            )
+            fov = psf.shape[0] * pixscl
+
+            psfmodel = renorm_psf(psf, filt=band, pixscl=pixscl, fov=fov)
+
             # nradii should depend on dimensions of PSF
             nradii = int(np.sqrt(np.sum(np.array(psf.shape) ** 2)) / 2)
 
@@ -1846,11 +1853,7 @@ def psf_comparison(
                 psf, rnorm=None, nradii=nradii
             )
 
-            radii = (
-                radii * pixelscale
-                if type(pixelscale) is float
-                else radii * pixelscale[name]
-            )
+            radii = radii * pixscl
             # Interpolate COG to get radii at COG = 0.8
             cog_interp = scipy.interpolate.interp1d(
                 cog, radii, fill_value="extrapolate"
@@ -1919,7 +1922,7 @@ def psf_comparison(
                 alpha=0.8,
             )
     fig.get_layout_engine().set(wspace=-5, hspace=-3)
-
+    print("Saved")
     fig.savefig("/nvme/scratch/work/tharvey/PSFs/psf_comparison.pdf", dpi=300)
 
 
@@ -2388,13 +2391,16 @@ def psf_correction_factor(
 
 
 if __name__ == "__main__":
-    surveys = ["JOF"]  # ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
     surveys = ["NEP-1", "NEP-2", "NEP-3", "NEP-4"]
+    surveys = [f"CEERSP{i}" for i in range(1, 11)]
+    surveys = ["JOF"]  # ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
+
     # surveys = [[f"COSMOS-Web-{i}A", f"COSMOS-Web-{i}B"] for i in range(0, 7)]
     # flatten list
     # surveys = [item for sublist in surveys for item in sublist]
     print(surveys)
     outdir_name = "+".join(surveys)
+    outdir_name == "CEERS"
     # outdir_name = "COSMOS-Web"
     #
     version = "v11"
@@ -2411,7 +2417,7 @@ if __name__ == "__main__":
     manual_id_remove = []
     # im_paths = data.im_paths
     # bands = data.instrument.band_names
-    """
+
     bands = [
         "F090W",
         "F115W",
@@ -2428,12 +2434,11 @@ if __name__ == "__main__":
         "F410M",
         "F444W",
     ]
-    """
+
     # bands = ["F115W", "F150W", "F277W", "F444W"]
     # NORMAL OPERATION HERE
-
+    """
     bands = [
-        "F090W",
         "F115W",
         "F150W",
         "F200W",
@@ -2443,7 +2448,7 @@ if __name__ == "__main__":
         "F444W",
     ]
     folders = [
-        f"/raid/scratch/data/jwst/{survey}/NIRCam/mosaic_1084_wisptemp2/"
+        f"/raid/scratch/data/jwst/{survey}/mosaic_1084_wisptemp2_whtfix/"
         for survey in surveys
     ]
 
@@ -2467,7 +2472,7 @@ if __name__ == "__main__":
     wht_paths = copy(im_paths)  # Placeholder
     err_paths = copy(im_paths)  # Placeholder
     phot_zp = {band: 28.08 for band in bands}
-
+    """
     # Add HST seperately
     # Reset
     # For Nathan
@@ -2520,7 +2525,7 @@ if __name__ == "__main__":
                 + 18.6921
             )
 
-    
+
 
     make_psf(
         bands,
@@ -2537,7 +2542,7 @@ if __name__ == "__main__":
         pypher_r=1e-4,
     )
 
-
+        
     # bands = []
     for band in ["F850LP", "F814W", "F775W", "F606W", "F435W"]:
         bands.insert(0, band)
@@ -2588,7 +2593,8 @@ if __name__ == "__main__":
 
         print(band, phot_zp[band])
     """
-    print(im_paths)
+    for band in ["F850LP", "F814W", "F775W", "F606W", "F435W"]:
+        bands.insert(0, band)
     manual_id_remove = []
     # maglim = [18., 25.]
 
@@ -2611,7 +2617,7 @@ if __name__ == "__main__":
         "WebbPSF\n$\\sigma=\\left\\{^{22(SW)}_{34(LW)}\\right.$ mas": 0.03,
     }  # 'New webbpsf':0.03}
 
-    # Make PSF model and kernels from stacking stars
+    """# Make PSF model and kernels from stacking stars
     make_psf(
         bands,
         im_paths,
@@ -2672,10 +2678,14 @@ if __name__ == "__main__":
             )
             # get_webbpsf(band, field='default', angle=0, fov=4, og_fov=10, pixscl=0.03, date=None, output=f'{outdir_webbpsf}/default_jitter')
             pass
+    """
     # Compare EE for different models
-    # psf_comparison(bands, psf_dir_dict, match_band=match_band, pixelscale=pixelscale)
-    psf_dir_dict = {"+".join(surveys): outdir}
-    kernel_dir_dict = {"+".join(surveys): kernel_dir}
+
+    psf_comparison(
+        bands, psf_dir_dict, match_band=match_band, pixelscale=pixelscale
+    )
+
+    crash
 
     rel_cog_comparison(
         bands,

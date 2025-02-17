@@ -3,7 +3,8 @@ from .ResolvedGalaxy import (ResolvedGalaxy,
                             ResolvedGalaxies,
                             run_bagpipes_wrapper)
 
-from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli, PhotometryBandInfo, FieldInfo, compass, measure_cog
+from .utils import make_EAZY_SED_fit_params_arr, update_mpl, scale_fluxes, CLIInterface, is_cli, PhotometryBandInfo, FieldInfo, compass, measure_cog, optimize_sfh_xlimit
+
 
 from .bagpipes.plotpipes import (calculate_bins, PlotPipes, PipesFit)
 

@@ -20,6 +20,14 @@ from matplotlib.patches import Arrow, FancyArrow
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from scipy.interpolate import interp1d
+import h5py as h5
+import matplotlib.pyplot as plt
+from matplotlib.colors import (
+    LinearSegmentedColormap,
+    to_rgb,
+    ListedColormap,
+    to_rgba,
+)
 
 
 file_path = os.path.abspath(__file__)
@@ -57,6 +65,30 @@ def update_mpl(tex_on=True):
 
     else:
         mpl.rcParams["text.usetex"] = False
+
+
+# recursively go through the old file and copy over any metadata attributes which are not in the new file (could be on any level and on a group or dataset)
+def copy_attrs(old_group, new_group):
+    for key in old_group.keys():
+        if key in new_group.keys():
+            if type(old_group[key]) is h5.Group:
+                copy_attrs(old_group[key], new_group[key])
+            else:
+                for attr_key in old_group[key].attrs.keys():
+                    if attr_key not in new_group[key].attrs.keys():
+                        new_group[key].attrs[attr_key] = old_group[key].attrs[
+                            attr_key
+                        ]
+        else:
+            if type(old_group[key]) is h5.Group:
+                new_group.create_group(key)
+                copy_attrs(old_group[key], new_group[key])
+            else:
+                new_group.create_dataset(key, data=old_group[key])
+                for attr_key in old_group[key].attrs.keys():
+                    new_group[key].attrs[attr_key] = old_group[key].attrs[
+                        attr_key
+                    ]
 
 
 def calculate_distance_to_bin_from_center(
@@ -1221,7 +1253,7 @@ def measure_cog(sci_cutout, pos, nradii=20, minrad=1, maxrad=10):
 
     apertures = [CircularAperture(pos, r) for r in radii]
     phot_tab = aperture_photometry(sci_cutout, apertures)
-    print(phot_tab)
+    # print(phot_tab)
     cog = np.array([[phot_tab[coln][0] for coln in phot_tab.colnames[3:]]][0])
 
     return radii, cog
@@ -1445,3 +1477,151 @@ def calculate_radial_profile(
             std_profile[i] = np.nan
 
     return radii, profile  # , std_profile
+
+
+def create_padded_colormap(
+    custom_colors_dict, base_cmap_name="nipy_spectral_r", total_length=256
+):
+    """
+    Create a new colormap that starts with specified colors and is padded with an existing colormap.
+
+    Parameters:
+    -----------
+    base_cmap_name : str
+        Name of the matplotlib colormap to use for padding
+    custom_colors : dict
+        Dict of color and integer key pairs to place at the start of the colormap
+    total_length : int, optional
+        Total number of colors in the final colormap (default: 256)
+
+    Returns:
+    --------
+    matplotlib.colors.LinearSegmentedColormap
+        The new combined colormap
+    """
+    # Convert input colors to RGB if they aren't already
+    n_custom = len(custom_colors_dict)
+
+    keys = list(custom_colors_dict.keys())
+    assert (
+        np.max(keys) <= total_length
+    ), "Custom colors exceed total length of requested colors"
+    assert [type(key) == int for key in keys], "Keys must be integer values"
+    ordered_keys = np.sort(keys)
+    custom_colors = [to_rgba(custom_colors_dict[key]) for key in ordered_keys]
+
+    # Can assume ordered keys are integer values. Need to fill missing integer positions up to total_length with cmap colors
+    base_cmap = plt.get_cmap(base_cmap_name)
+
+    n_base = total_length - n_custom
+
+    missing_keys = np.setdiff1d(np.arange(total_length), ordered_keys)
+
+    if n_base == 0:
+        return ListedColormap(custom_colors)
+
+    base_colors = base_cmap(np.linspace(0, 1, n_base))
+    # Need to insert custom colors in correct positions
+    new_colors = np.zeros((total_length, 4))
+    new_colors[ordered_keys] = custom_colors
+    new_colors[missing_keys] = base_colors
+
+    new_cmap = ListedColormap(new_colors)
+
+    return new_cmap
+
+
+import numpy as np
+
+
+def optimize_sfh_xlimit(ax, mass_threshold=0.001, buffer_fraction=0.2):
+    """
+    Optimizes the x-axis limits of a matplotlib plot containing SFR histories
+    to focus on periods after each galaxy has formed a certain fraction of its final mass.
+    Calculates cumulative mass from SFR data.
+
+    Parameters:
+    -----------
+    ax : matplotlib.axes.Axes
+        The axes object containing the SFR plots (SFR/yr vs time)
+    mass_threshold : float, optional
+        Fraction of final stellar mass to use as threshold (default: 0.01 for 1%)
+    buffer_fraction : float, optional
+        Fraction of the active time range to add as buffer (default: 0.1)
+
+    Returns:
+    --------
+    float
+        The optimal maximum x value for the plot
+    """
+
+    # Get all lines from the plot
+    lines = ax.get_lines()
+    if not lines:
+        raise ValueError("No lines found in the plot")
+
+    # Initialize variables to track the earliest time reaching mass threshold
+    earliest_activity = 0
+
+    # Check each line
+    for line in lines:
+        # Get the x and y data
+        xdata = line.get_xdata()
+        ydata = line.get_ydata()  # This is SFR/yr
+
+        # Calculate time intervals (assuming uniform spacing)
+        dt = np.abs(xdata[1] - xdata[0])
+
+        # Calculate cumulative mass formed
+        # Integrate SFR from observation time (x=0) backwards
+        # Remember: x-axis is negative lookback time, so we need to flip the integration
+        cumulative_mass = np.cumsum(ydata[::-1] * dt)[::-1]
+
+        # Normalize by total mass formed
+        total_mass = cumulative_mass[0]  # Mass at observation time
+        normalized_mass = cumulative_mass / total_mass
+
+        # Find indices where normalized mass exceeds threshold
+        active_indices = np.where(normalized_mass >= mass_threshold)[0]
+
+        if len(active_indices) > 0:
+            # Find the earliest time reaching threshold for this line
+            earliest_this_line = xdata[
+                active_indices[-1]
+            ]  # Using -1 since time goes backwards
+
+            earliest_activity = max(earliest_activity, earliest_this_line)
+
+    if earliest_activity == 0:
+        raise ValueError("No galaxies found reaching the mass threshold")
+
+    # Add buffer to the range
+    buffer = abs(earliest_activity) * buffer_fraction
+    new_xlimit = earliest_activity + buffer
+
+    return new_xlimit
+
+
+if __name__ == "__main__":
+    # Test the create_padded_colormap function
+    # custom_colors = {0: 'red', 100: 'blue'}
+    # cmap = create_padded_colormap(custom_colors_dict=custom_colors, base_cmap_name='nipy_spectral_r', total_length=256)
+    fig, ax = plt.subplots()
+
+    n = 100
+    len_sfh1 = 33
+    len_sfh2 = 10
+
+    mock_sfh = np.pad(
+        np.array([10] * len_sfh1), (0, n - len_sfh1), mode="constant"
+    )
+    ax.plot(np.arange(0, n), mock_sfh)
+
+    mock_sfh = np.pad(
+        np.array([10] * len_sfh2), (0, n - len_sfh2), mode="constant"
+    )
+    ax.plot(np.arange(0, n), mock_sfh)
+
+    x = optimize_sfh_xlimit(ax)
+
+    print(x)

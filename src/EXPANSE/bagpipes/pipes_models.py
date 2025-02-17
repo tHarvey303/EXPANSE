@@ -147,26 +147,26 @@ sfh = {}
 
 sfh_type = "dblplaw"
 
-sfh["tau"] = (0.001, 3.0)  # Vary the time of peak star-formation between
+sfh["tau"] = (0.001, 5.0)  # Vary the time of peak star-formation between
 # the Big Bang at 0 Gyr and 15 Gyr later. In
 # practice the code automatically stops this
 # exceeding the age of the universe at the
 # observed redshift.
 
-sfh["tau_prior"] = (
-    "uniform"  # Impose a prior which is uniform in log_10 of the
-)
+sfh["tau_prior"] = "uniform"
 if sfh["tau"][0] == 0 and sfh["tau_prior"] == "log_10":
     sfh["tau"][0] = 0.01
 
-sfh["alpha"] = (0, 10.0)  # Vary the falling power law slope from 0.01 to 1000.
-sfh["beta"] = (0, 10.0)  # Vary the rising power law slope from 0.01 to 1000.
-sfh["alpha_prior"] = (
-    "uniform"  # Impose a prior which is uniform in log_10 of the
-)
-sfh["beta_prior"] = (
-    "uniform"  # parameter between the limits which have been set
-)
+sfh["alpha"] = (
+    0.01,
+    100.0,
+)  # Vary the falling power law slope from 0.01 to 1000.
+sfh["beta"] = (
+    0.01,
+    100.0,
+)  # Vary the rising power law slope from 0.01 to 1000.
+sfh["alpha_prior"] = "log_10"
+sfh["beta_prior"] = "log_10"
 # above as in Carnall et al. (2017).
 sfh["massformed"] = (5.0, 12.0)
 sfh["metallicity"] = (1e-3, 2.5)
@@ -298,6 +298,57 @@ overall_dict = {
     "fit_instructions": fit_instructions_resolved_cnst,
 }
 resolved_dict_cnst = copy.deepcopy(overall_dict)
+
+# -------------------------------------------------------------------------------------
+# 6th fit - DB SFH
+
+sfh = {}
+sfh_type = "iyer2019"
+
+sfh["massformed"] = (5.0, 12.0)  # Log_10 total stellar mass formed: M_Solar
+sfh["metallicity"] = (1e-3, 2.5)
+
+sfh["sfr"] = (
+    1e-3,
+    1e3,
+)  # M_Solar/yr (or not - don't understand this parameter. Seems too large.)
+sfh["bins"] = 4
+sfh["bins_prior"] = "dirichlet"
+sfh["alpha"] = 3.0  # Dirichlet alpha parameter  - this matches DB tutorial
+
+# The Dirichlet prior has a single tunable parameter α that
+# specifies how correlated the values are.
+# In our case, values of this parameter α<1 result in values that can be arbitrarily close,
+# leading to extremely spiky SFHs because galaxies have to assemble a
+# significant fraction of their mass in a very short period of time,
+# while α>1 leads to smoother SFHs with more evenly spaced values
+# that never- theless have considerable diversity.
+# In practice, we use a value of α=5, which leads to a
+# distribution of parameters that is similar to what we find in SAM and MUFASA.
+
+fit_instructions_db = {
+    "t_bc": 0.01,
+    sfh_type: sfh,
+    "nebular": nebular,
+    "dust": dust,
+}
+
+meta_db = {
+    "run_name": "photoz_db",
+    "redshift": "self",
+    "redshift_sigma": "min",
+    "min_redshift_sigma": 0.5,
+    "fit_photometry": "TOTAL_BIN",
+    "sampler": "multinest",
+}
+
+overall_dict = {
+    "meta": meta_db,
+    "fit_instructions": fit_instructions_db,
+}
+
+db_dict = copy.deepcopy(overall_dict)
+
 
 # -------------------------------------------------------------------------------------
 # Do a resolved fit with a continuity bursty SFH

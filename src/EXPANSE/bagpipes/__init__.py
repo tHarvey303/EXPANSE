@@ -5,6 +5,7 @@ from .pipes_models import (
     dpl_dict,
     lognorm_dict,
     cnst_dict,
+    db_dict,
     resolved_dict_cnst,
     resolved_dict_bursty,
     create_dicts,

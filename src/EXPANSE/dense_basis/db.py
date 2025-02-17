@@ -6,6 +6,13 @@ from astropy.table import Table
 import ast
 import numpy as np
 
+try:
+    import dense_basis as db
+except ImportError:
+    print(
+        "Warning: dense_basis not found. Dense_basis functions will not work"
+    )
+
 
 def get_filter_files(
     root_file="/nvme/scratch/work/tharvey/jwst_filters/",
@@ -76,6 +83,12 @@ def run_db_fit_parallel(
     emcee_samples=10_000,
     min_flux_err=0.1,
     fix_redshift=False,
+    round_negative_fluxes=True,
+    warn_missing_bands=True,
+    delta_z=0.01,
+    verbose=True,
+    evaluate_posterior_percentiles=True,
+    atlas=None,
 ):
     """
     Run a dense_basis fit in parallel
@@ -92,20 +105,21 @@ def run_db_fit_parallel(
         * obs_sed[(obs_err / obs_sed < min_flux_err) & (obs_sed > 0)]
     )
 
-    import dense_basis as db
-
-    atlas_path = glob.glob(f"{atlas_path}/{db_atlas_name}*.dbatlas")[0]
     N_param = int(atlas_path.split("Nparam_")[1].split(".dbatlas")[0])
     N_pregrid = int(atlas_path.split("_Nparam")[0].split("_")[-1])
     grid_name = os.path.basename(atlas_path).split(f"_{N_pregrid}")[0]
+    if atlas is None:
+        if verbose:
+            print(
+                f"Loading atlas {db_atlas_name} with N_pregrid={N_pregrid} and N_param={N_param} at {os.path.dirname(atlas_path)}"
+            )
 
-    # print(f"Loading atlas {db_atlas_name} with N_pregrid={N_pregrid} and N_param={N_param} at {os.path.dirname(atlas_path)}")
-    atlas = db.load_atlas(
-        grid_name,
-        N_pregrid=N_pregrid,
-        N_param=N_param,
-        path=f"{os.path.dirname(atlas_path)}/",
-    )
+        atlas = db.load_atlas(
+            grid_name,
+            N_pregrid=N_pregrid,
+            N_param=N_param,
+            path=f"{os.path.dirname(atlas_path)}/",
+        )
 
     with h5py.File(atlas_path, "r") as f:
         atlas_bands = f.attrs["bands"]
@@ -120,9 +134,15 @@ def run_db_fit_parallel(
         assert (
             len(bands) == len(obs_sed) == len(obs_err)
         ), f"{len(bands)} != {len(obs_sed)} != {len(obs_err)} number of bands must match length of input photometry"
-        assert all(
-            [band in atlas_bands for band in bands]
-        ), f"All bands must be in the atlas: {atlas_bands}"
+        if warn_missing_bands:
+            if not all([band in atlas_bands for band in bands]) and verbose:
+                print(
+                    f"Warning: Some bands are not in the atlas: {[band for band in bands if band not in atlas_bands]}"
+                )
+        else:
+            assert all(
+                [band in atlas_bands for band in bands]
+            ), f"All bands must be in the atlas: {[band for band in bands if band not in atlas_bands]} is not in the atlas"
         # Order the bands in the same order as the atlas
         fit_bands = []
         fit_mask = []  # Temporary
@@ -144,13 +164,18 @@ def run_db_fit_parallel(
         obs_sed = np.array(obs_sed_new)
         obs_err = np.array(obs_err_new)
 
+    # print(atlas_bands)
+    # print(f"Running fit with bands: {fit_bands}")
+
+    if round_negative_fluxes:
+        mask = obs_sed < 0
+        obs_sed[mask] = 1e-6 * obs_err[mask]
     # Need to generate obs_sed, obs_err, and fit_mask based on the input filter files
 
     # run_emceesampler takes zbest and deltaz. Can't fix redshift precisely (i.e. between grid spacing), but can set zbest and small deltaz to only allow
     # templates closest to known redshift to be used. Could precheck grid for nearest redshifts and set deltaz accordinglu.
     if fix_redshift:
         redshift = fix_redshift
-        delta_z = 0.01
 
     sedfit = db.SedFit(
         obs_sed,
@@ -177,7 +202,8 @@ def run_db_fit_parallel(
     else:
         # pass the atlas and the observed SED + uncertainties into the fitter,
         sedfit.evaluate_likelihood()
-        sedfit.evaluate_posterior_percentiles()
+        if evaluate_posterior_percentiles:
+            sedfit.evaluate_posterior_percentiles()
 
     return sedfit
 
@@ -197,8 +223,6 @@ def make_db_grid(
         "z": {"min": 0, "max": 25},
     },
 ):
-    import dense_basis as db
-
     hst_bands = ["F435W", "F606W", "F814W", "F775W", "F850LP"]
 
     hst_bands_used = []
@@ -246,8 +270,6 @@ def make_db_grid(
 
 
 def get_priors(atlas_path=None):
-    import dense_basis as db
-
     priors = db.Priors()
 
     if atlas_path is not None:
@@ -264,3 +286,25 @@ def get_bands_from_atlas(atlas_path):
         bands = f.attrs["bands"]
         bands = ast.literal_eval(bands)
     return bands
+
+
+[
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    "17",
+    "18",
+]

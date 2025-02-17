@@ -70,7 +70,7 @@ resolved_galaxy_dir = os.path.join(
 
 
 initial_load = False
-filter_single_bin = True
+filter_single_bin = False
 n_jobs = 8
 # Set to True if you want to load the data from the catalogue
 just_bagpipes_parallel = True
@@ -207,6 +207,7 @@ if __name__ == "__main__":
         create_dicts,
         delayed_dict,
         dpl_dict,
+        db_dict,
         lognorm_dict,
         resolved_dict_cnst,
         resolved_dict_bursty,
@@ -228,12 +229,15 @@ if __name__ == "__main__":
         continuity_bursty_dict, override_meta=override_meta, num=len(ids)
     )
 
+    dpl_dict["meta"]["run_name"] = "photoz_dblpwl"
     dpl_dicts = create_dicts(
         dpl_dict, override_meta=override_meta, num=len(ids)
     )
     lognorm_dicts = create_dicts(
         lognorm_dict, override_meta=override_meta, num=len(ids)
     )
+
+    db_dicts = create_dicts(db_dict, override_meta=override_meta, num=len(ids))
 
     override_meta_resolved = {
         "use_bpass": True,
@@ -250,7 +254,8 @@ if __name__ == "__main__":
 
     # Not fitting resolved yet
     for run_dicts in [
-        resolved_dicts_cnst,
+        # db_dicts,
+        # dpl_dicts,
         resolved_dicts_bursty,
     ]:
         if size > 1:
@@ -297,6 +302,8 @@ if __name__ == "__main__":
                         h5_folder=h5_folder,
                         alert=False,
                         use_mpi=False,
+                        overwrite=False,
+                        overwrite_internal=False,
                     )
                     for galaxy_id, resolved_dict, cutout_size in zip(
                         ids, run_dicts, cutout_size
