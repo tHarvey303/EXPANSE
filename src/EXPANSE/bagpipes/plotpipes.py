@@ -66,8 +66,7 @@ elif computer == "unknown":
     prospector_dir = ""
 
 
-bagpipes_filter_dir = f"{bagpipes_dir}/inputs/filters/"
-
+bagpipes_filter_dir = f"{os.path.dirname(file_path)}/filters/"
 
 import sys
 
