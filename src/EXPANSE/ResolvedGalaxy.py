@@ -43,7 +43,7 @@ import matplotlib.cm as cm
 from matplotlib.patches import Ellipse
 
 # import ScalarFormatter
-from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import ScalarFormatter, NullFormatter
 
 # import make_axis_locatable
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -207,6 +207,7 @@ class ResolvedGalaxy:
         sed_fitting_sfhs=None,
         sed_fitting_seds=None,
         sed_fitting_pdfs=None,
+        rms_correction_factors=None,
     ):
         self.internal_bagpipes_cache = {}
 
@@ -262,6 +263,8 @@ class ResolvedGalaxy:
         self.sed_fitting_sfhs = sed_fitting_sfhs
         self.sed_fitting_seds = sed_fitting_seds
         self.sed_fitting_pdfs = sed_fitting_pdfs
+
+        self.rms_correction_factors = rms_correction_factors
 
         """
         for property in photometry_properties:
@@ -994,7 +997,14 @@ class ResolvedGalaxy:
             h5_names = [
                 h5_name
                 for h5_name in h5_names
-                if any([filter_id in h5_name for filter_id in filter_ids])
+                if any(
+                    [
+                        filter_id == h5_name.replace(".h5", "")
+                        or filter_id
+                        == h5_name.replace(".h5", "").replace(f"{field}_", "")
+                        for filter_id in filter_ids
+                    ]
+                )
             ]
 
         print("Found", len(h5_names), "galaxies in field", field)
@@ -1238,6 +1248,21 @@ class ResolvedGalaxy:
                             ][psf_type][band][()]
             else:
                 psf_matched_rms_err = None
+
+            rms_correction_factors = None
+            if hfile.get("rms_correction_factors") is not None:
+                rms_correction_factors = {}
+                for key in hfile["rms_correction_factors"].keys():
+                    rms_correction_factors[key] = hfile[
+                        "rms_correction_factors"
+                    ][key][()]
+                    rms_correction_factors[f"{key}_meta"] = {}
+                    for attr in hfile["rms_correction_factors"][
+                        key
+                    ].attrs.keys():
+                        rms_correction_factors[f"{key}_meta"][attr] = hfile[
+                            "rms_correction_factors"
+                        ][key].attrs[attr]
 
             maps = {}
             if hfile.get("bin_maps") is not None:
@@ -1599,6 +1624,7 @@ class ResolvedGalaxy:
             "photometry_table": photometry_table,
             "sed_fitting_table": sed_fitting_table,
             "rms_background": rms_background,
+            "rms_correction_factors": rms_correction_factors,
             "psfs": psfs,
             "psfs_meta": psfs_meta,
             "galaxy_region": galaxy_region,
@@ -3072,6 +3098,259 @@ class ResolvedGalaxy:
         if run:
             self.convert_psfs_to_kernels(psf_type=name)
 
+    def derive_rms_correction_factor(
+        self,
+        region_area_pix,
+        bands="all",
+        cutout_size=250,
+        overwrite=False,
+        plot=False,
+        plot_debug=False,
+        scatter_size=0.1,
+        distance_to_mask=20,
+        radii_to_check=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],
+        n_nearest=200,
+        image_type="psf_matched",
+        min_correction=1,
+    ):
+        assert region_area_pix > 0, "Region area must be greater than 0"
+        radii_to_check = np.array(radii_to_check, dtype=float)
+        if bands == "all":
+            bands = self.bands
+        elif type(bands) == str:
+            bands = [bands]
+
+        for band in bands:
+            if (
+                (self.rms_correction_factors not in [None, {}])
+                and (band in self.rms_correction_factors)
+                and np.all(
+                    radii_to_check == self.rms_correction_factors[band][:, 0]
+                )
+                and not overwrite
+            ):
+                continue
+
+            image_path = self.im_paths[band]
+            hdu = fits.open(image_path)
+            ra, dec = self.sky_coord.ra.deg, self.sky_coord.dec.deg
+            wcs = WCS(hdu[self.im_exts[band]].header)
+            x_cent, y_cent = wcs.all_world2pix(ra, dec, 1)
+            im_size = (
+                hdu[self.im_exts[band]].header["NAXIS1"],
+                hdu[self.im_exts[band]].header["NAXIS2"],
+            )
+            if (
+                (y_cent - cutout_size / 2 < 0)
+                or (y_cent + cutout_size / 2 > im_size[1])
+                or (x_cent - cutout_size / 2 < 0)
+                or (x_cent + cutout_size / 2 > im_size[0])
+            ):
+                print(
+                    f"Cutout size {cutout_size} too large for image size {im_size}."
+                )
+                continue
+
+            data = hdu[self.im_exts[band]].section[
+                int(y_cent - cutout_size / 2) : int(y_cent + cutout_size / 2),
+                int(x_cent - cutout_size / 2) : int(x_cent + cutout_size / 2),
+            ]
+            hdu.close()
+            # Open seg
+            seg_path = self.seg_paths[band]
+            seg_hdu = fits.open(seg_path)
+            seg_data = seg_hdu[0].section[
+                int(y_cent - cutout_size / 2) : int(y_cent + cutout_size / 2),
+                int(x_cent - cutout_size / 2) : int(x_cent + cutout_size / 2),
+            ]
+            seg_hdu.close()
+
+            rms = self.rms_err_paths[band]
+            rms_hdu = fits.open(rms)
+            rms_data = rms_hdu[self.rms_err_exts[band]].section[
+                int(y_cent - cutout_size / 2) : int(y_cent + cutout_size / 2),
+                int(x_cent - cutout_size / 2) : int(x_cent + cutout_size / 2),
+            ]
+            rms_hdu.close()
+
+            seg_data[seg_data != 0] = 1
+            seg_mask = seg_data.astype(bool)
+            #
+
+            from galfind.Depths import make_grid, calc_depths, do_photometry
+
+            depths_local = {}
+            depths_rms = {}
+            for radii in radii_to_check:
+                radii_arcsec = (
+                    self.im_pixel_scales[band].to(u.arcsec).value * radii
+                )
+                # Place apertures in empty regions in the image
+                xy, placing_efficiency = make_grid(
+                    data,
+                    seg_mask,
+                    radius=radii_arcsec,
+                    scatter_size=scatter_size,
+                    distance_to_mask=distance_to_mask,
+                    plot=plot,
+                    pixel_scale=self.im_pixel_scales[band].to(u.arcsec).value,
+                )
+
+                xy = np.array(xy)
+
+                if n_nearest > len(xy):
+                    print(
+                        "Warning: n_nearest is greater than number of empty apertures in the image."
+                    )
+
+                if plot_debug:
+                    fig, ax = plt.subplots()
+                    ax.imshow(
+                        data, origin="lower", cmap="Greys", norm=LogNorm()
+                    )
+                    for x, y in zip(xy[:, 0], xy[:, 1]):
+                        circ = plt.Circle(
+                            (x, y), radii, color="r", fill=False, linewidth=0.5
+                        )
+                        ax.add_artist(circ)
+
+                    ax.imshow(seg_mask, origin="lower", cmap="Reds", alpha=0.5)
+                    ax.set_title(f"{band}")
+                    plt.show()
+
+                fluxes = do_photometry(data, xy, radii)
+
+                cat = Table()
+                cat["X_IMAGE"] = [data.shape[1] // 2]
+                cat["Y_IMAGE"] = [data.shape[0] // 2]
+
+                depth, diag, _, _ = calc_depths(
+                    xy,
+                    fluxes,
+                    data,
+                    seg_mask,
+                    catalogue=cat,
+                    wcs=None,
+                    coord_type="pixel",
+                    mode="n_nearest",
+                    n_nearest=n_nearest,
+                    zero_point=self.im_zps[band],
+                    n_split=1,
+                    sigma_level=1,
+                    wht_data=None,
+                    plot=False,
+                )
+
+                depth = depth[0] * u.ABmag
+                err_1sigma = depth.to(u.uJy)
+                err_1sigma = err_1sigma.value
+
+                depths_local[radii] = err_1sigma
+
+                # now calculate error inferred from the RMS image.
+                from photutils.aperture import (
+                    CircularAperture,
+                    aperture_photometry,
+                )
+
+                apertures = CircularAperture(xy, r=radii)
+                tab = aperture_photometry(data, apertures, error=rms_data)
+                errors = tab["aperture_sum_err"]
+                median_error = np.nanmedian(errors)
+                # need to convert median error from image to uJy
+                median_error_uJy = median_error * 10 ** (
+                    (23.9 - self.im_zps[band]) / 2.5
+                )
+
+                depths_rms[radii] = median_error_uJy
+
+            if self.rms_correction_factors is None:
+                self.rms_correction_factors = {}
+
+            sigma = np.array(
+                [
+                    depths_local[radii] / depths_rms[radii]
+                    for radii in radii_to_check
+                ]
+            )
+            self.rms_correction_factors[band] = np.vstack(
+                (radii_to_check, sigma)
+            ).T
+
+            meta = {
+                "scatter_size": scatter_size,
+                "distance_to_mask": distance_to_mask,
+                "n_nearest": n_nearest,
+                "cutout_size": cutout_size,
+                "image_type": image_type,
+            }
+
+            self.add_to_h5(
+                self.rms_correction_factors[band],
+                "rms_correction_factors",
+                band,
+                overwrite=True,
+                meta=meta,
+            )
+
+        if plot:
+            fig, ax = plt.subplots()
+            labels = []
+            cmap = "RdYlBu_r"
+            colors = plt.cm.get_cmap(cmap)(np.linspace(0, 1, len(bands)))
+
+            for pos_c, band in enumerate(bands):
+                radiis = self.rms_correction_factors[band][:, 0]
+                ax.plot(
+                    radiis,
+                    self.rms_correction_factors[band][:, 1],
+                    "o",
+                    label=band if band not in labels else "",
+                    color=colors[pos_c],
+                )
+                if band not in labels:
+                    labels.append(band)
+
+            ax.set_xlabel("Aperture Radius (pix)")
+            ax.set_ylabel("$\sigma_{\mathrm{local}}/\sigma_{\mathrm{rms}}$")
+            ax.hlines(
+                1,
+                radii_to_check[0],
+                radii_to_check[-1],
+                linestyle="--",
+                color="k",
+                alpha=0.6,
+            )
+
+            ax.legend(ncol=3, loc="upper right", bbox_to_anchor=(1.76, 1))
+            return fig
+
+        # Interpolate to get correction factor
+        equivalent_radii_from_area = np.sqrt(region_area_pix / np.pi)
+
+        area_corrections = {}
+        for band in bands:
+            sigma = self.rms_correction_factors[band][:, 1]
+            radii_to_check = self.rms_correction_factors[band][:, 0]
+
+            interp = interp1d(
+                radii_to_check,
+                sigma,
+                kind="cubic",
+                bounds_error=False,
+                fill_value="extrapolate",
+            )
+
+            correction_factor = interp(equivalent_radii_from_area)
+            if correction_factor < min_correction:
+                correction_factor = min_correction
+
+            area_corrections[band] = correction_factor
+
+        return (
+            area_corrections if len(bands) > 1 else area_corrections[bands[0]]
+        )
+
     def estimate_rms_from_background(
         self, cutout_size=250, object_distance=20, overwrite=True, plot=False
     ):
@@ -3454,6 +3733,24 @@ class ResolvedGalaxy:
                                     ],
                                     compression="gzip",
                                 )
+
+                if self.rms_correction_factors is not None:
+                    hfile.create_group("rms_correction_factors")
+                    for band in self.rms_correction_factors.keys():
+                        if "meta" in band:
+                            continue
+
+                        hfile["rms_correction_factors"].create_dataset(
+                            band,
+                            data=self.rms_correction_factors[band],
+                            compression="gzip",
+                        )
+                        meta = self.rms_correction_factors[f"{band}_meta"]
+
+                        for key in meta.keys():
+                            hfile["rms_correction_factors"][band].attrs[
+                                key
+                            ] = meta[key]
 
                 # or here
                 # Save galaxy region
@@ -4139,6 +4436,8 @@ class ResolvedGalaxy:
         show=False,
         facecolor="white",
         fig=None,
+        cmap="viridis",
+        stretch="log",
     ):
         """Plot the cutouts for the galaxy"""
         if bands is None:
@@ -4175,9 +4474,13 @@ class ResolvedGalaxy:
                 self.cutout_size // 2 - 15 : self.cutout_size // 2 + 15,
                 self.cutout_size // 2 - 15 : self.cutout_size // 2 + 15,
             ]
-            norm = simple_norm(central_data, stretch="log", max_percent=99.9)
+            norm = simple_norm(central_data, stretch=stretch, max_percent=99.9)
             im = ax.imshow(
-                data, origin="lower", interpolation="none", norm=norm
+                data,
+                origin="lower",
+                interpolation="none",
+                norm=norm,
+                cmap=cmap,
             )
             ax.text(
                 0.9,
@@ -4589,8 +4892,8 @@ class ResolvedGalaxy:
         red=[],
         green=[],
         blue=[],
-        q=1,
-        stretch=1,
+        q=3,
+        stretch=0.0004,
         figsize=(8, 8),
         use_psf_matched=False,
         override_psf_type=None,
@@ -4600,6 +4903,7 @@ class ResolvedGalaxy:
         show=False,
         fig=None,
         ax=None,
+        combine_func=np.sum,
         add_compass=False,
         compass_arrow_length=0.5 * u.arcsec,
         compass_arrow_width=0.5,
@@ -4609,6 +4913,7 @@ class ResolvedGalaxy:
         add_scalebar=False,
         label_bands=False,
         show_kron_ellipse=True,
+        stretch_object="asinh",
     ):
         """Plot the galaxy in Lupton RGB"""
 
@@ -4624,6 +4929,10 @@ class ResolvedGalaxy:
         if type(blue) is str:
             blue = [blue]
 
+        if type(combine_func) is str:
+            opts = {"sum": np.sum, "mean": np.mean, "median": np.median}
+            combine_func = opts[combine_func]
+
         if use_psf_matched:
             img = self.psf_matched_data[psf_type]
         else:
@@ -4634,18 +4943,26 @@ class ResolvedGalaxy:
         if len(red) == 0:
             r = np.zeros((self.cutout_size, self.cutout_size))
         else:
-            r = np.sum([img[band] for band in red], axis=0)
+            r = combine_func([img[band] for band in red], axis=0)
         if len(green) == 0:
             g = np.zeros((self.cutout_size, self.cutout_size))
         else:
-            g = np.sum([img[band] for band in green], axis=0)
+            g = combine_func([img[band] for band in green], axis=0)
 
         if len(blue) == 0:
             b = np.zeros((self.cutout_size, self.cutout_size))
         else:
-            b = np.sum([img[band] for band in blue], axis=0)
+            b = combine_func([img[band] for band in blue], axis=0)
 
-        rgb = make_lupton_rgb(r, g, b, Q=q, stretch=stretch)
+        # Need to upgrade to Python 3.11 and Astropy 7.0 for this to work
+        """if stretch_object == 'asinh':
+            stretch_object = LuptonAsinhStretch
+        elif stretch_object == 'asinh_z':
+            stretch_object = LuptonAsinhZScaleStretch"""
+
+        rgb = make_lupton_rgb(
+            r, g, b, Q=q, stretch=stretch
+        )  # stretch_object=stretch_object)
         if return_array:
             return rgb
 
@@ -6416,7 +6733,11 @@ class ResolvedGalaxy:
         )
 
     def measure_flux_in_bins(
-        self, binmap_type="pixedfit", override_psf_type=None, overwrite=False
+        self,
+        binmap_type="pixedfit",
+        override_psf_type=None,
+        overwrite=False,
+        correct_errors_for_correlated_noise=False,
     ):
         if hasattr(self, "use_psf_type") and override_psf_type is None:
             psf_type = self.use_psf_type
@@ -6449,14 +6770,25 @@ class ResolvedGalaxy:
             fluxes = []
             flux_errs = []
             for i in range(1, int(np.max(binmap)) + 1):
-                flux = np.sum(
-                    self.psf_matched_data[psf_type][band][binmap == i]
-                )
-                flux_err = np.sqrt(
-                    np.sum(
-                        self.psf_matched_rms_err[psf_type][band][binmap == i]
-                        ** 2
+                mask = binmap == i
+
+                if correct_errors_for_correlated_noise:
+                    # number of pixels in bin
+                    n_pix = np.sum(mask)
+                    factor = self.derive_rms_correction_factor(
+                        n_pix, bands=band
                     )
+                else:
+                    factor = 1
+
+                flux = np.sum(self.psf_matched_data[psf_type][band][mask])
+                flux_err = (
+                    np.sqrt(
+                        np.sum(
+                            self.psf_matched_rms_err[psf_type][band][mask] ** 2
+                        )
+                    )
+                    * factor
                 )
                 if type(flux) in [u.Quantity, u.Magnitude, Masked(u.Quantity)]:
                     assert flux.unit == self.phot_pix_unit[band]
@@ -6636,7 +6968,7 @@ class ResolvedGalaxy:
         gal_id = str(gal_id)
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
-        if binmap_type is None:
+        if psf_type is None:
             if hasattr(self, "use_psf_type"):
                 psf_type = self.use_psf_type
             else:
@@ -6653,6 +6985,14 @@ class ResolvedGalaxy:
         else:
             min_percentage_error = 5
 
+        if (
+            len(exclude_bands) == 0
+            and hasattr(self, "exclude_bands")
+            and len(self.exclude_bands) > 0
+        ):
+            print(f"Using exclude bands {self.exclude_bands}")
+            exclude_bands = self.exclude_bands
+
         if gal_id == 1:
             print(
                 f"Using {psf_type} PSF and {binmap_type} binning derived fluxes"
@@ -6665,6 +7005,7 @@ class ResolvedGalaxy:
 
         bands = [band for band in self.bands if band not in exclude_bands]
 
+        bands_to_remove = []
         for band in bands:
             flux_col_name = band
             fluxerr_col_name = f"{band}_err"
@@ -6728,6 +7069,7 @@ class ResolvedGalaxy:
         save=False,
         save_path=None,
         min_flux=None,
+        max_flux=None,
         show=True,
         legend=True,
         facecolor="white",
@@ -6741,6 +7083,9 @@ class ResolvedGalaxy:
 
         if min_flux is not None:
             min_flux = min_flux.to(flux_unit).value
+
+        if max_flux is not None:
+            max_flux = max_flux.to(flux_unit).value
 
         # Get photometry table
         if not hasattr(self, "photometry_table"):
@@ -6903,8 +7248,7 @@ class ResolvedGalaxy:
         if flux_unit == u.ABmag:
             ax.invert_yaxis()
 
-        if min_flux is not None:
-            ax.set_ylim(min_flux, ax.get_ylim()[1])
+        ax.set_ylim(min_flux, max_flux)
 
         if legend:
             ax.legend(loc="lower right", frameon=False)
@@ -7896,14 +8240,22 @@ class ResolvedGalaxy:
         show=True,
         flux_unit=u.ABmag,
         save=False,
-        rgb_stretch=0.001,
-        rgb_q=0.001,
+        rgb_stretch=3,
+        rgb_q=0.0004,
+        rgb_combine_func=np.median,
         binmap_type="pixedfit",
         legend=True,
         min_sed_flux=31 * u.ABmag,
+        max_sed_flux=25 * u.ABmag,
         coloring_cmap="tab20",
         pipes_run_dir="pipes",
         log_sfh=False,
+        rgb_stretch_obj="asinh",
+        rgb_bands={
+            "blue": ["F115W", "F150W"],
+            "green": ["F200W", "F277W"],
+            "red": ["F356W", "F444W"],
+        },
     ):
         """
         This is a compositing method that uses plot_overview and bagpipes plotting method to generate a composite summary plot.
@@ -7966,12 +8318,16 @@ class ResolvedGalaxy:
             save=False,
             rgb_stretch=rgb_stretch,
             rgb_q=rgb_q,
+            rgb_combine_func=rgb_combine_func,
             binmap_type=binmap_type,
             legend=legend,
             min_sed_flux=min_sed_flux,
+            max_sed_flux=max_sed_flux,
             fig=top_row[0],
             return_ax=True,
             colors=colors,
+            rgb_stretch_obj=rgb_stretch_obj,
+            rgb_bands=rgb_bands,
         )
 
         # overview_subfig.get_layout_engine().set(h_pad=0, hspace=0)
@@ -8036,6 +8392,7 @@ class ResolvedGalaxy:
                 run_dir=pipes_run_dir,
                 facecolor="white",
                 colors=colors_runs[run],
+                fontsize=28,
             )
 
         dummy_fig.set_facecolor("white")
@@ -8074,7 +8431,7 @@ class ResolvedGalaxy:
                     weight_mass_sfr=True,
                     norm="linear",
                     total_params=[],
-                    scale_border=0,
+                    scale_border=0.2,
                     add_scalebar=True,
                     text_fontsize=8,
                     area_norm=True,
@@ -8086,7 +8443,6 @@ class ResolvedGalaxy:
                     show_half_radius=True,
                     add_cbar=True,
                     return_map=False,
-                    override_param_names={},
                 )
 
         # Plot SFH
@@ -8114,7 +8470,7 @@ class ResolvedGalaxy:
         sfh_ax.legend().set_visible(False)
         if log_sfh:
             sfh_ax.set_yscale("log")
-            sfh_ax.set_ylim(1e-2, max)
+            sfh_ax.set_ylim(3e-2, None)
         else:
             sfh_ax.set_xlim(0, max)
 
@@ -8131,16 +8487,24 @@ class ResolvedGalaxy:
         show=True,
         flux_unit=u.ABmag,
         save=False,
-        rgb_stretch=0.001,
-        rgb_q=0.001,
+        rgb_stretch=0.0004,
+        rgb_q=3,
+        rgb_combine_func=np.median,
         binmap_type="pixedfit",
         legend=True,
         min_sed_flux=31 * u.ABmag,
+        max_sed_flux=25 * u.ABmag,
         fig=None,
         return_ax=False,
         colors=None,
         box_fontsize=12,
         binmap_cmap="nipy_spectral_r",
+        rgb_stretch_obj="asinh",
+        rgb_bands={
+            "blue": ["F115W", "F150W"],
+            "green": ["F200W", "F277W"],
+            "red": ["F356W", "F444W"],
+        },
     ):
         # GridSpec
         if fig is None:
@@ -8174,6 +8538,7 @@ class ResolvedGalaxy:
             label_individual=True,
             binmap_type=binmap_type,
             min_flux=min_sed_flux,
+            max_flux=max_sed_flux,
             colors=colors,
         )
 
@@ -8299,14 +8664,17 @@ class ResolvedGalaxy:
             ax=ax_rgb,
             fig=fig_bins,
             show=False,
-            red=["F444W"],
-            green=["F356W"],
-            blue=["F200W"],
+            red=rgb_bands["red"],
+            green=rgb_bands["green"],
+            blue=rgb_bands["blue"],
             return_array=False,
             stretch=rgb_stretch,
             q=rgb_q,
-            label_bands=True,
+            label_bands=False,
             add_scalebar=True,
+            stretch_object=rgb_stretch_obj,
+            combine_func=rgb_combine_func,
+            text_fontsize="medium",
         )
 
         map = getattr(self, f"{binmap_type}_map")
@@ -8423,6 +8791,7 @@ class ResolvedGalaxy:
         return_run_args=False,
         override_binmap_type=None,
         skip_single_bin=True,  # Skip fitting single bins
+        exclude_bands=[],
     ):
         # meta - run_name, use_bpass, redshift (override)
         assert (
@@ -8612,15 +8981,21 @@ class ResolvedGalaxy:
 
         ids = list(flux_table["ID"])
 
+        if len(exclude_bands) > 0:
+            print(f"Excluding bands: {exclude_bands}")
+            bands = [band for band in self.bands if band not in exclude_bands]
+        else:
+            bands = self.bands
+
+        self.exclude_bands = exclude_bands
+
         vary_filter_list = False
-        nircam_filts = [
-            f"{filt_dir}/{band}_LePhare.txt" for band in self.bands
-        ]
+        nircam_filts = [f"{filt_dir}/{band}.dat" for band in bands]
 
         # Check flux_table, see if any fluxes and errors are perfect 0s
-        ids_bands = {band: [] for band in self.bands}
+        ids_bands = {band: [] for band in bands}
 
-        for band in self.bands:
+        for band in bands:
             flux_col_name = band
             fluxerr_col_name = f"{band}_err"
             mask = (flux_table[flux_col_name] == 0) & (
@@ -8641,9 +9016,9 @@ class ResolvedGalaxy:
             nircam_filts = []
             for id in ids:
                 bands = []
-                for band in self.bands:
+                for band in bands:
                     if id not in ids_bands[band]:
-                        bands.append(f"{filt_dir}/{band}_LePhare.txt")
+                        bands.append(f"{filt_dir}/{band}.dat")
                 nircam_filts.append(bands)
 
         if redshift is None:
@@ -8788,6 +9163,7 @@ class ResolvedGalaxy:
                 "redshifts": list(redshifts),
                 "redshift_sigma": redshift_sigma,
                 "out_dir": f"{run_dir}/posterior/{out_subdir}",
+                "exclude_bands": exclude_bands,
             }
         if not exist_already or return_run_args:
             fit_cat = pipes.fit_catalogue(
@@ -9245,6 +9621,7 @@ class ResolvedGalaxy:
         fig=None,
         plotpipes_dir="pipes_scripts/",
         run_dir="pipes/",
+        fontsize=18,
     ):
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -9296,6 +9673,7 @@ class ResolvedGalaxy:
                 fig=fig,
                 color=color,
                 facecolor=facecolor,
+                fontsize=fontsize,
             )
             for ax in fig.get_axes():
                 fig_xlim.append(ax.get_xlim())
@@ -9823,7 +10201,8 @@ class ResolvedGalaxy:
                         cache=cache,
                         plotpipes_dir=plotpipes_dir,
                     )
-                except FileNotFoundError:
+                except FileNotFoundError as e:  #
+                    print(e)
                     print(f"File not found for {run_name} {rbin} (sfh)")
                     continue
                 if plot:
@@ -10182,6 +10561,7 @@ class ResolvedGalaxy:
         z_min=0.01,
         z_max=20.0,
         z_step=0.01,
+        min_flux_pc_err=0.05,
     ):
         import eazy
         from .eazy.eazy_config import make_params, filter_codes
@@ -10229,6 +10609,9 @@ class ResolvedGalaxy:
 
         flux = np.atleast_2d(fluxes)
         flux_err = np.atleast_2d(flux_errs)
+
+        mask = (flux_err / flux < min_flux_pc_err) & (flux > 0)
+        flux_err[mask] = flux[mask] * min_flux_pc_err
 
         # Create a temporary directory
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -10545,7 +10928,7 @@ class ResolvedGalaxy:
                     upper += 0.75
                     lower -= 0.75
 
-                print("setting pz limits", lower, upper)
+                # print("setting pz limits", lower, upper)
                 ax_pz.set_xlim(lower, upper)
 
         data = ez.show_fit(
@@ -11111,6 +11494,22 @@ class ResolvedGalaxy:
 
         return density_map
 
+    def _get_sed_table_bin_type(self, run_name, sed_tool="bagpipes"):
+        if sed_tool not in self.sed_fitting_table.keys():
+            raise Exception(f"No {sed_tool} results found.")
+        elif run_name not in self.sed_fitting_table[sed_tool].keys():
+            raise Exception(f"No {run_name} results found.")
+        else:
+            if (
+                "binmap_type"
+                in self.sed_fitting_table[sed_tool][run_name].meta
+            ):
+                return self.sed_fitting_table[sed_tool][run_name].meta[
+                    "binmap_type"
+                ]
+            else:
+                return None
+
     def plot_bagpipes_results(
         self,
         run_name=None,
@@ -11146,7 +11545,12 @@ class ResolvedGalaxy:
         norm_min=None,
         norm_max=None,
         return_map=False,
-        override_param_names={},
+        override_param_names={
+            "sfr": "SFR",
+            "sfr_density": "SFR\ density",
+            "dust:Av": r"A_V",
+        },
+        rgb_stretch_obj="asinh",
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -11262,6 +11666,7 @@ class ResolvedGalaxy:
                     label_bands=True,
                     add_scalebar=add_scalebar,
                     show_kron_ellipse=False,
+                    stretch_object=rgb_stretch_obj,
                 )
                 done = True
                 param_str = ""
@@ -11498,15 +11903,17 @@ class ResolvedGalaxy:
                     )
                     # Change cbar scale number size
 
-                    cbar.ax.xaxis.get_offset_text().set_fontsize(0)
+                    # cbar.ax.xaxis.get_offset_text().set_fontsize(0)
                     cbar.ax.xaxis.set_ticks_position("top")
-                    cbar.ax.xaxis.set_tick_params(labelsize=6, which="both")
+                    cbar.ax.xaxis.set_tick_params(labelsize=9, which="both")
+                    # Disable minor tick labels
+                    cbar.ax.xaxis.set_minor_formatter(NullFormatter())
                     cbar.ax.xaxis.set_label_position("top")
                     # disable xtick labels
                     # cax.set_xticklabels([])
                     # Fix colorbar tick size and positioning if log
+                    """
                     if norm == "log":
-                        print("Fixing ticks")
                         # Generate reasonable ticks
                         ticks = np.logspace(
                             np.log10(np.nanmin(map)),
@@ -11521,6 +11928,8 @@ class ResolvedGalaxy:
                         )
                         cbar.ax.xaxis.set_label_position("top")
                         cbar.ax.xaxis.set_ticks_position("top")
+                    """
+
                     cbar.update_ticks()
 
                 if ax is None:
@@ -11980,7 +12389,6 @@ class ResolvedGalaxy:
                     rbin: colors(i) for i, rbin in enumerate(bins_to_load)
                 }
 
-        print(colors, type(colors))
         if type(colors) is list:
             if colors_from_full_dist:
                 assert len(colors) == len(
@@ -12018,6 +12426,14 @@ class ResolvedGalaxy:
 
         for rbin in bins_to_show:
             if rbin == "all":
+                if "sfr" not in parameter and "mass" not in parameter:
+                    print(
+                        f"Warning! Summing resolved PDFs for {parameter} may not make sense."
+                    )
+                    print("Switching to doing PDF of full distribution.")
+                    sum = False
+                else:
+                    sum = True
                 # Combine PDFs for all of these into an array
                 all_samples = np.array(
                     [samples[rbin] for rbin in bins_to_load], dtype=object
@@ -12027,8 +12443,10 @@ class ResolvedGalaxy:
                     new_samples[:, i] = np.random.choice(
                         asamples, size=n_draws
                     )
-
-                sum_samples = np.log10(np.sum(10**new_samples, axis=1))
+                if sum:
+                    sum_samples = np.log10(np.sum(10**new_samples, axis=1))
+                else:
+                    sum_samples = new_samples
             else:
                 sum_samples = samples[rbin]
 
@@ -12048,8 +12466,20 @@ class ResolvedGalaxy:
             ax_samples.legend(fontsize=6)
 
         gunit = self.param_unit(parameter.split(":")[-1])
-        unit = f" ({gunit:latex})" if gunit != u.dimensionless_unscaled else ""
+        log = (
+            r"$\log_{10}$ "
+            if parameter.startswith("stellar_mass")
+            or parameter.startswith("sfr")
+            else ""
+        )
+        unit = (
+            f" ({log}{gunit:latex})"
+            if gunit != u.dimensionless_unscaled
+            else ""
+        )
         param_str = parameter.replace("_", r" ")
+        param_str = param_str.replace("sfr", "SFR")
+        param_str = param_str.replace("dust:Av", r"$\mathrm{A}_\mathrm{V}$")
 
         ax_samples.set_xlabel(f"{param_str} {unit}", fontsize=fontsize)
 
@@ -12262,7 +12692,11 @@ class ResolvedGalaxy:
             self.resolved_mass[run_name] = percentiles
 
             self.add_to_h5(
-                percentiles, "resolved_mass", run_name, overwrite=True
+                percentiles,
+                "resolved_mass",
+                run_name,
+                overwrite=True,
+                force=force,
             )
 
         elif property == "sfr" or property == "sfr_10myr":
@@ -12691,7 +13125,8 @@ class ResolvedGalaxy:
                                 return_bands=True,
                                 binmap_type=binmap_type,
                             )
-                        except KeyError:
+                        except FileNotFoundError as e:
+                            print("error:", e)
                             bands = self.bands
 
                         wav = self._recalculate_bagpipes_wavelength_array(
@@ -12766,6 +13201,17 @@ class ResolvedGalaxy:
                 #    wav == total_wav
                 # ), f"Wavelengths do not match, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}"
                 # switch to np.isclose
+                if len(wav) > len(total_wav):
+                    # Cut off the right amount on the correct side to match the length
+                    if wav[0] < total_wav[0]:
+                        wav = wav[len(total_wav) - len(wav) :]
+                    elif wav[-1] > total_wav[-1]:
+                        wav = wav[: len(total_wav)]
+                    else:
+                        raise Exception(
+                            f"Length of wavelength array {len(wav)} does not match {len(total_wav)}"
+                        )
+
                 assert np.allclose(
                     wav, total_wav, rtol=0, atol=0.003
                 ), f"Wavelengths not within tolerance, {np.min(wav)} - {np.max(wav)} vs {np.min(total_wav)} - {np.max(total_wav)}"
@@ -13630,8 +14076,9 @@ class ResolvedGalaxy:
                 filterset,
                 flux_Jy,
                 flux_Jy_errs,
-                depths=np.ones(len(flux_Jy)),
-                z=z,
+                depths=(-2.5 * np.log10(flux_Jy_errs.value * 5) + 8.9)
+                * u.ABmag,
+                z=z * u.dimensionless_unscaled,
             )
         print("Finished building galfind photometry")
 
@@ -15533,7 +15980,14 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             h5_names = [
                 h5_name
                 for h5_name in h5_names
-                if any([filter_id in h5_name for filter_id in filter_ids])
+                if any(
+                    [
+                        filter_id == h5_name.replace(".h5", "")
+                        or filter_id
+                        == h5_name.replace(".h5", "").replace(f"{field}_", "")
+                        for filter_id in filter_ids
+                    ]
+                )
             ]
 
         print("Found", len(h5_names), "galaxies in field", field)
@@ -16298,6 +16752,14 @@ class MockResolvedGalaxy(ResolvedGalaxy):
         rgb_q=0.001,
         binmap_type="pixedfit",
         min_sed_flux=31 * u.ABmag,
+        max_sed_flux=25 * u.ABmag,
+        rgb_stretch_obj="asinh",
+        rgb_combine_obj=np.sum,
+        rgb_bands={
+            "blue": ["F115W", "F150W"],
+            "green": ["F200W", "F277W"],
+            "red": ["F356W", "F444W"],
+        },
     ):
         # Call parent method
 
@@ -16313,6 +16775,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             rgb_stretch=rgb_stretch,
             rgb_q=rgb_q,
             min_sed_flux=min_sed_flux,
+            max_sed_flux=max_sed_flux,
+            rgb_combine_obj=rgb_combine_obj,
+            rgb_bands=rgb_bands,
+            rgb_stretch_obj=rgb_stretch_obj,
         )
 
         # Get axes and plot the SED
@@ -16917,6 +17383,9 @@ class ResolvedGalaxies(np.ndarray):
         add_scalebar=True,
         figsize=(12, 7),
         spread_factor=1.5,
+        zoom_box=None,
+        zoom_factor=None,
+        zoom_box_location="lower right",
     ):
         """
         Plot a scatter plot of x_param vs y_param for each galaxy, with resolved maps shown at each point.
@@ -17085,6 +17554,16 @@ class ResolvedGalaxies(np.ndarray):
                 norm_width = width / scale_pixel_pkpc
                 norm_height = height / scale_pixel_pkpc
 
+            if zoom_box is not None:
+                assert zoom_factor is not None, "Need to provide zoom factor"
+                x1, x2, y1, y2 = zoom_box
+                x1 = min(x) + (x1 - min(x)) * spread_factor
+                x2 = min(x) + (x2 - min(x)) * spread_factor
+
+                if x_val > x1 and x_val < x2 and y_val > y1 and y_val < y2:
+                    norm_width *= zoom_factor
+                    norm_height *= zoom_factor
+
             extent = [
                 x_val - norm_width / 2,
                 x_val + norm_width / 2,
@@ -17174,6 +17653,63 @@ class ResolvedGalaxies(np.ndarray):
             )
             ax.add_artist(scalebar)
 
+        # Correct xtick labels for spread_factor
+        xticks = ax.get_xticks()
+        xtick_labels = [
+            f"{(xtick - min(x)) / spread_factor + min(x):.2f}"
+            for xtick in xticks
+        ]
+        ax.set_xticklabels(xtick_labels)
+
+        if zoom_box is not None:
+            # draw box around zoom region
+            x1, x2, y1, y2 = zoom_box
+            # Adjust x1, x2 for spread factor
+            x1 = min(x) + (x1 - min(x)) * spread_factor
+            x2 = min(x) + (x2 - min(x)) * spread_factor
+
+            ax.plot(
+                [x1, x2, x2, x1, x1],
+                [y1, y1, y2, y2, y1],
+                color="white",
+                linestyle="--",
+            )
+            # Choose corner containing box
+            if add_scalebar:
+                # add scalebar for zoom region
+                scalebar_plot_length = scalebar_length / scale_pixel_pkpc
+                fontprops = FontProperties(size=12, weight="bold")
+                scalebar = AnchoredSizeBar(
+                    ax.transData,
+                    scalebar_plot_length * zoom_factor,
+                    f"{scalebar_length} pkpc",
+                    zoom_box_location,
+                    pad=0.5,
+                    color="white",
+                    frameon=False,
+                    size_vertical=scalebar_plot_length / 30,
+                    label_top=True,
+                    fontproperties=fontprops,
+                    sep=5,
+                    path_effects=[
+                        PathEffects.withStroke(linewidth=3, foreground="black")
+                    ],
+                )
+                ax.add_artist(scalebar)
+
+            # Write zoom factor just inside upper right corner
+            ax.text(
+                x2 - 0.01 * x_range,
+                y2 - 0.01 * y_range,
+                f"Zoom: {zoom_factor}x",
+                color="white",
+                path_effects=[
+                    PathEffects.withStroke(linewidth=3, foreground="black")
+                ],
+                verticalalignment="top",
+                horizontalalignment="right",
+            )
+
         return fig
 
     # Run any function on all galaxies
@@ -17220,6 +17756,7 @@ class ResolvedGalaxies(np.ndarray):
         properties_to_load=["stellar_mass", "sfr", "sfr_10myr"],
         alert=True,  # If crash, email me!
         overwrite=False,
+        dont_skip=False,  # If true, will not skip galaxies that have already been run
         **kwargs,
     ):
         """
@@ -17315,7 +17852,7 @@ class ResolvedGalaxies(np.ndarray):
 
             delete = []
             for key, config in write_configs.items():
-                if config["already_run"] and not overwrite:
+                if config["already_run"] and not overwrite and not dont_skip:
                     print(f"Skipping {key} as already run.")
                     delete.append(key)
 
@@ -17395,18 +17932,27 @@ class ResolvedGalaxies(np.ndarray):
             print(f"Total number of fits: {n_fits}")
 
             if not load_only and not done:
-                print(f"Starting mpi process with {n_jobs} cores.")
-                print(f"Run directory: {run_dir}")
+                if n_jobs == 1:
+                    print("Starting single process.")
+                    process_args = [
+                        "python",
+                        script_path,
+                        file_path,
+                        out_subdir_name,
+                    ]
+                else:
+                    print(f"Starting mpi process with {n_jobs} cores.")
+                    print(f"Run directory: {run_dir}")
 
-                process_args = [
-                    "mpirun",
-                    "-n",
-                    str(n_jobs),
-                    "python",
-                    script_path,
-                    file_path,
-                    out_subdir_name,
-                ]
+                    process_args = [
+                        "mpirun",
+                        "-n",
+                        str(n_jobs),
+                        "python",
+                        script_path,
+                        file_path,
+                        out_subdir_name,
+                    ]
                 print(" ".join(process_args))
                 # Run and block until finished, check for errors
 
@@ -17539,9 +18085,9 @@ class ResolvedGalaxies(np.ndarray):
                             remove = []
                             for instruction in fit_instructions:
                                 if "redshift" in instruction:
-                                    print(
+                                    """print(
                                         f'Removing redshift instruction "{instruction}"'
-                                    )
+                                    )"""
                                     remove.append(instruction)
                             for r in remove:
                                 fit_instructions.pop(r)
@@ -17628,6 +18174,12 @@ class ResolvedGalaxies(np.ndarray):
                     try:
                         print(f"Loading resolved properties for {run_name}")
                         galaxy.get_resolved_bagpipes_sed(run_name, force=True)
+                    except Exception as e:
+                        print(f"error: {e}")
+                        print(traceback.format_exc())
+                        print(f"Could not load resolved SED for {run_name}")
+
+                    try:
                         # Save the resolved SFH
                         galaxy.plot_bagpipes_sfh(
                             run_name,
@@ -17635,7 +18187,13 @@ class ResolvedGalaxies(np.ndarray):
                             plot=False,
                             force=True,
                         )
+                    except Exception as e:
+                        print(f"error: {e}")
 
+                        print(traceback.format_exc())
+                        print(f"Could not load resolved SFH for {run_name}")
+
+                    try:
                         # Save the resolved properties
                         for prop in properties_to_load:
                             galaxy.get_total_resolved_property(
@@ -17703,7 +18261,7 @@ class ResolvedGalaxies(np.ndarray):
             run_names = galaxy.sed_fitting_table["bagpipes"].keys()
 
             for run_name in run_names:
-                if not getattr(galaxy, "resolved_mass", None) is None:
+                if getattr(galaxy, "resolved_mass", None) is not None:
                     if run_name in galaxy.resolved_mass.keys():
                         row[f"{run_name}_resolved_mass"] = (
                             galaxy.resolved_mass[run_name]
@@ -17715,7 +18273,7 @@ class ResolvedGalaxies(np.ndarray):
                 else:
                     print(f"Resolved mass not found for {galaxy.galaxy_id}")
 
-                if not getattr(galaxy, "resolved_sfr_10myr", None) is None:
+                if getattr(galaxy, "resolved_sfr_10myr", None) is not None:
                     if run_name in galaxy.resolved_sfr_10myr.keys():
                         row[f"{run_name}_resolved_sfr_10myr"] = (
                             galaxy.resolved_sfr_10myr[run_name]
@@ -17724,7 +18282,7 @@ class ResolvedGalaxies(np.ndarray):
                         row[f"{run_name}_resolved_sfr_10myr"] = np.array(
                             [np.nan, np.nan, np.nan]
                         )
-                if not getattr(galaxy, "resolved_sfr_100myr", None) is None:
+                if getattr(galaxy, "resolved_sfr_100myr", None) is not None:
                     if run_name in galaxy.resolved_sfr_100myr.keys():
                         row[f"{run_name}_resolved_sfr_100myr"] = (
                             galaxy.resolved_sfr_100myr[run_name]

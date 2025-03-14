@@ -392,7 +392,13 @@ def create_dicts(
             dict["meta"]["run_name"] += override_meta["name_append"]
             override_meta.pop("name_append")
 
+        if "remove" in override_meta.keys():
+            for key in override_meta["remove"]:
+                dict["meta"].pop(key)
+            override_meta.pop("remove")
+
         dict["meta"].update(override_meta)
+
     results = [copy.deepcopy(dict) for i in range(num)]
     if (
         redshifts is not None

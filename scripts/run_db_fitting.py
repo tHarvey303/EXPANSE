@@ -22,19 +22,6 @@ ok_galaxies = galaxies.filter_single_bins(binmap=binmap_type)
 for galaxy in tqdm(
     ok_galaxies, total=len(ok_galaxies), desc="Fitting galaxies with DB..."
 ):
-    if (
-        "dense_basis" in galaxy.sed_fitting_table.keys()
-        and len(
-            galaxy.sed_fitting_table["dense_basis"][
-                "db_atlas_JOF_star_stack_voronoi_zphotoz_delayed"
-            ].colnames
-        )
-        == 4
-    ):
-        # print(f"Skipping galaxy {galaxy.galaxy_id} because it has already been fit.")
-        # continue
-        pass
-
     fit_results = galaxy.run_dense_basis(
         db_atlas_path,
         plot=False,

@@ -4,7 +4,7 @@ import sys
 import threading
 import time
 import copy
-
+from tqdm import tqdm
 import matplotlib as mpl
 import numpy as np
 from astropy import units as u
@@ -18,7 +18,7 @@ from astropy.io import fits
 import glob
 from matplotlib.patches import Arrow, FancyArrow
 from astropy.coordinates import SkyCoord
-from astropy.table import Table
+from astropy.table import Table, vstack, hstack
 from scipy.interpolate import interp1d
 import h5py as h5
 import matplotlib.pyplot as plt
@@ -28,6 +28,11 @@ from matplotlib.colors import (
     ListedColormap,
     to_rgba,
 )
+
+import pathlib
+import matplotlib.colors as mcolors
+import shutil
+import subprocess
 
 
 file_path = os.path.abspath(__file__)
@@ -522,6 +527,9 @@ class PhotometryBandInfo:
         wht_path=None,
         err_path=None,
         seg_path=None,
+        psf_path=None,
+        psf_type=None,
+        psf_kernel_path=None,
         im_pixel_scale="HEADER",
         image_zp="HEADER",
         image_unit="HEADER",
@@ -529,6 +537,7 @@ class PhotometryBandInfo:
         wht_hdu_ext=0,
         err_hdu_ext=0,
         seg_hdu_ext=0,
+        detection_image=False,
     ):
         self.band_name = band_name
         self.instrument = instrument
@@ -542,7 +551,11 @@ class PhotometryBandInfo:
         if seg_path == "im_folder":
             seg_path = image_path
 
+        if psf_path == "im_folder":
+            psf_path = image_path
+
         # Perform same checks for err, wht and seg
+        self.detection_image = detection_image
 
         if wht_path is not None and os.path.isdir(wht_path):
             wht_path_finder = glob.glob(
@@ -727,6 +740,176 @@ class PhotometryBandInfo:
                     f"Auto detected error path {err_path} for band {band_name}."
                 )
 
+        if seg_path is not None and os.path.isdir(seg_path):
+            seg_path_finder = glob.glob(
+                os.path.join(seg_path, f"*{band_name.upper()}*seg*.fits")
+            )
+            seg_path_finder.extend(
+                glob.glob(
+                    os.path.join(seg_path, f"*{band_name.lower()}*seg*.fits")
+                )
+            )
+            seg_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        seg_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*seg*.fits",
+                    )
+                )
+            )
+            seg_path_finder.extend(
+                glob.glob(
+                    os.path.join(seg_path, f"*{band_name.upper()}*SEG*.fits")
+                )
+            )
+            seg_path_finder.extend(
+                glob.glob(
+                    os.path.join(seg_path, f"*{band_name.lower()}*SEG*.fits")
+                )
+            )
+            seg_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        seg_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*SEG*.fits",
+                    )
+                )
+            )
+
+            # Remove duplicates
+            seg_path = list(set(seg_path_finder))
+            if len(seg_path) > 1:
+                seg_path = [path for path in seg_path if "+" not in path]
+
+            if len(seg_path) > 1:
+                print(seg_path)
+                raise ValueError(
+                    f"Multiple files found for band {band_name}. Please provide full path."
+                )
+            elif len(seg_path) == 0:
+                raise ValueError(
+                    f"No files found for band {band_name}. Please provide full path."
+                )
+            else:
+                seg_path = seg_path[0]
+                print(
+                    f"Auto detected segmentation path {seg_path} for band {band_name}."
+                )
+
+        if psf_path is not None and os.path.isdir(psf_path):
+            psf_path_finder = glob.glob(
+                os.path.join(psf_path, f"*{band_name.upper()}*psf*.fits")
+            )
+            psf_path_finder.extend(
+                glob.glob(
+                    os.path.join(psf_path, f"*{band_name.lower()}*psf*.fits")
+                )
+            )
+            psf_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*psf*.fits",
+                    )
+                )
+            )
+            psf_path_finder.extend(
+                glob.glob(
+                    os.path.join(psf_path, f"*{band_name.upper()}*PSF*.fits")
+                )
+            )
+            psf_path_finder.extend(
+                glob.glob(
+                    os.path.join(psf_path, f"*{band_name.lower()}*PSF*.fits")
+                )
+            )
+            psf_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*PSF*.fits",
+                    )
+                )
+            )
+
+            # Remove duplicates
+            psf_path = list(set(psf_path_finder))
+
+            if len(psf_path) > 1:
+                raise ValueError(
+                    f"Multiple files found for band {band_name}. Please provide full path."
+                )
+            elif len(psf_path) == 0:
+                raise ValueError(
+                    f"No files found for band {band_name}. Please provide full path."
+                )
+            else:
+                psf_path = psf_path[0]
+                print(
+                    f"Auto detected PSF path {psf_path} for band {band_name}."
+                )
+
+        if psf_kernel_path is not None and os.path.isdir(psf_kernel_path):
+            psf_kernel_path_finder = glob.glob(
+                os.path.join(
+                    psf_kernel_path, f"*{band_name.upper()}*psf*.fits"
+                )
+            )
+            psf_kernel_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_kernel_path, f"*{band_name.lower()}*psf*.fits"
+                    )
+                )
+            )
+            psf_kernel_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_kernel_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*psf*.fits",
+                    )
+                )
+            )
+            psf_kernel_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_kernel_path, f"*{band_name.upper()}*PSF*.fits"
+                    )
+                )
+            )
+            psf_kernel_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_kernel_path, f"*{band_name.lower()}*PSF*.fits"
+                    )
+                )
+            )
+            psf_kernel_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_kernel_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*PSF*.fits",
+                    )
+                )
+            )
+
+            # Remove duplicates
+            psf_kernel_path = list(set(psf_kernel_path_finder))
+
+            if len(psf_kernel_path) > 1:
+                raise ValueError(
+                    f"Multiple files found for band {band_name}. Please provide full path."
+                )
+            elif len(psf_kernel_path) == 0:
+                raise ValueError(
+                    f"No files found for band {band_name}. Please provide full path."
+                )
+            else:
+                psf_kernel_path = psf_kernel_path[0]
+                print(
+                    f"Auto detected PSF kernel path {psf_kernel_path} for band {band_name}."
+                )
+
         # Check if imagepath is a folder
         if os.path.isdir(image_path):
             # Use glob to find the image
@@ -791,6 +974,9 @@ class PhotometryBandInfo:
         self.wht_path = wht_path
         self.err_path = err_path
         self.seg_path = seg_path
+        self.psf_path = psf_path
+        self.psf_kernel_path = psf_kernel_path
+        self.psf_type = psf_type
 
         self.im_pixel_scale = im_pixel_scale
         self.image_zp = image_zp
@@ -975,6 +1161,26 @@ class FieldInfo:
 
     def __init__(self, band_info_list):
         self.band_info_list = band_info_list
+        # Check only one or no detection image
+        detection_images = [band.detection_image for band in band_info_list]
+        if detection_images.count(True) > 1:
+            raise ValueError(
+                "More than one detection image found in band_info_list."
+            )
+
+        elif detection_images.count(True) == 1:
+            self.detection_band = [
+                band.band_name
+                for band in band_info_list
+                if band.detection_image
+            ][0]
+            # Remove detection image from list
+            self.band_info_list = [
+                band for band in band_info_list if not band.detection_image
+            ]
+        else:
+            self.detection_band = None
+
         # Get list of bands
         self.band_names = [band.band_name for band in band_info_list]
         # Get list of instruments
@@ -1013,6 +1219,14 @@ class FieldInfo:
         }
         self.seg_paths = {
             band.band_name: band.seg_path for band in band_info_list
+        }
+
+        self.psf_paths = {
+            band.band_name: band.psf_path for band in band_info_list
+        }
+
+        self.psf_kernel_paths = {
+            band.band_name: band.psf_kernel_path for band in band_info_list
         }
 
 
@@ -1266,6 +1480,10 @@ def get_bounding_box(array, scale_border=0, square=False):
     ----------
     array : ndarray
         2D numpy array
+    scale_border : float
+        Factor to scale the border by, as a fraction of box size
+    square : bool
+        Whether to make the bounding box square
 
     Returns
     -------
@@ -1279,30 +1497,42 @@ def get_bounding_box(array, scale_border=0, square=False):
     rows = np.any(valid, axis=1)
     cols = np.any(valid, axis=0)
 
+    # Find the indices of the first and last True values
     ymin, ymax = np.where(rows)[0][[0, -1]]
     xmin, xmax = np.where(cols)[0][[0, -1]]
 
+    # Store original dimensions for border scaling
     diff_x = xmax - xmin
     diff_y = ymax - ymin
 
-    xmin = xmin - scale_border * diff_x
-    xmax = xmax + scale_border * diff_x
-    ymin = ymin - scale_border * diff_y
-    ymax = ymax + scale_border * diff_y
+    # Apply border scaling
+    xmin = max(0, xmin - int(scale_border * diff_x))
+    xmax = min(array.shape[1] - 1, xmax + int(scale_border * diff_x))
+    ymin = max(0, ymin - int(scale_border * diff_y))
+    ymax = min(array.shape[0] - 1, ymax + int(scale_border * diff_y))
 
     if square:
-        # Pad the smaller dimension to make it square
+        # Recalculate dimensions after border scaling
         diff_x = xmax - xmin
         diff_y = ymax - ymin
 
         if diff_x > diff_y:
+            # Need to expand y dimension
             diff = diff_x - diff_y
-            ymin -= diff / 2
-            ymax += diff / 2
+            pad_top = diff // 2
+            pad_bottom = diff - pad_top  # Handle odd differences correctly
+
+            ymin = max(0, ymin - pad_top)
+            ymax = min(array.shape[0] - 1, ymax + pad_bottom)
+
         elif diff_y > diff_x:
+            # Need to expand x dimension
             diff = diff_y - diff_x
-            xmin -= diff / 2
-            xmax += diff / 2
+            pad_left = diff // 2
+            pad_right = diff - pad_left  # Handle odd differences correctly
+
+            xmin = max(0, xmin - pad_left)
+            xmax = min(array.shape[1] - 1, xmax + pad_right)
 
     return xmin, xmax, ymin, ymax
 
@@ -1625,3 +1855,379 @@ if __name__ == "__main__":
     x = optimize_sfh_xlimit(ax)
 
     print(x)
+
+
+def create_fitsmap(
+    survey,
+    field_info,
+    overwrite=False,
+    catalogue_path=None,
+    out_dir="/nvme/scratch/work/tharvey/fitsmap/",
+    filter_val=None,
+    filter_field=None,
+    plot_path_column=None,
+    other_image_paths=[],
+    wcs_band="F444W",
+    kron_band="F444W",
+    rgb_bands={"red": ["F444W"], "green": ["F277W"], "blue": ["F150W"]},
+    fitsmap_columns={
+        "id": "NUMBER",
+        "ra": "ALPHA_J2000",
+        "dec": "DELTA_J2000",
+        "a": "A_IMAGE_kron_band",
+        "b": "B_IMAGE_kron_band",
+        "theta": "THETA_IMAGE_kron_band",
+        "kron_radius": "KRON_RADIUS_kron_band",
+        "x": "X_IMAGE",
+        "y": "Y_IMAGE",
+    },
+    use_wcs=True,
+    extra_columns={
+        "MAG_AUTO_F444W": "F444W Mag",
+        "MAG_AUTO_F277W": "F277W Mag",
+        "zbest_fsps_larson_zfree": "photo-z",
+        "chi2_best_fsps_larson_zfree": "chi2",
+    },
+):  # 'zbest_fsps_larson_zfree':'Photo-z',
+    """
+    Create a fitsmap for a given survey and field_info object.
+
+    Parameters:
+    -----------
+
+    survey : str
+        The name of the survey (e.g. 'CANDELS', 'GOODS-S', etc.)
+    field_info : FieldInfo
+        The FieldInfo object containing the band information for the survey
+    overwrite : bool, optional
+        Whether to overwrite existing fitsmap files (default: False)
+    catalogue_path : str, optional
+        Path to the catalogue file to include in the fitsmap (default: None)
+    out_dir : str, optional
+        The output directory for the fitsmap files (default: '/nvme/scratch/work/tharvey/fitsmap/')
+    extra_columns_to_show : list, optional
+        List of additional columns to include in the fitsmap table (default: [])
+    filter_val : str or None, optional
+        Value to filter the fitsmap table by (default: None)
+    filter_field : str or None, optional
+        Field to filter the fitsmap table by (default: None)
+    plot_path_column : str or dict or list(len(catalogue)) or None, optional
+        Column name containing paths to SED plots (default: None) or a string to use as a folder path with {id}.png format
+        Or a dict matching ID to path
+        Or a list of paths matching the length of the catalogue
+    other_image_paths : list, optional
+        List of additional image paths to include in the fitsmap (default: [])
+    wcs_band : str, optional
+        Band to use for WCS information (default: 'F444W')
+    rgb_bands : dict, optional
+        Dictionary of RGB bands to use for creating RGB images (default: {'red': ['F444W'], 'green': ['F277W'], 'blue': ['F150W']})
+    default_columns_to_show : dict, optional
+        Dictionary of default columns to include in the fitsmap table. Maps needed columns (id, ra, dec) to catalogue names (default: {'UNIQUE_ID':'id', 'ALPHA_J2000':'ra', 'DELTA_J2000':'dec','MAG_AUTO_F444W':'f444W Mag', 'MAG_AUTO_F277W':'f277W Mag', 'zbest_fsps_larson_zfree':'photo-z', 'chi2_best_fsps_larson_zfree':'chi2'})
+
+    """
+    print(f"Creating fitsmap for {survey}...")
+
+    sys.path.append("/nvme/scratch/software/trilogy/")
+    from trilogy3 import Trilogy
+    from fitsmap import convert
+
+    folder_name = f"{survey}/"
+    out_path = out_dir + folder_name
+    if overwrite:
+        try:
+            shutil.rmtree(out_path)
+        except FileNotFoundError:
+            pass
+
+    os.makedirs(out_path, exist_ok=True)
+
+    bands = field_info.band_names
+    paths = [field_info.im_paths[band] for band in bands]
+
+    # Catalogue path
+    if catalogue_path is not None:
+        nhdu = len(fits.open(catalogue_path))
+        table = Table.read(catalogue_path)
+
+        if nhdu > 1:
+            # check same number of rows and hstack
+            for i in range(2, nhdu):
+                table_i = Table.read(catalogue_path, hdu=i)
+                if len(table) == len(table_i):
+                    table = hstack([table, table_i])
+
+        # Check if table has multiple HDUs
+
+        print(table.colnames)
+
+        if (
+            filter_val != None
+            and filter_field != None
+            and filter_field != "None"
+        ):
+            if type(filter_val) in [list, np.ndarray]:
+                mask = [
+                    True if i in filter_val else False
+                    for i in table[filter_field]
+                ]
+                filtered_table = table[mask]
+            else:
+                filtered_table = table[table[filter_field] == filter_val]
+        else:
+            filtered_table = table
+
+        output_table = Table()
+        filtered_output_table = Table()
+        for column in fitsmap_columns:
+            cat_colname = fitsmap_columns[column]
+            if column in [
+                "id",
+                "ra",
+                "dec",
+                "a",
+                "b",
+                "theta",
+                "kron_radius",
+                "x",
+                "y",
+            ]:
+                if column == "a" or column == "b":
+                    output_table[column] = table[
+                        cat_colname.replace("kron_band", kron_band)
+                    ]
+                    filtered_output_table[column] = filtered_table[
+                        cat_colname.replace("kron_band", kron_band)
+                    ]
+                    if (
+                        f'{fitsmap_columns["kron_radius"].replace("kron_band", kron_band)}'
+                        in table.colnames
+                    ):
+                        print(
+                            f"Converting dimensionless a/b to pixels for {kron_band}..."
+                        )
+                        output_table[column] *= table[
+                            fitsmap_columns["kron_radius"].replace(
+                                "kron_band", kron_band
+                            )
+                        ]
+                        filtered_output_table[column] *= filtered_table[
+                            fitsmap_columns["kron_radius"].replace(
+                                "kron_band", kron_band
+                            )
+                        ]
+
+                    continue
+                elif column == "theta":
+                    output_table[column] = table[
+                        cat_colname.replace("kron_band", kron_band)
+                    ]
+                    filtered_output_table[column] = filtered_table[
+                        cat_colname.replace("kron_band", kron_band)
+                    ]
+                    continue
+                elif column == "kron_radius":
+                    continue
+
+                if cat_colname not in table.colnames:
+                    if f"{cat_colname}_1" in table.colnames:
+                        table[cat_colname] = table[f"{cat_colname}_1"]
+                        filtered_table[cat_colname] = filtered_table[
+                            f"{cat_colname}_1"
+                        ]
+                    else:
+                        print(f"{cat_colname} not found in table.")
+                        continue
+                output_table[column] = table[cat_colname]
+                filtered_output_table[column] = filtered_table[cat_colname]
+            else:
+                output_table[column] = [f"{i:.2f}" for i in table[cat_colname]]
+                filtered_output_table[column] = [
+                    f"{i:.2f}" for i in filtered_table[cat_colname]
+                ]
+
+        for column in extra_columns:
+            output_table[extra_columns[column]] = [
+                f"{i:.2f}" for i in table[column]
+            ]
+            filtered_output_table[extra_columns[column]] = [
+                f"{i:.2f}" for i in filtered_table[column]
+            ]
+
+        catalog_path = out_path + f"catalog.cat"
+        filtered_catalog_path = out_path + f"catalog_{filter_field}.cat"
+
+        if "x" in output_table.colnames and "y" in output_table.colnames:
+            if (
+                use_wcs
+                and "ra" in output_table.colnames
+                and "dec" in output_table.colnames
+            ):
+                output_table.remove_column("x")
+                output_table.remove_column("y")
+                filtered_output_table.remove_column("x")
+                filtered_output_table.remove_column("y")
+
+        # add SED plot columns
+        img_array = []
+        if plot_path_column != None:
+            if plot_path_column in table.colnames:
+                sed_plot_paths = table[plot_path_column]
+                filtered_sed_plot_path = filtered_table[plot_path_column]
+            elif type(plot_path_column) == str:
+                sed_plot_paths = [
+                    f"{plot_path_column}{i}.png"
+                    for i in filtered_table[fitsmap_columns["id"]]
+                ]
+
+            for row, path in zip(filtered_output_table, sed_plot_paths):
+                try:
+                    os.symlink(os.path.dirname(path), out_path + "SED_plots")
+                except FileExistsError:
+                    pass
+
+                full_path = f"{out_path}/SED_plots/{os.path.basename(path)}"
+                path = f"SED_plots/{os.path.basename(path)}"
+                if pathlib.Path(f"{out_path}/{path}").is_file():
+                    img_array.append(
+                        f'<a href="{path}"><img src="{path}" width="723" height="550"></a>'
+                    )
+                else:
+                    img_array.append("Not found.")
+
+            # assume all plots in same folder
+
+            filtered_output_table["SED_plot"] = img_array
+
+        output_table.write(catalog_path, overwrite=True, format="ascii.csv")
+        paths.append(catalog_path)
+
+        if (
+            filter_val != None
+            and filter_field != None
+            and filter_field != "None"
+        ):
+            filtered_output_table.write(
+                filtered_catalog_path, overwrite=True, format="ascii.csv"
+            )
+            paths.append(filtered_catalog_path)
+
+    # Add detection image
+    if field_info.detection_band != None:
+        detection_phot = field_info.detection_band
+        paths.append(detection_phot.im_path)
+
+    # Make RGB images
+
+    # Write trilogy.in
+    if not os.path.exists(f"{out_path}/{survey}_RGB.png"):
+        print("Creating Trilogy RGB...")
+        red_bands = rgb_bands["red"]
+        green_bands = rgb_bands["green"]
+        blue_bands = rgb_bands["blue"]
+
+        with open(out_path + "trilogy.in", "w") as f:
+            f.write("B\n")
+            for band in blue_bands:
+                if band in bands:
+                    f.write(f"{field_info.im_paths[band]}[1]\n")
+            f.write("\nG\n")
+            for band in green_bands:
+                if band in bands:
+                    f.write(f"{field_info.im_paths[band]}[1]\n")
+            f.write("\nR\n")
+            for band in red_bands:
+                if band in bands:
+                    f.write(f"{field_info.im_paths[band]}[1]\n")
+            f.write(f"""\nindir  /
+    outname  {survey}_RGB
+    outdir  {out_path}
+    samplesize 20000
+    stampsize  2000
+    showstamps  0
+    satpercent  0.001
+    noiselum    0.10
+    colorsatfac  1
+    deletetests  1
+    testfirst   0
+    sampledx  0
+    sampledy  0""")
+        # Run trilogy
+        # subprocess.run(['python', '/nvme/scratch/software/trilogy/trilogy3.py', out_path + 'trilogy.in'])
+        Trilogy(out_path + "trilogy.in", images=None).run()
+    paths.append(out_path + f"{survey}_RGB.png")
+
+    for band in tqdm(bands, desc="Creating seg maps..."):
+        seg_path = field_info.seg_paths[band]
+        if seg_path == None:
+            continue
+        seg_name = os.path.basename(seg_path)
+        # Make seg map image
+        if not os.path.exists(
+            f'{out_path}/{seg_name.replace(".fits", ".png")}'
+        ):
+            img = fits.open(seg_path)[0].data
+            num_of_colors = len(np.unique(img))
+            colors = np.random.choice(
+                list(mcolors.XKCD_COLORS.keys()), num_of_colors
+            )
+            colors[0] = "black"
+            cmap = mcolors.ListedColormap(colors)
+
+            norm = plt.Normalize(vmin=img.min(), vmax=img.max())
+            # map the normalized data to colors
+            # image is now RGBA (512x512x4)
+            image = cmap(norm(img))
+
+            # save the image
+            plt.imsave(
+                f'{out_path}/{seg_name.replace(".fits", ".png")}', image
+            )
+        paths.append(f'{out_path}/{seg_name.replace(".fits", ".png")}')
+
+        # Need a cmap which changes color for every 1 increase -
+
+    for other_image in other_image_paths:
+        paths.append(other_image)
+
+    display = dict(
+        stretch="log",
+        max_percent=99.8,
+        min_percent=1,
+        min_cut=0,
+        max_cut=10,
+        log_a=10,
+    )
+    norm = {
+        pathlib.Path(path).name: display
+        for path in paths
+        if path.endswith(".fits")
+    }
+    wcs_band_ext = field_info.im_exts[wcs_band]
+
+    cat_wcs_header = fits.open(field_info.im_paths[wcs_band])[
+        wcs_band_ext
+    ].header
+
+    convert.files_to_map(
+        paths,
+        out_dir=out_path,
+        title=f'{survey} {filter_field if filter_field != None else ""}',
+        cat_wcs_fits_file=cat_wcs_header,
+        procs_per_task=6,
+        norm_kwargs=norm,
+    )
+
+
+def display_fitsmap(
+    field, out_dir="/nvme/scratch/work/tharvey/fitsmap/", x=800, y=400
+):
+    from IPython.display import IFrame
+
+    # cd to fitsmap directory
+    os.chdir(out_dir + field + "/")
+    os.system("pkill fitsmap")
+    # Run fitsmap serve in another thread and suppress output
+
+    os.system(f"fitsmap serve &")
+
+    return display(IFrame("http://localhost:8000//", x, y))

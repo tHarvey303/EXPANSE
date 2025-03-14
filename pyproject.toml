@@ -163,7 +163,6 @@ morphology = [
 
 [project.scripts]
 expanse-viewer = "EXPANSE:expanse_viewer"
-expanse-viewer-class = "EXPANSE:expanse_viewer_class"
 
 
 # Set up the build system

@@ -8,6 +8,7 @@ stamp_*
 galaxies/temp/*.fits
 galaxies/*.fits
 galaxies/*
+scripts/private
 galaxies/mock
 galaxies/mock_nonoise
 galaxies/mock*

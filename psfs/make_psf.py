@@ -1924,6 +1924,7 @@ def psf_comparison(
     fig.get_layout_engine().set(wspace=-5, hspace=-3)
     print("Saved")
     fig.savefig("/nvme/scratch/work/tharvey/PSFs/psf_comparison.pdf", dpi=300)
+    return fig
 
 
 def rel_cog_comparison(
@@ -1958,7 +1959,9 @@ def rel_cog_comparison(
 
     # assert len(kernel_dir_dict.keys()) == len(psf_dir_dict.keys()), 'PSF and kernel names must match'
     # move last band to the front
-    assert len(psf_dir_dict) == len(kernel_dir_dict) == 1
+    assert (
+        len(psf_dir_dict) == len(kernel_dir_dict) == 1
+    ), f"Only one PSF and kernel allowed, got {len(psf_dir_dict)} and {len(kernel_dir_dict)}"
     key = list(psf_dir_dict.keys())[0]
     target_psf = fits.getdata(
         glob.glob(f"{psf_dir_dict[key]}/*{match_band}*.fits")[0]
@@ -2003,8 +2006,7 @@ def rel_cog_comparison(
                     kernel_filename = kernel_filename[0]
                 except:
                     kernel_filename = kernel_filename[0]
-            print(kernel_filename)
-            print(band)
+
             kernel = fits.getdata(kernel_filename[0])
 
             psf = fits.getdata(filename)
@@ -2078,6 +2080,7 @@ def rel_cog_comparison(
         dpi=300,
         bbox_inches="tight",
     )
+    return fig
 
 
 def measure_cog(sci_cutout, pos):
@@ -2390,6 +2393,33 @@ def psf_correction_factor(
     return corr
 
 
+"""#corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/downloads/MEGASCIENCE_PSFs/', apersize=0.2, pixel_scale = 0.04)
+#print('UNCOVER corr', corr)
+print('F444W')
+
+band1 = 'F444W'
+band2 = 'F277W'
+apersize = 0.2
+
+#corr_1 = psf_correction_factor(band1, '/nvme/scratch/work/tharvey/PSFs/JADES-Deep-GS/', apersize=apersize, pixel_scale = 0.03)
+#corr_2 = psf_correction_factor(band2, '/nvme/scratch/work/tharvey/PSFs/JADES-Deep-GS/', apersize=apersize, pixel_scale = 0.03)
+#print(f'Emprical Aper Corr {band1}: {corr_1:.3f} mag, {band2}: {corr_2:.3f} mag, Diff: {corr_1-corr_2:.3f} mag')
+
+corr_1 = psf_correction_factor(band1, '/nvme/scratch/work/tharvey/PSFs/CEERSP1+CEERSP2+CEERSP3+CEERSP4+CEERSP5+CEERSP6+CEERSP7+CEERSP8+CEERSP9+CEERSP10/', apersize=apersize, pixel_scale = 0.03)
+corr_2 = psf_correction_factor(band2, '/nvme/scratch/work/tharvey/PSFs/CEERSP1+CEERSP2+CEERSP3+CEERSP4+CEERSP5+CEERSP6+CEERSP7+CEERSP8+CEERSP9+CEERSP10/', apersize=apersize, pixel_scale = 0.03)
+print(f'Emprical Aper Corr {band1}: {corr_1:.3f} mag, {band2}: {corr_2:.3f} mag, Diff: {corr_1-corr_2:.3f} mag')
+
+corr_1 = psf_correction_factor(psf_path=f'/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/default_jitter/psf_default_{band1}_4arcsec_0.fits', apersize=apersize, pixel_scale = 0.03)
+corr_2 = psf_correction_factor(psf_path=f'/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/default_jitter/psf_default_{band2}_4arcsec_0.fits', apersize=apersize, pixel_scale = 0.03)
+print(f'WebbPSF Default Aper Corr {band1}: {corr_1:.3f} mag, {band2}: {corr_2:.3f} mag, Diff: {corr_1-corr_2:.3f} mag')
+
+corr_1 = psf_correction_factor(psf_path=f'/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/morishita_jitter/psf_default_{band1}_4arcsec_0_jitter34mas.fits', apersize=apersize, pixel_scale = 0.03)
+corr_2 = psf_correction_factor(psf_path=f'/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/morishita_jitter/psf_default_{band2}_4arcsec_0_jitter34mas.fits', apersize=apersize, pixel_scale = 0.03) 
+print(f'WebbPSF Jitter Aper Corr {band1}: {corr_1:.3f} mag, {band2}: {corr_2:.3f} mag, Diff: {corr_1-corr_2:.3f} mag')
+
+
+crash"""
+
 if __name__ == "__main__":
     surveys = ["NEP-1", "NEP-2", "NEP-3", "NEP-4"]
     surveys = [f"CEERSP{i}" for i in range(1, 11)]
@@ -2685,8 +2715,6 @@ if __name__ == "__main__":
         bands, psf_dir_dict, match_band=match_band, pixelscale=pixelscale
     )
 
-    crash
-
     rel_cog_comparison(
         bands,
         psf_dir_dict,
@@ -2751,3 +2779,19 @@ if __name__ == "__main__":
     # corr = psf_correction_factor('F444W', '/nvme/scratch/work/tharvey/PSFs/JOF/webbpsf/morishita_jitter/', apersize=0.32, pixel_scale = 0.03)
 
     # print('WebbPSF Morishita corr', corr)
+
+    bands = []
+    make_psf(
+        bands,
+        im_paths,
+        outdir,
+        kernel_dir,
+        match_band=match_band,
+        phot_zp=phot_zp,
+        maglim=maglim,
+        use_psf_masks=use_psf_masks,
+        manual_id_remove=manual_id_remove,
+        sigma=3.5,
+        psf_fov=psf_fov,
+        pypher_r=1e-4,
+    )

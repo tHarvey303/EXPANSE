@@ -21,13 +21,13 @@ repos:
       - id: ruff-format
 
   # Sanitise Jupyter notebooks.
-  - repo: https://github.com/srstevenson/nb-clean
-    rev: 3.3.0
-    hooks:
-      - id: nb-clean
-        args:
-          - --remove-empty-cells
-          - --preserve-cell-metadata
-          - tags
-          - -M
-          - --
+  #- repo: https://github.com/srstevenson/nb-clean
+  #  rev: 3.3.0
+  #  hooks:
+  #    - id: nb-clean
+  #      args:
+  #        - --remove-empty-cells
+  #        - --preserve-cell-metadata
+  #        - tags
+  #        - -M
+  #        - --''

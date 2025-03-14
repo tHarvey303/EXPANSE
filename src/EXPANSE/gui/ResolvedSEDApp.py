@@ -6,13 +6,15 @@ import numpy as np
 from io import BytesIO
 import h5py as h5
 from astropy.io import fits
+import matplotlib
 import functools
 from astropy.wcs import WCS
+import subprocess
 import click
 import copy
 from functools import lru_cache
 import os
-from .ResolvedGalaxy import ResolvedGalaxy, MockResolvedGalaxy
+from ..ResolvedGalaxy import ResolvedGalaxy, MockResolvedGalaxy
 from astropy import units as u
 import xarray as xr
 import hvplot.xarray  # noqa
@@ -25,6 +27,11 @@ import functools
 import tempfile
 import inspect
 import copy
+
+# Get fitsmap directory from environment variable
+fitsmap_directory = os.getenv(
+    "FITSMAP_DIR", "/nvme/scratch/work/tharvey/fitsmap"
+)
 
 MAX_SIZE_MB = 150
 ACCENT = "goldenrod"
@@ -180,13 +187,22 @@ class GalaxyTab(param.Parameterized):
     galaxy_id = param.String()
     survey = param.String()
     # resolved_galaxy = param.Parameter()
+
+    cutout_cmap = param.String(default="Blues")
+    cutout_scale = param.Selector(default="linear", objects=["linear", "log"])
+    band_combination = param.Selector(
+        default="mean", objects=["mean", "median", "sum", "inv variance"]
+    )
+
     active_tab = param.Integer(default=0)
     which_map = param.Selector(
-        default="pixedfit", objects=["pixedfit", "voronoi", "pixel-by-pixel"]
+        default="pixedfit", objects=["pixedfit", "voronoi", "pixel_by_pixel"]
     )
-    which_sed_fitter = param.Selector(default="bagpipes", objects=["bagpipes"])
+    which_sed_fitter = param.Selector(
+        default="bagpipes", objects=["bagpipes", "dense_basis"]
+    )
     which_flux_unit = param.Selector(
-        default="uJy", objects=["uJy", "ABmag", "ergscma"]
+        default="uJy", objects=["uJy", "nJy", "ABmag", "ergscma"]
     )
     multi_choice_bins = param.List(default=["RESOLVED"])
     which_run_aperture = param.String(default=None)
@@ -264,8 +280,8 @@ class GalaxyTab(param.Parameterized):
     red_channel = param.List(default=["F444W"])
     green_channel = param.List(default=["F277W"])
     blue_channel = param.List(default=["F150W"])
-    stretch = param.Number(default=6, bounds=(0.001, 10))
-    q = param.Number(default=0.001, bounds=(0.000001, 0.01))
+    stretch = param.Number(default=3e-4, bounds=(0.000000001, 0.1))
+    q = param.Number(default=3, bounds=(0.000000001, 10))
     psf_mode = param.Selector(
         default="PSF Matched", objects=["PSF Matched", "Original"]
     )
@@ -276,7 +292,7 @@ class GalaxyTab(param.Parameterized):
     )
 
     # Parameters for interactive tab
-    interactive_band = param.Selector(default="F444W")
+    interactive_band = param.Selector(default="F410M")
     drawn_shapes = param.Dict(default={})
     which_interactive_sed_fitter = param.Selector(
         default="EAZY-py", objects=["EAZY-py", "Dense Basis"]
@@ -316,9 +332,27 @@ class GalaxyTab(param.Parameterized):
     @notify_on_error
     @param.depends()
     def setup_widgets(self):
-        self.which_map_widget = pn.widgets.RadioButtonGroup(
+        self.cutout_cmap_widget = pn.widgets.ColorMap(
+            options={
+                k: matplotlib.colormaps[k]
+                for k in plt.colormaps()
+                if type(matplotlib.colormaps[k])
+                is matplotlib.colors.LinearSegmentedColormap
+            },
+            value_name="Blues",
+        )
+        self.cutout_cmap_widget.link(self, value_name="cutout_cmap")
+
+        self.cutout_scale_widget = pn.widgets.RadioButtonGroup(
+            name="Cutout Scale",
+            options=["linear", "log"],
+            value=self.cutout_scale,
+        )
+        self.cutout_scale_widget.link(self, value="cutout_scale")
+
+        self.which_map_widget = pn.widgets.Select(
             name="Pixel Binning",
-            options=["pixedfit", "voronoi", "pixel-by-pixel"],
+            options=["pixedfit", "voronoi", "pixel_by_pixel"],
             value=self.which_map,
         )
         self.which_map_widget.link(self, value="which_map")
@@ -370,13 +404,13 @@ class GalaxyTab(param.Parameterized):
         )
 
         self.which_run_resolved_widget = pn.widgets.Select(
-            name="Run Name", options=[], value=self.which_run_resolved
+            name="Resolved Run Name", options=[], value=self.which_run_resolved
         )
 
         self.which_run_resolved_widget.link(self, value="which_run_resolved")
 
         self.which_run_aperture_widget = pn.widgets.Select(
-            name="Run Name",
+            name="Integrated Run Name",
             options=[],
             value=self.which_run_aperture,
         )
@@ -481,13 +515,24 @@ class GalaxyTab(param.Parameterized):
         )
         self.blue_channel_widget.link(self, value="blue_channel")
 
+        self.band_combination_widget = pn.widgets.Select(
+            name="Band Combination",
+            options=["mean", "median", "sum", "inv variance"],
+            value="mean",
+        )
+        self.band_combination_widget.link(self, value="band_combination")
+
         self.stretch_widget = pn.widgets.EditableFloatSlider(
-            name="Stretch", start=0.001, end=10, value=self.stretch, step=0.001
+            name="Stretch",
+            start=1e-5,
+            end=0.01,
+            value=self.stretch,
+            step=0.0001,
         )
         self.stretch_widget.link(self, value="stretch")
 
         self.q_widget = pn.widgets.EditableFloatSlider(
-            name="Q", start=0.000001, end=0.01, value=self.q, step=0.000001
+            name="Q", start=0.0001, end=10, value=self.q, step=0.000001
         )
         self.q_widget.link(self, value="q")
 
@@ -708,6 +753,8 @@ class GalaxyTab(param.Parameterized):
     def plot_bagpipes_results(
         self, parameters=["stellar_mass", "sfr"], max_on_row=3
     ):
+        self.update_pixel_map_from_run_name(self.which_run_resolved)
+
         if self.which_sed_fitter == "bagpipes":
             sed_results_plot = self.resolved_galaxy.plot_bagpipes_results(
                 facecolor=self.facecolor,
@@ -717,6 +764,7 @@ class GalaxyTab(param.Parameterized):
                 norm=self.norm,
                 weight_mass_sfr=self.upscale_select,
                 show_info=False,
+                binmap_type=self.which_map,
             )
 
             if sed_results_plot is not None:
@@ -875,6 +923,53 @@ class GalaxyTab(param.Parameterized):
 
     @notify_on_error
     @param.depends()
+    def create_fitsmap_tab(self):
+        fitsmap_tab = pn.Column(sizing_mode="stretch_both")
+
+        fitsmap_tab.append(self.plot_fitsmap)
+
+        return fitsmap_tab
+
+    def plot_fitsmap(
+        self, fitsmap_dir=fitsmap_directory, port=8000, band="F444W"
+    ):
+        import socket
+
+        a_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        location = ("127.0.0.1", port)
+        check = a_socket.connect_ex(location)
+
+        if check != 0:
+            yield pn.indicators.LoadingSpinner(
+                size=50, name="Starting fitsmap server...", value=True
+            )
+            print("Starting fitsmap server...")
+            command = f"pkill fitsmap && cd {fitsmap_dir}/{self.resolved_galaxy.survey} && fitsmap serve"
+            subprocess.Popen(command, shell=True)
+
+        ra = self.resolved_galaxy.sky_coord.ra.deg
+        dec = self.resolved_galaxy.sky_coord.dec.deg
+        image_path = self.resolved_galaxy.im_paths[band]
+        path = (
+            image_path.replace(
+                "/mosaic_1084_wispnathan/", "/NIRCam/mosaic_1084_wispnathan/"
+            )
+            if "NIRCam" not in image_path
+            else image_path
+        )
+        header = fits.getheader(path, ext=1)
+        wcs = WCS(header)
+        x_cent, y_cent = wcs.all_world2pix(ra, dec, 0)
+
+        yield pn.pane.HTML(
+            f'<iframe src="http://localhost:{port}/?ra={x_cent}&dec={y_cent}&zoom=7" width="100%" height="100%"></iframe>',
+            sizing_mode="stretch_both",
+            max_height=520,
+        )
+
+    @notify_on_error
+    @param.depends()
     def setup_tabs(self):
         self.cutouts_tab = pn.param.ParamMethod(
             self.create_cutouts_tab, loading_indicator=True, lazy=True
@@ -897,9 +992,17 @@ class GalaxyTab(param.Parameterized):
         )
 
         self.interactive_tab = pn.panel(
-            self.create_interactive_tab, loading_indicator=True
+            self.create_interactive_tab, loading_indicator=True, lazy=True
         )
         self.info_tabs.append(("Interactive", self.interactive_tab))
+
+        if subprocess.getstatusoutput("which fitsmap")[
+            0
+        ] == 0 and not isinstance(self.resolved_galaxy, MockResolvedGalaxy):
+            self.fitsmap_tab = pn.panel(
+                self.create_fitsmap_tab, loading_indicator=True, lazy=True
+            )
+            self.info_tabs.append(("Fitsmap", self.fitsmap_tab))
 
         if isinstance(self.resolved_galaxy, MockResolvedGalaxy):
             self.synthesizer_tab = pn.panel(
@@ -1030,6 +1133,7 @@ class GalaxyTab(param.Parameterized):
         # Cutouts row
         cutouts_row = pn.Row(
             self.plot_cutouts,
+            self.summary_info_box,
             sizing_mode="stretch_width",
             scroll=True,
         )
@@ -1037,18 +1141,21 @@ class GalaxyTab(param.Parameterized):
 
         rgb_row = pn.Row(
             pn.Column("### RGB Image", self.plot_rgb),
+            pn.Column(
+                "### SNR Map", self.band_select_widget, self.do_snr_plot
+            ),
             sizing_mode="stretch_width",
         )
         cutout_grid.append(rgb_row)
 
-        # SNR Map row
+        """ # SNR Map row
         snr_row = pn.Row(
             pn.Column(
                 "### SNR Map", self.band_select_widget, self.do_snr_plot
             ),
             sizing_mode="stretch_width",
         )
-        cutout_grid.append(snr_row)
+        cutout_grid.append(snr_row)"""
 
         # Other Plots row
         other_plots_row = pn.Row(
@@ -1101,7 +1208,7 @@ class GalaxyTab(param.Parameterized):
             dpi=144,
             tight=True,
             format="svg",
-            max_width=1000,
+            max_width=4000,
             sizing_mode="stretch_both",
         )
 
@@ -1120,6 +1227,8 @@ class GalaxyTab(param.Parameterized):
         if triggered is not None:
             # print function name and trigger
             print("other_bagpipes_results_func triggered by", triggered)
+
+        self.update_pixel_map_from_run_name(self.which_run_resolved)
 
         param_property = self.other_bagpipes_properties
         p_run_name = self.which_run_resolved
@@ -1178,6 +1287,7 @@ class GalaxyTab(param.Parameterized):
                 path="temp",
                 facecolor=self.facecolor,
                 cmap="magma",
+                binmap_type=self.which_map,
             )
         elif outtype == "median":
             fig = self.resolved_galaxy.plot_bagpipes_results(
@@ -1188,6 +1298,7 @@ class GalaxyTab(param.Parameterized):
                 norm=norm_param,
                 total_params=total_params,
                 show_info=False,
+                binmap_type=self.which_map,
             )
 
         if fig is not None:
@@ -1316,8 +1427,9 @@ class GalaxyTab(param.Parameterized):
         )
 
     @notify_on_error
-    @param.depends("interactive_band", "drawn_shapes")
+    @param.depends("interactive_band")  # , "drawn_shapes")
     def create_interactive_plot(self):
+        # print('interactive band', self.interactive_band)
         image_data = self.resolved_galaxy.phot_imgs[self.interactive_band]
         # Flip the image data so that it is displayed correctly
         image_data = np.flipud(image_data)
@@ -1713,7 +1825,7 @@ class GalaxyTab(param.Parameterized):
                     y_data = np.array([line.get_ydata() for line in lines])
                     y_data = np.sum(y_data, axis=0)
 
-                    print("shap", np.shape(y_data))
+                    # print("shap", np.shape(y_data))
 
                     norm = np.cumsum(y_data)
                     norm = norm / np.max(norm)
@@ -1722,7 +1834,7 @@ class GalaxyTab(param.Parameterized):
                     highz = x_data[np.argmin(np.abs(norm - 0.98))] + 0.3
                     ax_pdf.set_xlim(lowz, highz)
 
-                    print("lowz", lowz, "highz", highz)
+                    # print("lowz", lowz, "highz", highz)
 
                     self.interactive_sed_plot_pdf.object = pdf_fig
 
@@ -1934,6 +2046,75 @@ class GalaxyTab(param.Parameterized):
 
         return regions, region_labels
 
+    @notify_on_error
+    def update_pixel_map_from_run_name(self, event):
+        bin_name = self.resolved_galaxy._get_sed_table_bin_type(
+            run_name=self.which_run_resolved, sed_tool=self.which_sed_fitter
+        )
+
+        if bin_name != None and bin_name != self.which_map:
+            self.which_map = bin_name
+            # Send info notification
+            pn.state.notifications.info(
+                f"Pixel map updated to {bin_name} for {self.which_sed_fitter} run {self.which_run_resolved}"
+            )
+
+        self.which_map_widget.options = self.resolved_galaxy.maps
+
+    @notify_on_error
+    @param.depends()
+    def summary_info_box(self):
+        """Makes a nice looking rectangular box with summary information about the galaxy"""
+        # Get the galaxy name
+        galaxy_name = self.resolved_galaxy.galaxy_id
+        # Field name
+        survey = self.resolved_galaxy.survey
+        # Get the galaxy redshift
+        galaxy_redshift = self.resolved_galaxy.redshift
+
+        # location
+        pos = self.resolved_galaxy.sky_coord
+
+        # Cutout size
+        cutout_size = self.resolved_galaxy.cutout_size
+
+        # Number of bands
+
+        nbands = len(self.resolved_galaxy.bands)
+
+        # bands
+
+        pix_scale = self.resolved_galaxy._pix_scale_kpc()
+
+        # self.resolved_galaxy.get_filter_wavs()
+
+        # Make a nice looking box to display the information
+
+        box = pn.pane.Markdown(
+            f"""
+        ## Key Info
+
+        **Galaxy ID**: {galaxy_name}
+        **survey**: {survey}
+        **Redshift**: {galaxy_redshift:.3f}
+        **Position**: {pos.ra:.4f}, {pos.dec:.4f}
+        **Cutout Size**: {cutout_size} pixels
+        **Number of Bands**: {nbands}
+        **Physical Scale**: {pix_scale:.3f} pkpc/pixel
+
+        """,
+            width=300,
+            height=300,
+            styles={
+                "border": "1px solid black",
+                "padding": "10px",
+                "background-color": "#f9f9f9",
+                "font-size": "12pt",
+            },
+        )
+
+        return box
+
     # @lru_cache(maxsize=None)
     @notify_on_error
     @param.depends()
@@ -1946,10 +2127,14 @@ class GalaxyTab(param.Parameterized):
             sidebar.extend(
                 [
                     self.psf_mode_widget,
+                    "#### Cutout Settings",
+                    self.cutout_cmap_widget,
+                    self.cutout_scale_widget,
                     "#### RGB Image",
                     self.red_channel_widget,
                     self.green_channel_widget,
                     self.blue_channel_widget,
+                    self.band_combination_widget,
                     self.stretch_widget,
                     self.q_widget,
                 ]
@@ -1980,6 +2165,12 @@ class GalaxyTab(param.Parameterized):
                     self.sed_plot_controls,
                     self.sfh_plot_controls,
                 ]
+            )
+
+            pn.bind(
+                self.update_pixel_map_from_run_name,
+                self.which_run_resolved_widget.param.value,
+                watch=True,
             )
         elif self.active_tab == 2:  # Photometric Properties
             sidebar.extend(
@@ -2023,6 +2214,7 @@ class GalaxyTab(param.Parameterized):
         "stretch",
         "q",
         "psf_mode",
+        "band_combination",
     )
     @check_dependencies()
     def plot_rgb(self):
@@ -2045,9 +2237,10 @@ class GalaxyTab(param.Parameterized):
             self.red_channel,
             self.green_channel,
             self.blue_channel,
-            self.stretch,
             self.q,
+            self.stretch,
             use_psf_matched=use_psf_matched,
+            combine_func=self.band_combination,
         )
 
         rgb = np.flipud(rgb)  # Flip y axis to match image orientation
@@ -2122,7 +2315,7 @@ class GalaxyTab(param.Parameterized):
             pn.pane.HoloViews: A HoloViews pane containing the binning map.
         """
 
-        print("bins triggered")
+        # print("bins triggered")
 
         bin_type = self.which_map
         scale_alpha = self.scale_alpha
@@ -2134,6 +2327,8 @@ class GalaxyTab(param.Parameterized):
         array = getattr(self.resolved_galaxy, f"{bin_type}_map")
         if array is None:
             return None
+
+        array = array.astype(float)
 
         array[array == 0] = np.nan
         dimensions = np.linspace(
@@ -2226,7 +2421,7 @@ class GalaxyTab(param.Parameterized):
 
     # @lru_cache(maxsize=None)
     @notify_on_error
-    @param.depends("psf_mode")
+    @param.depends("psf_mode", "cutout_cmap", "cutout_scale")
     @check_dependencies()
     def plot_cutouts(self, psf_type="star_stack"):
         """
@@ -2244,6 +2439,8 @@ class GalaxyTab(param.Parameterized):
             facecolor=self.facecolor,
             psf_matched=self.psf_mode == "PSF Matched",
             psf_type=psf_type,
+            cmap=self.cutout_cmap,
+            stretch=self.cutout_scale,
         )
         plt.close(fig)
         return pn.pane.Matplotlib(
@@ -2316,6 +2513,8 @@ class GalaxyTab(param.Parameterized):
     )
     @check_dependencies()
     def plot_bagpipes_pdf(self, cmap="nipy_spectral_r"):
+        self.update_pixel_map_from_run_name(self.which_run_resolved)
+
         if self.which_sed_fitter == "bagpipes":
             multi_choice_bins_param_safe = [
                 int(i) if i != "RESOLVED" and i != np.nan else i
@@ -2346,7 +2545,6 @@ class GalaxyTab(param.Parameterized):
                 if "RESOLVED" in colors_bins.keys():
                     colors_bins["all"] = colors_bins["RESOLVED"]
 
-                print("colors_bins", type(colors_bins))
                 fig, _ = (
                     self.resolved_galaxy.plot_bagpipes_component_comparison(
                         parameter=self.pdf_param_property,
@@ -2356,6 +2554,7 @@ class GalaxyTab(param.Parameterized):
                         run_dir="pipes/",
                         facecolor=self.facecolor,
                         colors=colors_bins,
+                        binmap_type=self.which_map,
                     )
                 )
 
@@ -2385,6 +2584,7 @@ class GalaxyTab(param.Parameterized):
                         fig=fig,
                         axes=ax,
                         colors=colors_total,
+                        binmap_type=self.which_map,
                     )
                 )
 
@@ -2451,6 +2651,8 @@ class GalaxyTab(param.Parameterized):
                 print('Arguments have not changed')
                 return self.sed_plot
         """
+
+        self.update_pixel_map_from_run_name(self.which_run_resolved)
 
         multi_choice_bins_param_safe = [
             int(i) if i != "RESOLVED" and i != np.nan else i
@@ -2699,6 +2901,9 @@ class GalaxyTab(param.Parameterized):
         Returns:
             pn.pane.Matplotlib: A Matplotlib pane containing the corner plot.
         """
+
+        self.update_pixel_map_from_run_name(self.which_run_resolved)
+
         multi_choice_bins_param_safe = [
             int(i) if i != "RESOLVED" and i != np.nan else i
             for i in self.multi_choice_bins
@@ -2795,6 +3000,9 @@ class GalaxyTab(param.Parameterized):
         Returns:
             pn.pane.Matplotlib: A Matplotlib pane containing the SFH plot.
         """
+
+        self.update_pixel_map_from_run_name(self.which_run_resolved)
+
         multi_choice_bins_param_safe = [
             int(i) if i != "RESOLVED" and i != np.nan else i
             for i in self.multi_choice_bins
@@ -3147,7 +3355,8 @@ class ResolvedSEDApp(param.Parameterized):
             )
         )
         self.current_tabs.append(galaxy_tab.galaxy_id)
-        self.update_sidebar()
+        if len(self.current_tabs) == 1:
+            self.update_sidebar()
 
     # Make a function which watches self.tabs and deletes the tab from memory if it is closed
     @pn.depends("tabs.active")
@@ -3184,8 +3393,8 @@ class ResolvedSEDApp(param.Parameterized):
 
     @notify_on_error
     def update_active_galaxy_tab(self, event):
-        self.update_sidebar()
         self.active_galaxy_tab = event.new
+        self.update_sidebar()
 
     @notify_on_error
     def update_sidebar(self):
@@ -3227,7 +3436,7 @@ def resolved_sed_interface():
 @click.option("--galaxy", default="", help="List of galaxies to load.")
 @click.option("--tab", default="Cutouts", help="Tab to load.")
 @click.option("--test_mode", default=False, help="Run in test mode.")
-def expanse_viewer_class(
+def expanse_viewer(
     port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", test_mode=False
 ):
     global initial_galaxy
@@ -3261,4 +3470,4 @@ def expanse_viewer_class(
 
 
 if __name__ == "__main__":
-    expanse_viewer_class()
+    expanse_viewer()

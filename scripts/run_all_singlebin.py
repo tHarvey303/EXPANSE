@@ -83,10 +83,14 @@ except:
 
 
 galaxies = ResolvedGalaxy.init_all_field_from_h5(
-    field, galaxies_dir, save_out=False
+    field,
+    galaxies_dir,
+    save_out=False,  # filter_ids=["JOF_psfmatched_1438"]
 )
 
 multiple_galaxies = ResolvedGalaxies(galaxies)
+
+# multiple_galaxies = multiple_galaxies.filter_IDs(['1438'])
 
 num = len(multiple_galaxies)
 
@@ -101,12 +105,17 @@ from EXPANSE.bagpipes.pipes_models import (
     cnst_dict,
     resolved_dict_cnst,
     resolved_dict_bursty,
+    db_dict,
 )
 
 override_meta = {
-    "redshift": "eazy",
-    "redshift_sigma": "eazy",
+    # "redshift": "eazy",
+    # "redshift_sigma": "eazy",
+    "redshift": "photoz_delayed",
+    "redshift_id": "TOTAL_BIN",
     "use_bpass": True,
+    "name_append": "_WIDEBANDS",
+    "remove": ["redshift_sigma", "min_redshift_sigma"],
 }
 delayed_dicts = create_dicts(
     delayed_dict, override_meta=override_meta, num=num
@@ -140,7 +149,20 @@ resolved_dicts_bursty = create_dicts(
     override_meta=override_meta_resolved,
 )
 
-
+exclude_bands = [
+    "F140M",
+    "F162M",
+    "F182M",
+    "F210M",
+    "F250M",
+    "F300M",
+    "F335M",
+    "F360M",
+    "F410M",
+    "F430M",
+    "F460M",
+    "F480M",
+]
 for dicts in [
     # delayed_dicts,
     # continuity_dicts,
@@ -149,7 +171,7 @@ for dicts in [
     # dpl_dicts,
     # lognorm_dicts,
     # resolved_dicts_cnst,
-    resolved_dicts_bursty,
+    # resolved_dicts_bursty,
 ]:
     multiple_galaxies.run_bagpipes_parallel(
         dicts,
@@ -157,7 +179,60 @@ for dicts in [
         fit_photometry=fit_photometry,
         run_dir=run_dir,
         load_only=load_only,
-        overwrite=True,
+        overwrite=False,
+        dont_skip=True,
+        exclude_bands=exclude_bands,
+    )
+
+
+override_meta = {
+    # "redshift": "eazy",
+    # "redshift_sigma": "eazy",
+    "redshift": "photoz_delayed",
+    "redshift_id": "TOTAL_BIN",
+    "use_bpass": True,
+    "name_append": "_zfix",
+    "remove": ["redshift_sigma", "min_redshift_sigma"],
+}
+
+continuity_dicts = create_dicts(
+    continuity_dict, override_meta=override_meta, num=num
+)
+
+continuity_bursty_dicts = create_dicts(
+    continuity_bursty_dict, override_meta=override_meta, num=num
+)
+
+cnst_dicts = create_dicts(cnst_dict, override_meta=override_meta, num=num)
+
+lognorm_dicts = create_dicts(
+    lognorm_dict, override_meta=override_meta, num=num
+)
+
+dpl_dicts = create_dicts(dpl_dict, override_meta=override_meta, num=num)
+
+db_dicts = create_dicts(db_dict, override_meta=override_meta, num=num)
+
+
+for dicts in [
+    # delayed_dicts,
+    # continuity_dicts,
+    # continuity_bursty_dicts,
+    # lognorm_dicts,
+    # dpl_dicts,
+    cnst_dicts,
+    db_dicts,
+    # resolved_dicts_cnst,
+    # resolved_dicts_bursty,
+]:
+    multiple_galaxies.run_bagpipes_parallel(
+        dicts,
+        n_jobs=n_jobs,
+        fit_photometry=fit_photometry,
+        run_dir=run_dir,
+        load_only=load_only,
+        overwrite=False,
+        dont_skip=True,
     )
 
 """

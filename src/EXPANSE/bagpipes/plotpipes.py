@@ -353,6 +353,7 @@ class PipesFitNoLoad:
         color="black",
         facecolor="white",
         extra_samples=["sfr"],
+        fontsize=13,
     ):
         self.calculate_dof()
 
@@ -368,6 +369,10 @@ class PipesFitNoLoad:
             for label in labels
         ]
 
+        if fontsize > 20:
+            # add '\n' to end of each label
+            labels = [label + "\n" for label in labels]
+
         samples = np.array(samples).T
         # Make the corner plot
         fig = corner(
@@ -375,7 +380,7 @@ class PipesFitNoLoad:
             labels=labels,
             quantiles=[0.16, 0.5, 0.84],
             show_titles=True,
-            title_kwargs={"fontsize": 13},
+            title_kwargs={"fontsize": fontsize},
             smooth=1.0,
             smooth1d=1.0,
             bins=bins,
@@ -383,6 +388,14 @@ class PipesFitNoLoad:
             color=color,
             facecolor=facecolor,
         )
+
+        # set x and y axis labels to be the same size
+        for ax in fig.get_axes():
+            for label in ax.get_xticklabels() + ax.get_yticklabels():
+                label.set_fontsize(fontsize - 8)
+
+            ax.xaxis.label.set_fontsize(fontsize)
+            ax.yaxis.label.set_fontsize(fontsize)
 
         return fig
 
@@ -1122,7 +1135,7 @@ class PipesFit:
                     )
                 # Get filter paths
                 self.filts = [
-                    f"{filter_path}/{filt}_LePhare.txt" for filt in self.bands
+                    f"{filter_path}/{filt}.dat" for filt in self.bands
                 ]
                 spectrum_exists = False
                 photometry_exists = True
@@ -1382,6 +1395,7 @@ class PipesFit:
         fig=None,
         color="black",
         facecolor="white",
+        fontsize=13,
     ):
         from bagpipes import plot_corner
 

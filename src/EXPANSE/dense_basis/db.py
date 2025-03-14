@@ -6,13 +6,6 @@ from astropy.table import Table
 import ast
 import numpy as np
 
-try:
-    import dense_basis as db
-except ImportError:
-    print(
-        "Warning: dense_basis not found. Dense_basis functions will not work"
-    )
-
 
 def get_filter_files(
     root_file="/nvme/scratch/work/tharvey/jwst_filters/",
@@ -108,6 +101,14 @@ def run_db_fit_parallel(
     N_param = int(atlas_path.split("Nparam_")[1].split(".dbatlas")[0])
     N_pregrid = int(atlas_path.split("_Nparam")[0].split("_")[-1])
     grid_name = os.path.basename(atlas_path).split(f"_{N_pregrid}")[0]
+
+    try:
+        import dense_basis as db
+    except ImportError:
+        print(
+            "Warning: dense_basis not found. Dense_basis functions will not work"
+        )
+
     if atlas is None:
         if verbose:
             print(
@@ -228,6 +229,13 @@ def make_db_grid(
     hst_bands_used = []
     nircam_bands = []
 
+    try:
+        import dense_basis as db
+    except ImportError:
+        print(
+            "Warning: dense_basis not found. Dense_basis functions will not work"
+        )
+
     for band in bands:
         if band in hst_bands:
             hst_bands_used.append(band.replace("F", "f"))
@@ -270,6 +278,13 @@ def make_db_grid(
 
 
 def get_priors(atlas_path=None):
+    try:
+        import dense_basis as db
+    except ImportError:
+        print(
+            "Warning: dense_basis not found. Dense_basis functions will not work"
+        )
+
     priors = db.Priors()
 
     if atlas_path is not None:
