@@ -4914,6 +4914,7 @@ class ResolvedGalaxy:
         label_bands=False,
         show_kron_ellipse=True,
         stretch_object="asinh",
+        label_wav=False,
     ):
         """Plot the galaxy in Lupton RGB"""
 
@@ -4981,10 +4982,39 @@ class ResolvedGalaxy:
                 ax=ax, center=self.cutout_size / 2, band="detection"
             )
         if label_bands:
+            label_wav = (
+                True
+                if len(red) >= 3 or len(green) >= 3 or len(blue) >= 3
+                else False
+            )
+
+            if not label_wav:
+                label_red = f'{"+".join(red)}'
+                label_green = f'{"+".join(green)}'
+                label_blue = f'{"+".join(blue)}'
+            else:
+                self.get_filter_wavs()
+                wavs_red = (
+                    np.array([self.filter_wavs[band].value for band in red])
+                    * u.AA
+                )
+                wavs_green = (
+                    np.array([self.filter_wavs[band].value for band in green])
+                    * u.AA
+                )
+                wavs_blue = (
+                    np.array([self.filter_wavs[band].value for band in blue])
+                    * u.AA
+                )
+
+                label_red = f"{np.min(wavs_red).to(u.um).to_string(format='latex', precision=2)}-{np.max(wavs_red).to(u.um).to_string(format='latex', precision=2)}"
+                label_green = f"{np.min(wavs_green).to(u.um).to_string(format='latex', precision=2)}-{np.max(wavs_green).to(u.um).to_string(format='latex', precision=2)}"
+                label_blue = f"{np.min(wavs_blue).to(u.um).to_string(format='latex', precision=2)}-{np.max(wavs_blue).to(u.um).to_string(format='latex', precision=2)}"
+
             ax.text(
                 0.03,
                 0.98,
-                f'{"+".join(red)}',
+                label_red,
                 color="red",
                 transform=ax.transAxes,
                 ha="left",
@@ -4999,7 +5029,7 @@ class ResolvedGalaxy:
             ax.text(
                 0.03,
                 0.9,
-                f'{"+".join(green)}',
+                label_green,
                 color="green",
                 transform=ax.transAxes,
                 ha="left",
@@ -5014,7 +5044,7 @@ class ResolvedGalaxy:
             ax.text(
                 0.03,
                 0.82,
-                f'{"+".join(blue)}',
+                label_blue,
                 color="blue",
                 transform=ax.transAxes,
                 ha="left",
@@ -11545,12 +11575,15 @@ class ResolvedGalaxy:
         norm_min=None,
         norm_max=None,
         return_map=False,
+        rgb_bands={"red": ["F444W"], "green": ["F356W"], "blue": ["F200W"]},
+        rgb_combine_func="median",
         override_param_names={
             "sfr": "SFR",
             "sfr_density": "SFR\ density",
             "dust:Av": r"A_V",
         },
         rgb_stretch_obj="asinh",
+        match_axis_size=False,
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -11618,8 +11651,8 @@ class ResolvedGalaxy:
                 ),
                 constrained_layout=True,
                 facecolor=facecolor,
-                sharex=False,
-                sharey=False,
+                sharex=match_axis_size,
+                sharey=match_axis_size,
                 dpi=200,
             )
             fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
@@ -11644,6 +11677,7 @@ class ResolvedGalaxy:
 
         binmap = getattr(self, f"{binmap_type}_map")
         scalebar_added = False
+        ax_rgb = None
 
         for i, param in enumerate(parameters):
             done = False
@@ -11657,19 +11691,24 @@ class ResolvedGalaxy:
                     ax=axes[i],
                     fig=fig,
                     show=False,
-                    red=["F444W"],
-                    green=["F356W"],
-                    blue=["F200W"],
+                    red=rgb_bands["red"],
+                    green=rgb_bands["green"],
+                    blue=rgb_bands["blue"],
                     return_array=False,
                     stretch=rgb_stretch,
                     q=rgb_q,
+                    combine_func=rgb_combine_func,
                     label_bands=True,
-                    add_scalebar=add_scalebar,
+                    add_scalebar=add_scalebar
+                    if not match_axis_size
+                    else False,
                     show_kron_ellipse=False,
                     stretch_object=rgb_stretch_obj,
+                    use_psf_matched=True,
                 )
                 done = True
                 param_str = ""
+                ax_rgb = axes[i]
 
             elif param == "bin_map":
                 if add_cbar:
@@ -11935,6 +11974,9 @@ class ResolvedGalaxy:
                 if ax is None:
                     axes[i].set_xlim(xmin, xmax)
                     axes[i].set_ylim(ymin, ymax)
+                    if ax_rgb is not None and match_axis_size:
+                        ax_rgb.set_xlim(xmin, xmax)
+                        ax_rgb.set_ylim(ymin, ymax)
 
                 if add_scalebar and not scalebar_added:
                     scalebar_added = True
