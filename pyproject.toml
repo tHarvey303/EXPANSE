@@ -214,7 +214,7 @@ exclude = [
 ]
 
 # PEP-8 line length
-line-length = 79
+line-length = 100
 indent-width = 4
 
 
@@ -228,6 +228,8 @@ ignore = [
        "E402",  # "module level import not at top of file" (isolate C imports in case python alternatives exist)
        "F811",  # "redefinition of unused name from line N" (breaks quantity objects)
        ]
+
+
 
 # Sort imports alphabetically
 extend-select = ["I"]
@@ -251,3 +253,4 @@ skip-magic-trailing-comma = false
 
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
+

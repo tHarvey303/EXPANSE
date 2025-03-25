@@ -1,10 +1,7 @@
-import sys
-import os
-
-
-from collections import OrderedDict
-import sys
 import json
+import os
+import sys
+
 import numpy as np
 
 try:
@@ -71,9 +68,7 @@ if __name__ == "__main__":
                 )
 
             if type(input_dict[galaxy]["cat_filt_list"][0]) == str:
-                cat_filt_list_t = [input_dict[galaxy]["cat_filt_list"]] * len(
-                    idd
-                )
+                cat_filt_list_t = [input_dict[galaxy]["cat_filt_list"]] * len(idd)
             elif (type(input_dict[galaxy]["cat_filt_list"][0]) == list) & (
                 len(input_dict[galaxy]["cat_filt_list"]) == len(idd)
             ):
@@ -90,8 +85,8 @@ if __name__ == "__main__":
             for pos, id in enumerate(idd):
                 photometry[id] = input_dict[galaxy]["phot"][pos]
 
-        assert (
-            len(ids) == len(fit_instructions)
+        assert len(ids) == len(
+            fit_instructions
         ), f"Length of IDs ({len(ids)}) and fit_instructions ({len(fit_instructions)}) do not match"
 
         # Check if use_bpass in meta

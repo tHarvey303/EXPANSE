@@ -1,57 +1,9 @@
 from EXPANSE import ResolvedGalaxy, ResolvedGalaxies
 from tqdm import tqdm
 
-galaxies = ResolvedGalaxies(
-    ResolvedGalaxy.init_all_field_from_h5("JOF_psfmatched", n_jobs=6)
-)
+galaxies = ResolvedGalaxies(ResolvedGalaxy.init_all_field_from_h5("JOF_psfmatched", n_jobs=6))
 
-
-overwrite_ids = [
-    "295",
-    "1542",
-    "1623",
-    "1685",
-    "1991",
-    "2398",
-    "2491",
-    "2521",
-    "3434",
-    "3823",
-    "4990",
-    "5001",
-    "5114",
-    "5532",
-    "5990",
-    "6788",
-    "6882",
-    "7687",
-    "8514",
-    "9071",
-    "9078",
-    "9091",
-    "10161",
-    "10484",
-    "10816",
-    "11072",
-    "11358",
-    "11825",
-    "13097",
-    "13322",
-    "13330",
-    "13344",
-    "13434",
-    "14194",
-    "14708",
-    "14940",
-    "15099",
-    "15149",
-]
-
-overwrite_ids = ["3217", "922", "4403", "6678"]
-
-overwrite_ids = ["5591", "10536", "14307", "3307", "8781", "1393"]
-
-overwrite_ids = ["10489", "10536", "1220", "6744", "906", "9720"]
+overwrite_ids = []
 
 for galaxy in tqdm(galaxies):
     galaxy.add_psf_models(

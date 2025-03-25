@@ -1,41 +1,38 @@
-import os
-import subprocess
-import sys
-from io import BytesIO
-from panel.layout.gridstack import GridStack
-import panel as pn
-import holoviews as hv
-import xarray as xr
-import hvplot.xarray  # noqa
-
-# import hvplot.xarray
-import click
-import h5py as h5
 import copy
-import matplotlib as mpl
-import matplotlib.cm as cm
-import matplotlib.pyplot as plt
-import numpy as np
-import panel as pn
-from astropy import units as u
-from astropy.io import fits
-import cmasher
-from astropy.wcs import WCS
-from matplotlib.colors import Normalize
-from panel.layout.gridstack import GridStack
-from bokeh.models import PrintfTickFormatter
-
-# package imports
-from .ResolvedGalaxy import MockResolvedGalaxy, ResolvedGalaxy
 
 # change bokeh logging level
 import logging
+import os
 import resource
+import subprocess
+import sys
 
 # Change logging level for panel
 # logging.getLogger("panel").setLevel(logging.ERROR)
 # Supress boken warnings
 import warnings
+from io import BytesIO
+
+# import hvplot.xarray
+import click
+import h5py as h5
+import holoviews as hv
+import hvplot.xarray  # noqa
+import matplotlib as mpl
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import numpy as np
+import panel as pn
+import xarray as xr
+from astropy import units as u
+from astropy.io import fits
+from astropy.wcs import WCS
+from bokeh.models import PrintfTickFormatter
+from matplotlib.colors import Normalize
+from panel.layout.gridstack import GridStack
+
+# package imports
+from .ResolvedGalaxy import MockResolvedGalaxy, ResolvedGalaxy
 
 facecolor = "#f7f7f7"
 MAX_SIZE_MB = 150
@@ -190,9 +187,7 @@ def possible_runs_select(sed_fitting_tool):
 
 def update_sidebar(active_tab, sidebar):
     sidebar.clear()
-    settings_sidebar = pn.Column(
-        pn.layout.Divider(), "### Settings", name="settings_sidebar"
-    )
+    settings_sidebar = pn.Column(pn.layout.Divider(), "### Settings", name="settings_sidebar")
 
     if active_tab == 0:
         settings_sidebar.append("#### File Upload")
@@ -215,9 +210,7 @@ def update_sidebar(active_tab, sidebar):
         settings_sidebar.append("#### SED Fitting Tool")
         settings_sidebar.append(which_sed_fitter)
         settings_sidebar.append(
-            pn.bind(
-                possible_runs_select, which_sed_fitter.param.value, watch=True
-            )
+            pn.bind(possible_runs_select, which_sed_fitter.param.value, watch=True)
         )
         settings_sidebar.append(pn.Row(upscale_select, show_sed_photometry))
 
@@ -257,10 +250,7 @@ def handle_map_click(
     if x is None or y is None:
         use = False
     if use:
-        if not (
-            0 < x < resolved_galaxy.cutout_size
-            and 0 < y < resolved_galaxy.cutout_size
-        ):
+        if not (0 < x < resolved_galaxy.cutout_size and 0 < y < resolved_galaxy.cutout_size):
             use = False
 
     map = resolved_galaxy.pixedfit_map
@@ -376,12 +366,10 @@ def plot_rgb(resolved_galaxy, red, green, blue, scale, q, psf_mode):
         rgb_img = rgb_img * circle
 
     center = resolved_galaxy.cutout_size / 2
-    a, b, theta = resolved_galaxy.plot_kron_ellipse(
-        None, None, return_params=True
+    a, b, theta = resolved_galaxy.plot_kron_ellipse(None, None, return_params=True)
+    kron = hv.Ellipse(center, center, (a, b), orientation=theta * np.pi / 180).opts(
+        color="white", line_color="white"
     )
-    kron = hv.Ellipse(
-        center, center, (a, b), orientation=theta * np.pi / 180
-    ).opts(color="white", line_color="white")
     rgb_img = rgb_img * kron
 
     return pn.pane.HoloViews(rgb_img, height=400, width=430)
@@ -402,9 +390,7 @@ def plot_sed(
     show_sed_photometry_param,
     x_unit=u.micron,
 ):
-    fig, ax = plt.subplots(
-        figsize=(6, 3), constrained_layout=True, facecolor=facecolor
-    )
+    fig, ax = plt.subplots(figsize=(6, 3), constrained_layout=True, facecolor=facecolor)
 
     if which_flux_unit_param == "uJy":
         y_unit = u.uJy
@@ -423,9 +409,7 @@ def plot_sed(
     resolved_galaxy.get_filter_wavs()
     wavs = resolved_galaxy.filter_wavs
 
-    show_sed_photometry_param = (
-        True if show_sed_photometry_param == "Show" else False
-    )
+    show_sed_photometry_param = True if show_sed_photometry_param == "Show" else False
 
     # pad legend down and left
     list_of_markers = [
@@ -462,9 +446,7 @@ def plot_sed(
     cmap = cm.get_cmap(cmap)
 
     if table is not None:
-        for bin_pos, rbin in enumerate(
-            multi_choice_bins_param + total_fit_options_param
-        ):
+        for bin_pos, rbin in enumerate(multi_choice_bins_param + total_fit_options_param):
             if type(rbin) is str and rbin != "RESOLVED":
                 color = TOTAL_FIT_COLORS[rbin]
                 colors_total.append(color)
@@ -473,18 +455,12 @@ def plot_sed(
                     color = TOTAL_FIT_COLORS[rbin]
                 else:
                     # Get color between min and max of map
-                    color = cmap(
-                        Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(
-                            rbin
-                        )
-                    )
+                    color = cmap(Normalize(vmin=np.nanmin(map), vmax=np.nanmax(map))(rbin))
 
                 colors_bin.append(color)
 
             colors.append(color)
-            mask = np.array(
-                [True if str(i) == str(rbin) else False for i in table["ID"]]
-            )
+            mask = np.array([True if str(i) == str(rbin) else False for i in table["ID"]])
             table_row = table[mask]
 
             if len(table_row) == 0:
@@ -518,22 +494,8 @@ def plot_sed(
                 if y_unit == u.ABmag:
                     # Assymmetric error bars - given - + because of inverse axis
                     yerr = [
-                        [
-                            np.abs(
-                                2.5
-                                * abs(
-                                    np.log10(
-                                        flux.value
-                                        / (flux.value - flux_err.value)
-                                    )
-                                )
-                            )
-                        ],
-                        [
-                            np.abs(
-                                2.5 * np.log10(1 + flux_err.value / flux.value)
-                            )
-                        ],
+                        [np.abs(2.5 * abs(np.log10(flux.value / (flux.value - flux_err.value))))],
+                        [np.abs(2.5 * np.log10(1 + flux_err.value / flux.value))],
                     ]
 
                     if np.isnan(yerr[0][0]):
@@ -542,34 +504,26 @@ def plot_sed(
                     # Swap to get correct order
                     yerr[0][0], yerr[1][0] = yerr[1][0], yerr[0][0]
                 else:
-                    yerr = flux_err.to(
-                        y_unit, equivalencies=u.spectral_density(wav)
-                    ).value
+                    yerr = flux_err.to(y_unit, equivalencies=u.spectral_density(wav)).value
                 lab = int(rbin) if type(rbin) is float else rbin
                 lab = lab if pos == 0 else ""
                 # print(band)
                 # print(flux.to(y_unit, equivalencies = u.spectral_density(wav)).value, yerr)
                 ax.errorbar(
                     wav.to(x_unit).value,
-                    flux.to(
-                        y_unit, equivalencies=u.spectral_density(wav)
-                    ).value,
+                    flux.to(y_unit, equivalencies=u.spectral_density(wav)).value,
                     yerr=yerr,
                     fmt=marker,
                     linestyle="none",
                     color=color,
                     label=lab,
-                    markeredgecolor="black"
-                    if show_sed_photometry_param
-                    else color,
+                    markeredgecolor="black" if show_sed_photometry_param else color,
                 )
 
     if y_unit == u.ABmag:
         ax.invert_yaxis()
     ax.set_xlabel(rf"$\rm{{Wavelength}}$ ({x_unit:latex})", fontsize="large")
-    ax.set_ylabel(
-        rf"$\rm{{Flux \ Density}}$ ({y_unit:latex})", fontsize="large"
-    )
+    ax.set_ylabel(rf"$\rm{{Flux \ Density}}$ ({y_unit:latex})", fontsize="large")
 
     # Check if anything was plotted
     if len(ax.lines) > 0:
@@ -577,30 +531,21 @@ def plot_sed(
         ax.set_ylim(ax.get_ylim())
 
     if which_sed_fitter_param == "bagpipes" and (
-        which_run_aperture_param is not None
-        or which_run_resolved_param is not None
+        which_run_aperture_param is not None or which_run_resolved_param is not None
     ):
         # Check if bagpipes run exists
         # Plot resolved fits
         if (
             hasattr(resolved_galaxy, "sed_fitting_table")
             and "bagpipes" in resolved_galaxy.sed_fitting_table.keys()
-            and which_run_resolved_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            and which_run_resolved_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
         ):
             if resolved_galaxy.galaxy_id not in cache_pipes.keys():
                 cache_pipes[resolved_galaxy.galaxy_id] = {}
-            if (
-                which_run_resolved_param
-                not in cache_pipes[resolved_galaxy.galaxy_id].keys()
-            ):
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_resolved_param
-                ] = {}
+            if which_run_resolved_param not in cache_pipes[resolved_galaxy.galaxy_id].keys():
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = {}
 
-            cache = cache_pipes[resolved_galaxy.galaxy_id].get(
-                which_run_resolved_param
-            )
+            cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_resolved_param)
 
             (
                 fig,
@@ -617,31 +562,21 @@ def plot_sed(
                     show_photometry=show_sed_photometry_param,
                 ),
             )
-            cache_pipes[resolved_galaxy.galaxy_id][
-                which_run_resolved_param
-            ] = cache
+            cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = cache
 
         # Plot aperture fits
         if (
             hasattr(resolved_galaxy, "sed_fitting_table")
             and "bagpipes" in resolved_galaxy.sed_fitting_table.keys()
-            and which_run_aperture_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            and which_run_aperture_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
         ):
             if resolved_galaxy.galaxy_id not in cache_pipes.keys():
                 cache_pipes[resolved_galaxy.galaxy_id] = {}
 
-            if (
-                which_run_aperture_param
-                not in cache_pipes[resolved_galaxy.galaxy_id].keys()
-            ):
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_aperture_param
-                ] = {}
+            if which_run_aperture_param not in cache_pipes[resolved_galaxy.galaxy_id].keys():
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = {}
 
-            cache = cache_pipes[resolved_galaxy.galaxy_id].get(
-                which_run_aperture_param
-            )
+            cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_aperture_param)
             (
                 fig,
                 cache
@@ -658,9 +593,7 @@ def plot_sed(
                 ),
             )
 
-            cache_pipes[resolved_galaxy.galaxy_id][
-                which_run_aperture_param
-            ] = cache
+            cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = cache
 
     # If MockResolvedGalaxy, plot the true SED
     if isinstance(resolved_galaxy, MockResolvedGalaxy):
@@ -674,9 +607,7 @@ def plot_sed(
 
     ax.legend(loc="upper left", frameon=False, fontsize="small")
     plt.close(fig)
-    return pn.pane.Matplotlib(
-        fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both"
-    )
+    return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", sizing_mode="scale_both")
     # return False
 
 
@@ -706,8 +637,7 @@ def plot_bagpipes_pdf(
     colors_total = [TOTAL_FIT_COLORS[rbin] for rbin in total_fit_options_param]
 
     if which_sed_fitter_param == "bagpipes" and (
-        which_run_aperture_param is not None
-        or which_run_resolved_param is not None
+        which_run_aperture_param is not None or which_run_resolved_param is not None
     ):
         # Check if bagpipes run exists
         fig = None
@@ -715,23 +645,15 @@ def plot_bagpipes_pdf(
         if (
             hasattr(resolved_galaxy, "sed_fitting_table")
             and "bagpipes" in resolved_galaxy.sed_fitting_table.keys()
-            and which_run_resolved_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            and which_run_resolved_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
         ):
             if resolved_galaxy.galaxy_id not in cache_pipes.keys():
                 cache_pipes[resolved_galaxy.galaxy_id] = {}
 
-            if (
-                which_run_resolved_param
-                not in cache_pipes[resolved_galaxy.galaxy_id].keys()
-            ):
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_resolved_param
-                ] = {}
+            if which_run_resolved_param not in cache_pipes[resolved_galaxy.galaxy_id].keys():
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = {}
 
-            cache = cache_pipes[resolved_galaxy.galaxy_id].get(
-                which_run_resolved_param
-            )
+            cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_resolved_param)
 
             fig, cache = resolved_galaxy.plot_bagpipes_component_comparison(
                 parameter=param_property,
@@ -745,9 +667,7 @@ def plot_bagpipes_pdf(
             )
 
             ax = fig.get_axes()[0]
-            cache_pipes[resolved_galaxy.galaxy_id][
-                which_run_resolved_param
-            ] = cache
+            cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = cache
 
         else:
             fig = None
@@ -756,22 +676,14 @@ def plot_bagpipes_pdf(
         if (
             hasattr(resolved_galaxy, "sed_fitting_table")
             and "bagpipes" in resolved_galaxy.sed_fitting_table.keys()
-            and which_run_aperture_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            and which_run_aperture_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
         ):
             if resolved_galaxy.galaxy_id not in cache_pipes.keys():
                 cache_pipes[resolved_galaxy.galaxy_id] = {}
-            if (
-                which_run_aperture_param
-                not in cache_pipes[resolved_galaxy.galaxy_id].keys()
-            ):
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_aperture_param
-                ] = {}
+            if which_run_aperture_param not in cache_pipes[resolved_galaxy.galaxy_id].keys():
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = {}
 
-            cache = cache_pipes[resolved_galaxy.galaxy_id].get(
-                which_run_aperture_param
-            )
+            cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_aperture_param)
 
             fig, cache = resolved_galaxy.plot_bagpipes_component_comparison(
                 parameter=param_property,
@@ -786,9 +698,7 @@ def plot_bagpipes_pdf(
                 axes=ax,
             )
 
-            cache_pipes[resolved_galaxy.galaxy_id][
-                which_run_aperture_param
-            ] = cache
+            cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = cache
 
             return pn.pane.Matplotlib(
                 fig,
@@ -803,9 +713,7 @@ def plot_bagpipes_pdf(
         else:
             return pn.pane.Markdown("No Bagpipes results found.")
     else:
-        return pn.pane.Markdown(
-            f"Not implemented for {which_sed_fitter_param}."
-        )
+        return pn.pane.Markdown(f"Not implemented for {which_sed_fitter_param}.")
 
 
 def plot_bins(
@@ -822,9 +730,7 @@ def plot_bins(
         # Empty plot
         return None
     array[array == 0] = np.nan
-    dimensions = np.linspace(
-        0, resolved_galaxy.cutout_size, resolved_galaxy.cutout_size
-    )
+    dimensions = np.linspace(0, resolved_galaxy.cutout_size, resolved_galaxy.cutout_size)
     im_array = xr.DataArray(
         array,
         dims=["y", "x"],
@@ -843,12 +749,10 @@ def plot_bins(
 
     if show_kron:
         center = resolved_galaxy.cutout_size / 2
-        a, b, theta = resolved_galaxy.plot_kron_ellipse(
-            None, None, return_params=True
+        a, b, theta = resolved_galaxy.plot_kron_ellipse(None, None, return_params=True)
+        kron = hv.Ellipse(center, center, (a, b), orientation=theta * np.pi / 180).opts(
+            color="red", line_color="red"
         )
-        kron = hv.Ellipse(
-            center, center, (a, b), orientation=theta * np.pi / 180
-        ).opts(color="red", line_color="red")
         hvplot = hvplot * kron
 
     if show_galaxy:
@@ -920,10 +824,8 @@ def plot_sfh(
         hasattr(resolved_galaxy, "sed_fitting_table")
         and "bagpipes" in resolved_galaxy.sed_fitting_table.keys()
         and (
-            which_run_aperture_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
-            or which_run_resolved_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            which_run_aperture_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            or which_run_resolved_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
         )
     ):
         if which_sed_fitter_param == "bagpipes":
@@ -931,22 +833,16 @@ def plot_sfh(
                 cache_pipes[resolved_galaxy.galaxy_id] = {}
 
             if (
-                which_run_aperture_param
-                not in cache_pipes[resolved_galaxy.galaxy_id].keys()
+                which_run_aperture_param not in cache_pipes[resolved_galaxy.galaxy_id].keys()
                 and which_run_aperture_param is not None
             ):
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_aperture_param
-                ] = {}
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = {}
 
             if (
-                which_run_resolved_param
-                not in cache_pipes[resolved_galaxy.galaxy_id].keys()
+                which_run_resolved_param not in cache_pipes[resolved_galaxy.galaxy_id].keys()
                 and which_run_resolved_param is not None
             ):
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_resolved_param
-                ] = {}
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = {}
 
             print("which_run_resolved_param", which_run_resolved_param)
             if which_run_resolved_param is not None:
@@ -959,9 +855,7 @@ def plot_sfh(
                     bins_to_show.insert(index, "RESOLVED")
                     print(bins_to_show)
 
-                cache = cache_pipes[resolved_galaxy.galaxy_id].get(
-                    which_run_resolved_param
-                )
+                cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_resolved_param)
                 fig, cache = resolved_galaxy.plot_bagpipes_sfh(
                     run_name=which_run_resolved_param,
                     bins_to_show=bins_to_show,
@@ -973,9 +867,7 @@ def plot_sfh(
                     cache=cache,
                 )
                 print(fig)
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_resolved_param
-                ] = cache
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_resolved_param] = cache
                 if len(fig.get_axes()) != 0:
                     axes = fig.get_axes()[0]
                     # axes.set_xlim(0, 1)
@@ -992,9 +884,7 @@ def plot_sfh(
                 bins_to_show = total_fit_options_param
 
                 if len(bins_to_show) >= 0:
-                    cache = cache_pipes[resolved_galaxy.galaxy_id].get(
-                        which_run_aperture_param
-                    )
+                    cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_aperture_param)
                     fig, cache = resolved_galaxy.plot_bagpipes_sfh(
                         run_name=which_run_aperture_param,
                         bins_to_show=bins_to_show,
@@ -1007,9 +897,7 @@ def plot_sfh(
                         fig=fig,
                         axes=axes,
                     )
-                    cache_pipes[resolved_galaxy.galaxy_id][
-                        which_run_aperture_param
-                    ] = cache
+                    cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = cache
 
             # if len(fig.get_axes()) != 0:
             #    fig.get_axes()[0]
@@ -1139,28 +1027,19 @@ def plot_corner(
         hasattr(resolved_galaxy, "sed_fitting_table")
         and "bagpipes" in resolved_galaxy.sed_fitting_table.keys()
         and (
-            which_run_resolved_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
-            or which_run_aperture_param
-            in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            which_run_resolved_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
+            or which_run_aperture_param in resolved_galaxy.sed_fitting_table["bagpipes"].keys()
         )
     ):
         if which_sed_fitter_param == "bagpipes":
             if resolved_galaxy.galaxy_id not in cache_pipes.keys():
                 cache_pipes[resolved_galaxy.galaxy_id] = {}
 
-            if (
-                which_run_aperture_param
-                not in cache_pipes[resolved_galaxy.galaxy_id].keys()
-            ):
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_aperture_param
-                ] = {}
+            if which_run_aperture_param not in cache_pipes[resolved_galaxy.galaxy_id].keys():
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = {}
             if which_run_aperture_param is not None:
                 bins_to_show = total_fit_options_param
-                cache = cache_pipes[resolved_galaxy.galaxy_id].get(
-                    which_run_aperture_param
-                )
+                cache = cache_pipes[resolved_galaxy.galaxy_id].get(which_run_aperture_param)
                 fig, cache = resolved_galaxy.plot_bagpipes_corner(
                     run_name=which_run_aperture_param,
                     bins_to_show=bins_to_show,
@@ -1170,9 +1049,7 @@ def plot_corner(
                     run_dir=run_dir,
                     cache=cache,
                 )
-                cache_pipes[resolved_galaxy.galaxy_id][
-                    which_run_aperture_param
-                ] = cache
+                cache_pipes[resolved_galaxy.galaxy_id][which_run_aperture_param] = cache
                 # ax = fig.get_axes()[0]
                 # ax.set_xlim(0, 1)
             """
@@ -1311,9 +1188,7 @@ def plot_map_with_controls(map_array, label="", unit=""):
         # scientific formatting
         format=PrintfTickFormatter(format="%1.1e"),
     )
-    colormap_choice = pn.widgets.Select(
-        options=plt.colormaps(), value="viridis", name="Colormap"
-    )
+    colormap_choice = pn.widgets.Select(options=plt.colormaps(), value="viridis", name="Colormap")
     log_scale = pn.widgets.Checkbox(name="Log Scale", value=True)
 
     @pn.depends(
@@ -1428,9 +1303,7 @@ def synthesizer_page():
     empty_page.append("### Spectra")
 
     fig = pn.pane.Matplotlib(
-        resolved_galaxy.plot_mock_spectra(
-            components=["det_segmap_fnu"], facecolor=facecolor
-        ),
+        resolved_galaxy.plot_mock_spectra(components=["det_segmap_fnu"], facecolor=facecolor),
         dpi=144,
         tight=True,
         format="svg",
@@ -1445,9 +1318,7 @@ def synthesizer_page():
     return empty_page
 
 
-def fitsmap(
-    fitsmap_dir="/nvme/scratch/work/tharvey/fitsmap", port=8000, band="F444W"
-):
+def fitsmap(fitsmap_dir="/nvme/scratch/work/tharvey/fitsmap", port=8000, band="F444W"):
     import socket
 
     a_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1456,9 +1327,7 @@ def fitsmap(
     check = a_socket.connect_ex(location)
 
     if check != 0:
-        yield pn.indicators.LoadingSpinner(
-            size=50, name="Starting fitsmap server...", value=True
-        )
+        yield pn.indicators.LoadingSpinner(size=50, name="Starting fitsmap server...", value=True)
         print("Starting fitsmap server...")
         command = f"cd {fitsmap_dir}/{resolved_galaxy.field}_{resolved_galaxy.survey} fitsmap serve"
         subprocess.Popen(command, shell=True)
@@ -1467,9 +1336,7 @@ def fitsmap(
     dec = resolved_galaxy.sky_coord.dec.deg
     image_path = resolved_galaxy.im_paths[band]
     path = (
-        image_path.replace(
-            "/mosaic_1084_wispnathan/", "/NIRCam/mosaic_1084_wispnathan/"
-        )
+        image_path.replace("/mosaic_1084_wispnathan/", "/NIRCam/mosaic_1084_wispnathan/")
         if "NIRCam" not in image_path
         else image_path
     )
@@ -1495,27 +1362,13 @@ def phot_prop_func():
 
     middle_row = pn.Row()
 
-    options_phot = list(
-        [key for key in options_direct.keys() if "rest_optical" not in key]
-    )
-    drop_down1 = pn.widgets.Select(
-        options=options_phot, value="Beta", width=100
-    )
-    cmap_1 = pn.widgets.Select(
-        options=plt.colormaps(), value="viridis", width=100
-    )
-    drop_down2 = pn.widgets.Select(
-        options=options_phot, value="MUV", width=100
-    )
-    cmap_2 = pn.widgets.Select(
-        options=plt.colormaps(), value="viridis", width=100
-    )
-    drop_down3 = pn.widgets.Select(
-        options=options_phot, value="SFR_UV", width=100
-    )
-    cmap_3 = pn.widgets.Select(
-        options=plt.colormaps(), value="viridis", width=100
-    )
+    options_phot = list([key for key in options_direct.keys() if "rest_optical" not in key])
+    drop_down1 = pn.widgets.Select(options=options_phot, value="Beta", width=100)
+    cmap_1 = pn.widgets.Select(options=plt.colormaps(), value="viridis", width=100)
+    drop_down2 = pn.widgets.Select(options=options_phot, value="MUV", width=100)
+    cmap_2 = pn.widgets.Select(options=plt.colormaps(), value="viridis", width=100)
+    drop_down3 = pn.widgets.Select(options=options_phot, value="SFR_UV", width=100)
+    cmap_3 = pn.widgets.Select(options=plt.colormaps(), value="viridis", width=100)
 
     plot1 = pn.param.ParamFunction(
         pn.bind(
@@ -1526,11 +1379,7 @@ def phot_prop_func():
         ),
         loading_indicator=True,
     )
-    top_row.append(
-        pn.Column(
-            pn.Row(drop_down1, cmap_1), plot1, sizing_mode="stretch_width"
-        )
-    )
+    top_row.append(pn.Column(pn.Row(drop_down1, cmap_1), plot1, sizing_mode="stretch_width"))
     plot2 = pn.param.ParamFunction(
         pn.bind(
             plot_phot_property,
@@ -1540,11 +1389,7 @@ def phot_prop_func():
         ),
         loading_indicator=True,
     )
-    top_row.append(
-        pn.Column(
-            pn.Row(drop_down2, cmap_2), plot2, sizing_mode="stretch_width"
-        )
-    )
+    top_row.append(pn.Column(pn.Row(drop_down2, cmap_2), plot2, sizing_mode="stretch_width"))
     plot3 = pn.param.ParamFunction(
         pn.bind(
             plot_phot_property,
@@ -1554,11 +1399,7 @@ def phot_prop_func():
         ),
         loading_indicator=True,
     )
-    top_row.append(
-        pn.Column(
-            pn.Row(drop_down3, cmap_3), plot3, sizing_mode="stretch_width"
-        )
-    )
+    top_row.append(pn.Column(pn.Row(drop_down3, cmap_3), plot3, sizing_mode="stretch_width"))
 
     empty_page.append(top_row)
 
@@ -1638,13 +1479,9 @@ def other_bagpipes_results_func(
         return pn.pane.Markdown("No Bagpipes results found.")
 
     # print(p_run_name)
-    options = list(
-        resolved_galaxy.sed_fitting_table["bagpipes"][p_run_name].keys()
-    )
+    options = list(resolved_galaxy.sed_fitting_table["bagpipes"][p_run_name].keys())
     options = [
-        i
-        for i in options
-        if not (i.startswith("#") or i.endswith("16") or i.endswith("84"))
+        i for i in options if not (i.startswith("#") or i.endswith("16") or i.endswith("84"))
     ]
     actual_options = [i.replace("_50", "") for i in options]
     dist_options = [i for i in options if i.endswith("50")]
@@ -1693,9 +1530,7 @@ def other_bagpipes_results_func(
         if type(fig) is plt.Figure:
             plt.close(fig)
             # print('returning fig')
-            return pn.pane.Matplotlib(
-                fig, dpi=144, tight=True, format="svg", width=400, height=400
-            )
+            return pn.pane.Matplotlib(fig, dpi=144, tight=True, format="svg", width=400, height=400)
         else:
             # import html
             # iframe = f'<iframe src="{html.escape(fig)}" width="100%" height="100%"></iframe>'
@@ -1707,9 +1542,7 @@ def other_bagpipes_results_func(
         return pn.pane.Markdown("No Bagpipes results found.")
 
 
-def sed_results_plot_func(
-    which_sed_fitter_param, which_run_resolved_param, upscale_select_param
-):
+def sed_results_plot_func(which_sed_fitter_param, which_run_resolved_param, upscale_select_param):
     if which_sed_fitter_param == "bagpipes":
         sed_results_plot = resolved_galaxy.plot_bagpipes_results(
             facecolor=facecolor,
@@ -1793,9 +1626,7 @@ def handle_file_upload(value, components):
         options=["pixedfit", "voronoi"], value="pixedfit", name="Pixel Binning"
     )
 
-    which_sed_fitter = pn.widgets.Select(
-        name="SED Fitter", value="bagpipes", options=["bagpipes"]
-    )
+    which_sed_fitter = pn.widgets.Select(name="SED Fitter", value="bagpipes", options=["bagpipes"])
 
     which_flux_unit = pn.widgets.Select(
         name="Flux Unit", value="uJy", options=["uJy", "ABmag", "ergscma"]
@@ -1824,16 +1655,12 @@ def handle_file_upload(value, components):
     )
 
     # which_run = pn.widgets.Select(name='Run', value=None, options=[])
-    which_run_resolved = pn.widgets.Select(
-        name="Resolved SED Fitting Run", value=None, options=[]
-    )
+    which_run_resolved = pn.widgets.Select(name="Resolved SED Fitting Run", value=None, options=[])
     which_run_aperture = pn.widgets.Select(
         name="Integrated SED Fitting Run", value=None, options=[]
     )
 
-    scale_alpha = pn.widgets.FloatSlider(
-        name="Scale Alpha", start=0, end=1, value=1, step=0.01
-    )
+    scale_alpha = pn.widgets.FloatSlider(name="Scale Alpha", start=0, end=1, value=1, step=0.01)
     show_galaxy = pn.widgets.Checkbox(name="Show Galaxy", value=False)
     show_kron = pn.widgets.Checkbox(name="Show Kron", value=False)
 
@@ -2021,9 +1848,7 @@ def handle_file_upload(value, components):
         name="Q", start=0.000001, end=0.01, value=0.001, step=0.000001
     )
 
-    band_select = pn.widgets.Select(
-        name="Band", options=resolved_galaxy.bands, value="F444W"
-    )
+    band_select = pn.widgets.Select(name="Band", options=resolved_galaxy.bands, value="F444W")
     snr_plot = pn.bind(do_snr_plot, band_select.param.value)
 
     other_plot_select = pn.widgets.Select(
@@ -2134,9 +1959,7 @@ def handle_file_upload(value, components):
         ),
         height=750,
     )
-    even_lower = pn.Row(
-        pn.Column(pdf_param_property, pdf_obj, max_height=400, max_width=400)
-    )
+    even_lower = pn.Row(pn.Column(pdf_param_property, pdf_obj, max_height=400, max_width=400))
 
     combined = pn.Column(top_row, mid_row, bot_row, even_lower, scroll=False)
 
@@ -2164,9 +1987,7 @@ def handle_file_upload(value, components):
 
     if isinstance(resolved_galaxy, MockResolvedGalaxy):
         print("Adding synthesizer")
-        mock_page = pn.param.ParamFunction(
-            synthesizer_page, watch=False, lazy=True
-        )
+        mock_page = pn.param.ParamFunction(synthesizer_page, watch=False, lazy=True)
         galaxy_tabs.append(("Synthesizer", mock_page))
         galaxy_tab_names.append("Synthesizer")
 
@@ -2180,9 +2001,7 @@ def handle_file_upload(value, components):
     try:
         tab_index = galaxy_tab_names.index(initial_tab)
     except ValueError:
-        print(
-            f"Requested tab {initial_tab} not recognized. Defaulting to Cutouts."
-        )
+        print(f"Requested tab {initial_tab} not recognized. Defaulting to Cutouts.")
         tab_index = 0
 
     # Set initial tab to be active
@@ -2208,15 +2027,11 @@ def plot_options():
         ("Y-Limits", pn.widgets.RangeSlider(start=0, end=1, value=(0, 1))),
         (
             "X-Scale",
-            pn.widgets.RadioButtonGroup(
-                options=["linear", "log"], value="linear"
-            ),
+            pn.widgets.RadioButtonGroup(options=["linear", "log"], value="linear"),
         ),
         (
             "Y-Scale",
-            pn.widgets.RadioButtonGroup(
-                options=["linear", "log"], value="linear"
-            ),
+            pn.widgets.RadioButtonGroup(options=["linear", "log"], value="linear"),
         ),
         dynamic=True,
     )
@@ -2260,9 +2075,7 @@ def resolved_sed_interface():
     else:
         choose_file_input.options = ["No .h5 files found"]
 
-    sidebar = pn.Column(
-        "### Upload .h5", file_input, "### or", choose_file_input
-    )
+    sidebar = pn.Column("### Upload .h5", file_input, "### or", choose_file_input)
 
     components = [sidebar, tabs]
 
@@ -2292,15 +2105,11 @@ def cli():
 
 @click.command()
 @click.option("--port", default=5004, help="Port to run the server on.")
-@click.option(
-    "--gal_dir", default="internal", help="Directory containing galaxy files."
-)
+@click.option("--gal_dir", default="internal", help="Directory containing galaxy files.")
 @click.option("--galaxy", default="", help="List of galaxies to load.")
 @click.option("--tab", default="Cutouts", help="Tab to load.")
 @click.option("--test_mode", default=False, help="Run in test mode.")
-def expanse_viewer(
-    port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", test_mode=False
-):
+def expanse_viewer(port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", test_mode=False):
     global stream
     global initial_galaxy
     global galaxies_dir

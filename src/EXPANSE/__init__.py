@@ -17,6 +17,8 @@ from . import eazy
 
 from . import synthesizer
 
+from . import prospector
+
 from .gui.ResolvedSEDApp import expanse_viewer
 
 __all__ = ['ResolvedGalaxy', 'MockResolvedGalaxy', 'ResolvedGalaxies',
