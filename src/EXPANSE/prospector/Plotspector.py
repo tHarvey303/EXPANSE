@@ -33,7 +33,7 @@ from tqdm import tqdm
 
 try:
     plt.style.use("/nvme/scratch/work/tharvey/scripts/paper.mplstyle")
-except FileNotFoundError:
+except (FileNotFoundError, OSError):
     pass
 import os
 

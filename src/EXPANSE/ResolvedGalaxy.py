@@ -8607,8 +8607,8 @@ class ResolvedGalaxy:
             raise Exception("Need to run measure_flux_in_bins first")
 
         if override_psf_type:
-            psf_type = override_binmap_type
-            self.psf_type = psf_type
+            psf_type = override_psf_type
+            self.use_psf_type = psf_type
         elif hasattr(self, "use_psf_type"):
             psf_type = self.use_psf_type
         else:
@@ -8810,7 +8810,7 @@ class ResolvedGalaxy:
                 "galaxy_id": self.galaxy_id,
                 "binmap_type": binmap_type,
                 "already_run": exist_already,
-                "phot": [self.provide_bagpipes_phot(i).tolist() for i in ids],
+                "phot": [self.provide_bagpipes_phot(i, psf_type=psf_type, binmap_type=binmap_type).tolist() for i in ids],
                 "cat_filt_list": nircam_filts,
                 "redshifts": list(redshifts),
                 "redshift_sigma": redshift_sigma,
