@@ -112,6 +112,7 @@ for galaxy in galaxies:
     # Hide ACS bands
     original_bands = copy.copy(galaxy.bands)
     galaxy.bands = copy.copy(bands)
+    galaxy.use_psf_type = psf_type
 
     if (
         psf_type in galaxy.photometry_table.keys()
@@ -128,7 +129,6 @@ for galaxy in galaxies:
     )
     galaxy.convolve_with_psf(psf_type, use_unmatched_data=True)
 
-    galaxy.use_psf_type = psf_type
     galaxy.pixedfit_processing(gal_region_use="detection", override_psf_type=psf_type)
     # pixedfit binning
     galaxy.pixedfit_binning(name_out=f"pixedfit_{psf_type}", redc_chi2_limit=5.0, save_out=True)
@@ -178,17 +178,19 @@ from EXPANSE.bagpipes.pipes_models import (
 
 num = len(galaxies)
 
-override_meta_resolved = {
-    "use_bpass": True,
-    "name_append": "_webbpsf",
-}
-resolved_dicts_cnst = create_dicts(
-    resolved_dict_cnst, num=num, override_meta=override_meta_resolved
-)
-
 # Run the bagpipes fitting
 for binmap_type in ["pixedfit", "pixedfit_nomin", "voronoi"]:
     binmap_type = f"{binmap_type}_{psf_type}"
+
+    override_meta_resolved = {
+        "use_bpass": True,
+        "name_append": f"_{binmap_type}_webbpsf",
+    }
+    resolved_dicts_cnst = create_dicts(
+        resolved_dict_cnst, num=num, override_meta=override_meta_resolved
+    )
+
+
     for dicts in [
         resolved_dicts_cnst,
     ]:

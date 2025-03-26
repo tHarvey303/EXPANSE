@@ -11621,7 +11621,7 @@ class ResolvedGalaxy:
         plotpipes_dir="bagpipes/",
         get_advanced_quantities=True,
         n_cores=1,
-        psf_type="star_stack",
+        override_psf_type=None,
         binmap_type="pixedfit",
     ):
         plotpipes_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), plotpipes_dir)
@@ -11630,6 +11630,13 @@ class ResolvedGalaxy:
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
             run_dir,
         )
+
+        if override_psf_type is not None:
+            psf_type = override_psf_type
+        elif hasattr(self, "use_psf_type"):
+            psf_type = self.use_psf_type
+        else:
+            psf_type = "star_stack"
 
         if type(rbin) not in [list, np.ndarray]:
             single = True
