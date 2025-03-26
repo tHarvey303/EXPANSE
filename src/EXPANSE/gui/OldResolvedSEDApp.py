@@ -23,6 +23,7 @@ import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import panel as pn
+import requests
 import xarray as xr
 from astropy import units as u
 from astropy.io import fits

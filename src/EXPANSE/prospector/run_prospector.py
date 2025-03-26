@@ -83,7 +83,8 @@ try:
     from mpi4py.futures import MPIPoolExecutor
 
     if size > 1:
-        print("Running with mpirun/mpiexec detected.")
+        if rank == 0:
+            print("Running with mpirun/mpiexec detected.")
         MPI.COMM_WORLD.Barrier()
         print(f"Message from process {rank}")
         sys.stdout.flush()
@@ -333,7 +334,8 @@ def build_model(run_params):
         print(model_run_params.description)
         return model_run_params
     else:
-        print("Building model from run_params and default priors")
+        if rank == 0:
+            print("Building model from run_params and default priors")
 
     sanity_check(model_run_params)
 
@@ -416,7 +418,8 @@ def build_model(run_params):
             redshift = model_run_params.get("redshift", 0)
             use_default_sfh_settings = model_run_params["sfh"].get("use_default", False)
             if not use_default_sfh_settings:
-                print("Using custom SFH settings")
+                if rank == 0:
+                    print("Using custom SFH settings")
                 if sfh_model in ["continuity", "continuity_bursty"]:
                     # Configure continuity SFH
                     model_params["mass"] = {
@@ -508,9 +511,11 @@ def build_model(run_params):
                 elif sfh_model == "continuity_psb":
                     # prospect.models.templates.TemplateLibrary
                     # Should allow for varying bins and redshift a bit
-                    print("Custom PSB SFH not configured, using default params")
+                    if rank == 0:
+                        print("Custom PSB SFH not configured, using default params")
                 elif sfh_model == "stochastic":
-                    print("Custom stochastic SFH not configured, using default params")
+                    if rank == 0:
+                        print("Custom stochastic SFH not configured, using default params")
 
                 elif sfh_model == "dirichlet":
                     bins = calculate_bins(redshift, num_bins=num_bins)
@@ -593,14 +598,16 @@ def build_model(run_params):
 
         # Add nebular emission
         if "nebular" in model_run_params and model_run_params["nebular"].get("add_neb", True):
-            print("Adding nebular emission.")
+            if rank == 0:
+                print("Adding nebular emission.")
             nebtype = model_run_params["nebular"].get("type", "nebular")
             model_params.update(TemplateLibrary[nebtype])
 
             neb_redshift = model_run_params["nebular"].get("redshift", "stellar")
             if neb_redshift == "fit":
                 model_params.update(TemplateLibrary["fit_eline_redshift"])
-                print("Fitting redshift offset for margninalized emission lines.")
+                if rank == 0:
+                    print("Fitting redshift offset for margninalized emission lines.")
 
             if nebtype == "nebular_marginalization":
                 # Em line names to match $SPS_HOME/data/emlines_info.dat
@@ -656,9 +663,8 @@ def build_model(run_params):
 
         # Unlink gas and stellar metallicity if specified
         if "logz" in gas_config and not gas_config["logz"].get("link_to_stars", True):
-            print(model_params)
-
-            print("Unlinking gas and stellar metallicity.")
+            if rank == 0:
+                print("Unlinking gas and stellar metallicity.")
             if is_varying_parameter(gas_config.get("logz", {})):
                 setup_parameter("gas_logz", gas_config["logz"], model_params, prior_conv)
             else:
@@ -708,9 +714,8 @@ def build_model(run_params):
         for key, value in dust_config.items():
             if key not in ["type", "prior", "prior_range", "add_dust_emission", "add_dust"]:
                 dust_param = key
-                print(f"Adding custom dust parameter: {dust_param}")
-                if dust_param == "dust_ratio":
-                    print(value)
+                if rank == 0:
+                    print(f"Adding custom dust parameter: {dust_param}")
                 setup_parameter(dust_param, value, model_params, prior_conv)
 
         # Set redshift
@@ -762,7 +767,8 @@ def build_model(run_params):
                 "dust_prior",
                 "model",
             ]:
-                print(f"Adding custom parameter: {key}")
+                if rank == 0:
+                    print(f"Adding custom parameter: {key}")
                 setup_parameter(key, value, model_params, prior_conv)
 
     fit_type = run_params["fit_type"]
@@ -796,7 +802,9 @@ def build_model(run_params):
     # Create and return the model
 
     model = model(model_params)
-    print(model.description)
+
+    if rank == 0:
+        print(model.description)
 
     return model
 
@@ -950,9 +958,11 @@ def build_obs(run_params):
 def build_all(run_params):
     obs = build_obs(run_params)
     model = build_model(run_params)
-    print("Loaded data.")
+    if rank == 0:
+        print("Loaded data.")
     sps = build_sps(run_params)
-    print("Built SPS model.")
+    if rank == 0:
+        print("Built SPS model.")
     noise = build_noise(run_params)
     return obs, model, sps, noise
 
@@ -967,17 +977,21 @@ def sanity_check_run_params(run_params):
 
 def fix_params(params):
     for key, value in params.items():
-        if isinstance(value, np.ndarray):
+        if isinstance(value, u.Quantity):
+            params[key] = value.value.tolist()
+        elif isinstance(value, np.ndarray):
             params[key] = value.tolist()
         elif isinstance(value, dict):
             fix_params(value)
-        elif isinstance(value, u.Quantity):
-            params[key] = value.value
-    return params
+        elif isinstance(value, bytes):
+            params[key] = str(key)
+        if type(value) not in [int, float, str, list, dict, bool]:
+            print(f"Unrecognized type for {key}: {type(value)}")
+            print(f"Value: {value}")
 
 
 def remove_obs(obs):
-    keys = ["unc", "spectrum", "wave", "flux", "flux_err"]
+    keys = ["unc", "spectrum", "wave", "flux", "flux_err", "wavelength"]
     for key in keys:
         if key in obs:
             obs.pop(key)
@@ -1039,7 +1053,7 @@ def main(config):
 
             path = os.path.join(path, f"{id}{custom}.h5")
 
-        spec, phot, mfrac = model.predict(model.theta, obs=obs, sps=sps)
+        # spec, phot, mfrac = model.predict(model.theta, obs=obs, sps=sps)
 
         # Do emcee/dynesty
         run_params["optimize"] = False
@@ -1078,7 +1092,10 @@ def main(config):
         # so we can save it to disk
 
         remove_obs(run_params)
-        run_params = fix_params(run_params)
+        fix_params(run_params)
+
+        if not os.path.exists(os.path.dirname(path)):
+            os.makedirs(os.path.dirname(path))
 
         writer.write_hdf5(
             path,
@@ -1207,7 +1224,7 @@ def main_parallel(config):
 
         custom = run_params.get("custom", "")
 
-        spec, phot, mfrac = model.predict(model.theta, obs=obs, sps=sps)
+        # spec, phot, mfrac = model.predict(model.theta, obs=obs, sps=sps)
 
         # Do emcee/dynesty
         run_params["optimize"] = False
@@ -1259,6 +1276,20 @@ def main_parallel(config):
 
     lnprobfn_fixed = partial(lnprobfn, sps=sps)
 
+    # rename model to input_model in run_params
+    run_params["input_model"] = model
+    run_params.pop("model")
+
+    remove_obs(run_params)
+    fix_params(run_params)
+
+    # attempt to json serialize the run_params
+    try:
+        json.dumps(run_params)
+    except TypeError:
+        print("Run_params not serializable. Exiting.")
+        return False
+
     if withmpi:
         run_params["using_mpi"] = True
         with MPIPool() as pool:
@@ -1267,6 +1298,7 @@ def main_parallel(config):
                 pool.wait()
                 sys.exit(0)
             nprocs = pool.size
+
             # The parent process will oversee the fitting
             output = fit_model(
                 obs,
@@ -1282,8 +1314,8 @@ def main_parallel(config):
         # without MPI we don't pass the pool
         output = fit_model(obs, model, sps, noise, lnprobfn=lnprobfn_fixed, **run_params)
 
-    remove_obs(run_params)
-    run_params = fix_params(run_params)
+    if not os.path.exists(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
     writer.write_hdf5(
         path,
@@ -1429,17 +1461,18 @@ def run_prospector_on_cat(
     print(f"{len(list_params)} to fit.")
 
     if len(list_params) == 0:
-        print(
-            "No galaxies found to run. Either ID is not in catalog or the fit already exists and overwrite_existing is False."
-        )
+        if rank == 0:
+            print(
+                "No galaxies found to run. Either ID is not in catalog or the fit already exists and overwrite_existing is False."
+            )
     elif len(list_params) > 1 and n_jobs > 1:
         print(f"Running in parallel with {n_jobs} cores. 1 galaxy per core.")
         Parallel(n_jobs=n_jobs)(delayed(main)(**run_param) for run_param in list_params)
     elif n_jobs == 1 and size > 1:
         if rank == 0:
             print(f"Running in multithreaded serial, fitting one galaxy over {size} cores.")
-            for i in list_params:
-                main_parallel(i)
+        for i in list_params:
+            main_parallel(i)
     elif n_jobs == 1 and size == 1:
         for i in list_params:
             main(i)
@@ -1599,10 +1632,10 @@ def run_prospector_on_spec_phot(
         if spec_mask is not None:
             run_params_init["mask"] = spec_mask
 
-        if "meta" not in model_i:
-            model_i["meta"] = {}
+        if "meta" not in run_params_init:
+            run_params_init["meta"] = {}
 
-        meta = model_i["meta"]
+        meta = run_params_init["meta"]
         # Meta keys are stored in obs dictionary.
         meta["spec_path"] = spec_path_i
         meta["time"] = time.strftime("%y%b%d-%H.%M", time.localtime())
@@ -1652,22 +1685,25 @@ def run_prospector_on_spec_phot(
         if not os.path.exists(path) or existing_behaviour == "overwrite":
             list_params.append(run_params_init)
 
-    print(f"{len(list_params)} to fit.")
+    if rank == 0:
+        print(f"{len(list_params)} to fit.")
 
     if len(list_params) == 0:
-        print(
-            "No galaxies found to run. Either ID is not in catalog or the fit already exists and overwrite_existing is False."
-        )
+        if rank == 0:
+            print(
+                "No galaxies found to run. Either ID is not in catalog or the fit already exists and overwrite_existing is False."
+            )
     elif len(list_params) > 1 and n_jobs > 1:
         print(f"Running in parallel with {n_jobs} cores. 1 galaxy per core.")
         Parallel(n_jobs=n_jobs)(delayed(main)(**run_param) for run_param in list_params)
     elif n_jobs == 1 and size > 1:
         if rank == 0:
             print(f"Running in multithreaded serial, fitting one galaxy over {size} cores.")
-            for i in list_params:
-                main_parallel(i)
+        for i in list_params:
+            main_parallel(i)
     elif n_jobs == 1 and size == 1:
         for i in list_params:
             main(i)
 
-    print("Fitting complete.")
+    if rank == 0:
+        print("Fitting complete.")

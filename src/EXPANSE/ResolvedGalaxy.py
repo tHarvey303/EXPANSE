@@ -1498,7 +1498,7 @@ class ResolvedGalaxy:
         sky_coord: SkyCoord,
         survey: str,
         field_info: FieldInfo,
-        cutout_size: typing.Union[int, u.Quantity, "auto"] = "auto",
+        cutout_size: typing.Union[int, u.Quantity, str] = "auto",
         dont_psf_match_bands: typing.List[str] = [],
         redshift: float = -1,
         already_psf_matched: bool = False,
@@ -1733,8 +1733,10 @@ class ResolvedGalaxy:
             psfs[band] = copy.deepcopy(psf_data)
             psfs_meta[band] = str(psf_header)
 
-            self.add_to_h5(psf_data, f"psfs/{psf_type}/", band, overwrite=True)
-            self.add_to_h5(str(psf_header), f"psfs_meta/{psf_type}/", band, overwrite=True)
+            self.add_to_h5(psf_data, f"psfs/{psf_type}/", band, overwrite=True, force=True)
+            self.add_to_h5(
+                str(psf_header), f"psfs_meta/{psf_type}/", band, overwrite=True, force=True
+            )
 
         self.psfs = {psf_type: psfs}
         self.psfs_meta = {psf_type: psfs_meta}
@@ -8499,6 +8501,7 @@ class ResolvedGalaxy:
         time_calls=False,
         return_run_args=False,
         override_binmap_type=None,
+        override_psf_type=None,
         skip_single_bin=True,  # Skip fitting single bins
         exclude_bands=[],
     ):
@@ -8602,7 +8605,11 @@ class ResolvedGalaxy:
 
         if not hasattr(self, "photometry_table"):
             raise Exception("Need to run measure_flux_in_bins first")
-        if hasattr(self, "use_psf_type"):
+
+        if override_psf_type:
+            psf_type = override_binmap_type
+            self.psf_type = psf_type
+        elif hasattr(self, "use_psf_type"):
             psf_type = self.use_psf_type
         else:
             psf_type = "webbpsf"

@@ -19,6 +19,8 @@ from . import synthesizer
 
 from . import prospector
 
+from . import vis
+
 from .gui.ResolvedSEDApp import expanse_viewer
 
 __all__ = ['ResolvedGalaxy', 'MockResolvedGalaxy', 'ResolvedGalaxies',

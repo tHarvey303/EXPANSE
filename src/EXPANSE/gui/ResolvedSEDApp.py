@@ -32,7 +32,7 @@ fitsmap_directory = os.getenv("FITSMAP_DIR", "/nvme/scratch/work/tharvey/fitsmap
 MAX_SIZE_MB = 150
 ACCENT = "goldenrod"
 galaxies_dir = os.path.join(
-    os.path.dirname(os.path.dirname((os.path.dirname(os.path.abspath(__file__))))),
+    os.path.dirname(os.path.dirname(os.path.dirname((os.path.dirname(os.path.abspath(__file__)))))),
     "galaxies",
 )
 

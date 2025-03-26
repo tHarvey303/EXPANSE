@@ -6,6 +6,22 @@ import astropy.units as u
 from astropy.table import Table
 from astropy.io import fits
 import copy
+import sys
+
+try:
+    from mpi4py import MPI
+
+    rank = MPI.COMM_WORLD.Get_rank()
+    size = MPI.COMM_WORLD.Get_size()
+    from mpi4py.futures import MPIPoolExecutor
+
+    if size > 1:
+        MPI.COMM_WORLD.Barrier()
+        sys.stdout.flush()
+        MPI.COMM_WORLD.Barrier()
+except ImportError:
+    rank = 0
+    size = 1
 
 
 def filter_catalog(catalog, filter_val, filter_field):
@@ -237,7 +253,8 @@ def load_spectra(
             if len(hdul) > 1:
                 # DJA names are SCI, SPEC1D,
                 if "SCI" in hdul and "SPEC1D" in hdul:
-                    print(f"Identified DJA spectrum file with SPEC1D extension.")
+                    if rank == 0:
+                        print(f"Identified DJA spectrum file with SPEC1D extension.")
                     from msaexp.spectrum import SpectrumSampler
 
                     spec = SpectrumSampler(hdul)
