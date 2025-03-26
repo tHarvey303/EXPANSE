@@ -39,8 +39,17 @@ import os
 
 import numpy as np
 import tables
+from .utils import weighted_quantile
 
 maggies_to_mag = lambda maggies: -2.5 * np.log10(maggies * 3631) + 8.90
+
+# TODO: Support plotting more SFH
+# TODO: Support plotting dust attenuation law
+# TODO: Plot priors on distributions and show calculated relative entropy - https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.entropy.html
+# TODO: Support cumulative SFH
+# TODO: Support plotting spectra/zoom in spectral region
+# TODO: Support plot maximum likelihood models vs draws
+# TODO: On spectra, show smoothing/resolution
 
 
 class Plotspector(FigureMaker):
@@ -329,7 +338,7 @@ class Plotspector(FigureMaker):
         try:
             redshift = self.chain["zred"]
 
-            self.z_16, self.redshift, self.z_84 = useful_funcs.weighted_quantile(
+            self.z_16, self.redshift, self.z_84 = weighted_quantile(
                 redshift, [0.16, 0.5, 0.84], self.weights
             )
 
@@ -366,9 +375,7 @@ class Plotspector(FigureMaker):
                 logmass = self.chain["logmass"]
 
                 self.logmass_best_low, self.logmass_best, self.logmass_best_high = (
-                    useful_funcs.weighted_quantile(
-                        np.ndarray.flatten(logmass), [0.16, 0.50, 0.84], self.weights
-                    )
+                    weighted_quantile(np.ndarray.flatten(logmass), [0.16, 0.50, 0.84], self.weights)
                 )
 
                 logsfr_ratios = self.chain["logsfr_ratios"]
@@ -434,38 +441,30 @@ class Plotspector(FigureMaker):
 
                 low_sfrs, median_sfrs, high_sfrs = [], [], []
                 for bin in sfrs:
-                    sfr_16, sfr_50, sfr_84 = useful_funcs.weighted_quantile(
-                        bin, [0.16, 0.5, 0.84], self.weights
-                    )
+                    sfr_16, sfr_50, sfr_84 = weighted_quantile(bin, [0.16, 0.5, 0.84], self.weights)
                     low_sfrs.append(sfr_16)
                     median_sfrs.append(sfr_50)
                     high_sfrs.append(sfr_84)
 
                 # for bin in masses:
-                #    mass_16, mass_50, mass_84 = useful_funcs.weighted_quantile(bin, [0.16, 0.5, 0.84], self.weights)
+                #    mass_16, mass_50, mass_84 = weighted_quantile(bin, [0.16, 0.5, 0.84], self.weights)
 
                 # WARNING nonpar_recent_sfr and mwa_recent_sfr are not suitable for continuity_flex since they use
                 # logsfr_ratios_to_sfrs instead of logsfr_ratios_to_masses_flex!!
                 # Can probably just write own like done below for alpha
                 if not flex:
                     sfr_10myr = nonpar_recent_sfr(logmass, logsfr_ratios, agebins, sfr_period=0.01)
-                    self.sfr_10myr = useful_funcs.weighted_quantile(
-                        sfr_10myr, [0.16, 0.5, 0.84], self.weights
-                    )
+                    self.sfr_10myr = weighted_quantile(sfr_10myr, [0.16, 0.5, 0.84], self.weights)
 
                     self.sfr_10myr_dist = sfr_10myr
                     sfr_100myr = nonpar_recent_sfr(logmass, logsfr_ratios, agebins, sfr_period=0.1)
                     self.sfr_100myr_dist = sfr_100myr
-                    self.sfr_100myr = useful_funcs.weighted_quantile(
-                        sfr_100myr, [0.16, 0.5, 0.84], self.weights
-                    )
+                    self.sfr_100myr = weighted_quantile(sfr_100myr, [0.16, 0.5, 0.84], self.weights)
 
                     mwa = np.ndarray.flatten(nonpar_mwa(logmass, logsfr_ratios, agebins))
                     self.mwa_dist = mwa
                     # in myr now
-                    self.mwa = (
-                        useful_funcs.weighted_quantile(mwa, [0.16, 0.5, 0.84], self.weights) * 10**3
-                    )
+                    self.mwa = weighted_quantile(mwa, [0.16, 0.5, 0.84], self.weights) * 10**3
 
                 else:
                     self.sfr_10myr_dist = self.nonpar_recent_sfr_flex(
@@ -476,7 +475,7 @@ class Plotspector(FigureMaker):
                         agebins,
                         sfr_period=0.01,
                     )
-                    self.sfr_10myr = useful_funcs.weighted_quantile(
+                    self.sfr_10myr = weighted_quantile(
                         self.sfr_10myr_dist, [0.16, 0.5, 0.84], self.weights
                     )
                     # sfr_10myr_dist.append(sfr_10myr)
@@ -489,7 +488,7 @@ class Plotspector(FigureMaker):
                         agebins,
                         sfr_period=0.1,
                     )
-                    self.sfr_100myr = useful_funcs.weighted_quantile(
+                    self.sfr_100myr = weighted_quantile(
                         self.sfr_100myr_dist, [0.16, 0.5, 0.84], self.weights
                     )
                     # sfr_100myr_dist.append(sfr_100myr)
@@ -501,18 +500,15 @@ class Plotspector(FigureMaker):
                     )
 
                     self.mwa = (
-                        useful_funcs.weighted_quantile(
-                            self.mwa_dist, [0.16, 0.5, 0.84], self.weights
-                        )
-                        * 10**3
+                        weighted_quantile(self.mwa_dist, [0.16, 0.5, 0.84], self.weights) * 10**3
                     )
 
                     arrays, larray, harray = [], [], []
                     for time_col in np.transpose(agebins, (1, 2, 0)):
-                        first = useful_funcs.weighted_quantile(
+                        first = weighted_quantile(
                             time_col[0], [0.16, 0.5, 0.84], sample_weight=self.weights
                         )
-                        second = useful_funcs.weighted_quantile(
+                        second = weighted_quantile(
                             time_col[1], [0.16, 0.5, 0.84], sample_weight=self.weights
                         )
                         median = [first[1], second[1]]
@@ -522,7 +518,7 @@ class Plotspector(FigureMaker):
                         arrays.append(median)
                         larray.append(low)
                         harray.append(high)
-                    # self.agebins_dist = useful_funcs.weighted_quantile(agebins, [0.16, 0.5, 0.84], sample_weight=self.weights, axis=0)
+                    # self.agebins_dist = weighted_quantile(agebins, [0.16, 0.5, 0.84], sample_weight=self.weights, axis=0)
                     agebins = np.array(arrays)
                     agebins_low = np.array(larray)
                     agebins_high = np.array(harray)
@@ -551,22 +547,18 @@ class Plotspector(FigureMaker):
                 masses = np.array(masses).T
 
                 self.logmass_best_low, self.logmass_best, self.logmass_best_high = (
-                    useful_funcs.weighted_quantile(
-                        np.ndarray.flatten(logmass), [0.16, 0.50, 0.84], self.weights
-                    )
+                    weighted_quantile(np.ndarray.flatten(logmass), [0.16, 0.50, 0.84], self.weights)
                 )
 
                 low_sfrs, median_sfrs, high_sfrs = [], [], []
                 for bin in sfrs:
-                    sfr_16, sfr_50, sfr_84 = useful_funcs.weighted_quantile(
-                        bin, [0.16, 0.5, 0.84], self.weights
-                    )
+                    sfr_16, sfr_50, sfr_84 = weighted_quantile(bin, [0.16, 0.5, 0.84], self.weights)
                     low_sfrs.append(sfr_16)
                     median_sfrs.append(sfr_50)
                     high_sfrs.append(sfr_84)
 
                 # for bin in masses:
-                #    mass_16, mass_50, mass_84 = useful_funcs.weighted_quantile(bin, [0.16, 0.5, 0.84], self.weights)
+                #    mass_16, mass_50, mass_84 = weighted_quantile(bin, [0.16, 0.5, 0.84], self.weights)
 
                 # Adapted from prospect.plotting.sfh
 
@@ -579,13 +571,13 @@ class Plotspector(FigureMaker):
 
                 sfr_period = 0.01
                 self.sfr_10myr_dist = (ft(sfr_period) * masses.T).sum(axis=-1) / (sfr_period * 1e9)
-                self.sfr_10myr = useful_funcs.weighted_quantile(
+                self.sfr_10myr = weighted_quantile(
                     self.sfr_10myr_dist, [0.16, 0.5, 0.84], self.weights
                 )
 
                 sfr_period = 0.1
                 self.sfr_100myr_dist = (ft(sfr_period) * masses.T).sum(axis=-1) / (sfr_period * 1e9)
-                self.sfr_100myr = useful_funcs.weighted_quantile(
+                self.sfr_100myr = weighted_quantile(
                     self.sfr_100myr_dist, [0.16, 0.5, 0.84], self.weights
                 )
 
@@ -597,7 +589,7 @@ class Plotspector(FigureMaker):
 
                 self.mwa_dist = np.array(mwa) / 1e6  # into Myr
                 # print(self.mwa_dist, np.shape(self.mwa_dist))
-                self.mwa = useful_funcs.weighted_quantile(
+                self.mwa = weighted_quantile(
                     np.ndarray.flatten(self.mwa_dist), [0.16, 0.5, 0.84], self.weights
                 )
 
@@ -804,14 +796,10 @@ class Plotspector(FigureMaker):
                 tage = tage_from_tuniv(z, tage_from_z)  # in gyr
             tau = np.ndarray.flatten(self.chain["tau"])
             mass = np.ndarray.flatten(self.chain["mass"])
-            tau_16, tau_50, tau_84 = useful_funcs.weighted_quantile(
-                tau, [0.16, 0.5, 0.84], self.weights
-            )
+            tau_16, tau_50, tau_84 = weighted_quantile(tau, [0.16, 0.5, 0.84], self.weights)
 
-            self.logmass_best_low, self.logmass_best, self.logmass_best_high = (
-                useful_funcs.weighted_quantile(
-                    np.ndarray.flatten(np.log10(mass)), [0.16, 0.50, 0.84], self.weights
-                )
+            self.logmass_best_low, self.logmass_best, self.logmass_best_high = weighted_quantile(
+                np.ndarray.flatten(np.log10(mass)), [0.16, 0.50, 0.84], self.weights
             )
             # tage = theta_best[labels=='tage']
             # tau  = theta_best[labels=='tau']
@@ -828,9 +816,7 @@ class Plotspector(FigureMaker):
             self.mwa_dist = np.array(
                 [parametric_mwa(tau_i, tage_i, power=power) for tau_i, tage_i in zip(tau, tage)]
             )
-            self.mwa = useful_funcs.weighted_quantile(
-                self.mwa_dist, [0.16, 0.5, 0.84], self.weights
-            )
+            self.mwa = weighted_quantile(self.mwa_dist, [0.16, 0.5, 0.84], self.weights)
 
             self.sfr_10myr_dist = np.array(
                 [
@@ -841,9 +827,7 @@ class Plotspector(FigureMaker):
 
             self.sfr_10myr_dist = np.ndarray.flatten(self.sfr_10myr_dist)
 
-            self.sfr_10myr = useful_funcs.weighted_quantile(
-                self.sfr_10myr_dist, [0.16, 0.5, 0.84], self.weights
-            )
+            self.sfr_10myr = weighted_quantile(self.sfr_10myr_dist, [0.16, 0.5, 0.84], self.weights)
 
             self.sfr_100myr_dist = np.array(
                 [
@@ -852,7 +836,7 @@ class Plotspector(FigureMaker):
                 ]
             )
             self.sfr_100myr_dist = np.ndarray.flatten(self.sfr_100myr_dist)
-            self.sfr_100myr = useful_funcs.weighted_quantile(
+            self.sfr_100myr = weighted_quantile(
                 self.sfr_100myr_dist, [0.16, 0.5, 0.84], self.weights
             )
 
@@ -886,7 +870,7 @@ class Plotspector(FigureMaker):
             else:
                 fig = None
             # all_sfr = np.array([sfr(times, tau_i) for tau_i in tau])
-            # sfh_16, sfh_50, sfh_84 = useful_funcs.weighted_quantile(all_sfr, [0.16, 0.5, 0.84], self.weights)
+            # sfh_16, sfh_50, sfh_84 = weighted_quantile(all_sfr, [0.16, 0.5, 0.84], self.weights)
             # ax.plot(times, sfh_50)
             # ax.fill_between(times, sfh_16, sfh_84, alpha=0.5)
             if plottype == "absolute":
@@ -918,7 +902,7 @@ class Plotspector(FigureMaker):
             try:
                 redshift = self.chain["zred"]
 
-                self.z_16, self.redshift, self.z_84 = useful_funcs.weighted_quantile(
+                self.z_16, self.redshift, self.z_84 = weighted_quantile(
                     redshift, [0.16, 0.5, 0.84], self.weights
                 )
 
@@ -989,9 +973,7 @@ class Plotspector(FigureMaker):
             else:
                 values = self.chain[param]
 
-            low, mid, high = useful_funcs.weighted_quantile(
-                np.squeeze(values), [0.16, 0.5, 0.84], self.weights
-            )
+            low, mid, high = weighted_quantile(np.squeeze(values), [0.16, 0.5, 0.84], self.weights)
             table_vals.append([f"{mid:.2f}$^{{+{mid-low:.1f}}}_{{-{high-low:.1f}}}$"])
             row_labels.append(self.param_name.get(param, param))
 
@@ -1067,7 +1049,7 @@ class Plotspector(FigureMaker):
         try:
             redshift = self.chain["zred"]
 
-            redshift = useful_funcs.weighted_quantile(redshift, [0.16, 0.5, 0.84], self.weights)
+            redshift = weighted_quantile(redshift, [0.16, 0.5, 0.84], self.weights)
 
         except:
             redshift = [0, self.model.init_config["zred"]["init"], 0]
@@ -1116,9 +1098,7 @@ class Plotspector(FigureMaker):
 
         self.show = [i for i in self.chain.dtype.names if i not in exclude]
         for param in self.show:
-            vals = useful_funcs.weighted_quantile(
-                np.squeeze(self.chain[param]), [0.16, 0.5, 0.84], self.weights
-            )
+            vals = weighted_quantile(np.squeeze(self.chain[param]), [0.16, 0.5, 0.84], self.weights)
             table[param] = vals
 
         data = table.values()
@@ -1248,7 +1228,7 @@ class Plotspector(FigureMaker):
             self.surviving_mass_dist = draws
             # self.mfrac = mfrac
 
-            low, mid, high = useful_funcs.weighted_quantile(
+            low, mid, high = weighted_quantile(
                 np.squeeze(draws),
                 [0.16, 0.5, 0.84],
                 self.weights[indices] / np.sum(self.weights[indices]),
@@ -1632,7 +1612,7 @@ class Plotspector(FigureMaker):
         try:
             redshift = self.chain["zred"]
 
-            self.z_16, self.redshift, self.z_84 = useful_funcs.weighted_quantile(
+            self.z_16, self.redshift, self.z_84 = weighted_quantile(
                 np.squeeze(redshift), [0.16, 0.5, 0.84], self.weights
             )
 
