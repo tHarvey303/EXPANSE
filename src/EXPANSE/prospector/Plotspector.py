@@ -51,7 +51,6 @@ except (FileNotFoundError, OSError):
 import os
 
 import numpy as np
-import tables
 
 from .utils import weighted_quantile
 
@@ -133,6 +132,8 @@ class Plotspector(FigureMaker):
         self.parchain = self.convert(self.chain)
 
     def save_updated_h5(self, data_to_add, name_to_add):
+        import tables
+
         tables.file._open_files.close_all()
         if isinstance(data_to_add, list):
             data_to_add = np.array(data_to_add)

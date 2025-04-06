@@ -94,8 +94,7 @@ def run_db_fit_parallel(
 
     # Set the minimum flux error
     obs_err[(obs_err / obs_sed < min_flux_err) & (obs_sed > 0)] = (
-        min_flux_err
-        * obs_sed[(obs_err / obs_sed < min_flux_err) & (obs_sed > 0)]
+        min_flux_err * obs_sed[(obs_err / obs_sed < min_flux_err) & (obs_sed > 0)]
     )
 
     N_param = int(atlas_path.split("Nparam_")[1].split(".dbatlas")[0])
@@ -105,9 +104,7 @@ def run_db_fit_parallel(
     try:
         import dense_basis as db
     except ImportError:
-        print(
-            "Warning: dense_basis not found. Dense_basis functions will not work"
-        )
+        print("Warning: dense_basis not found. Dense_basis functions will not work")
 
     if atlas is None:
         if verbose:
@@ -177,6 +174,8 @@ def run_db_fit_parallel(
     # templates closest to known redshift to be used. Could precheck grid for nearest redshifts and set deltaz accordinglu.
     if fix_redshift:
         redshift = fix_redshift
+    else:
+        redshift = None
 
     sedfit = db.SedFit(
         obs_sed,
@@ -232,9 +231,7 @@ def make_db_grid(
     try:
         import dense_basis as db
     except ImportError:
-        print(
-            "Warning: dense_basis not found. Dense_basis functions will not work"
-        )
+        print("Warning: dense_basis not found. Dense_basis functions will not work")
 
     for band in bands:
         if band in hst_bands:
@@ -266,9 +263,7 @@ def make_db_grid(
         filt_dir=db_dir,
     )
 
-    h5_path = (
-        f"{pregrid_path}/{fname}_{N_pregrid}_Nparam_{N_sfh_priors}.dbatlas"
-    )
+    h5_path = f"{pregrid_path}/{fname}_{N_pregrid}_Nparam_{N_sfh_priors}.dbatlas"
 
     with h5py.File(h5_path, "a") as f:
         # add bands as metadata
@@ -281,9 +276,7 @@ def get_priors(atlas_path=None):
     try:
         import dense_basis as db
     except ImportError:
-        print(
-            "Warning: dense_basis not found. Dense_basis functions will not work"
-        )
+        print("Warning: dense_basis not found. Dense_basis functions will not work")
 
     priors = db.Priors()
 
@@ -301,25 +294,3 @@ def get_bands_from_atlas(atlas_path):
         bands = f.attrs["bands"]
         bands = ast.literal_eval(bands)
     return bands
-
-
-[
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "10",
-    "11",
-    "12",
-    "13",
-    "14",
-    "15",
-    "16",
-    "17",
-    "18",
-]

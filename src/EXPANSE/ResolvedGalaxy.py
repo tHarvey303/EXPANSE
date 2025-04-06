@@ -5495,7 +5495,7 @@ class ResolvedGalaxy:
         self,
         galaxy_region,
         SNR_reqs=10,
-        ref_band="combined",
+        ref_band="combined_average",
         plot=True,
         override_psf_type=None,
         overwrite=False,
@@ -5585,6 +5585,8 @@ class ResolvedGalaxy:
             elif ref_band.endswith("average"):
                 signal = []
                 noise = []
+            else:
+                raise ValueError(f"ref_band {ref_band} not understood.")
 
             if redshift == "self":
                 z = self.redshift
@@ -7384,7 +7386,7 @@ class ResolvedGalaxy:
                     use_emcee,
                     emcee_samples,
                     min_flux_err,
-                    fix_redshift=redshift,
+                    fix_redshift=fix_redshift,
                     verbose=verbose,
                     evaluate_posterior_percentiles=False,
                     atlas=atlas,
@@ -7402,7 +7404,7 @@ class ResolvedGalaxy:
                     use_emcee,
                     emcee_samples,
                     min_flux_err,
-                    fix_redshift=redshift,
+                    fix_redshift=fix_redshift,
                     verbose=verbose,
                     evaluate_posterior_percentiles=False,
                     atlas=atlas,
@@ -7411,7 +7413,6 @@ class ResolvedGalaxy:
             ]
 
         self.get_filter_wavs()
-        filter_wavs = [self.filter_wavs[band].to(u.Angstrom) for band in self.bands]
 
         if verbose:
             print("Finished fitting, saving results to h5 file.")
@@ -10729,6 +10730,7 @@ class ResolvedGalaxy:
         tempfilt=None,
         update_meta_properties=False,
         exclude_bands=[],
+        plot=False,
     ):
         """
         Wrapper function for fit_eazy_photometry. Provides either
@@ -10778,6 +10780,9 @@ class ResolvedGalaxy:
             self.meta_properties[f"zbest_84_{template_name}_zfree"] = meta_dict["z84"]
             self.meta_properties[f"chi2_best_{template_name}_zfree"] = meta_dict["chi2"]
             self.dump_to_h5()
+
+        if plot:
+            self.plot_eazy_fit(ez, 0, label=phot_name)
 
         return ez
 
