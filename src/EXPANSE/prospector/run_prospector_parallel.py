@@ -57,9 +57,9 @@ if __name__ == "__main__":
                 run_dicts[id] = {}
                 run_dicts[id]["OBJID"] = id
 
-                model = copy.deepcopy(input_dict[galaxy]["model"])
+                model = copy.deepcopy(input_dict[galaxy]["input_model"])
                 model = model[pos] if type(model) is list else model
-                run_dicts[id]["model"] = model
+                run_dicts[id]["input_model"] = model
 
                 meta = copy.deepcopy(input_dict[galaxy]["meta"])
                 meta = meta[pos] if type(meta) is list else meta

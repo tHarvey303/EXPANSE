@@ -21,8 +21,8 @@ Python package to perform resolved SED fitting using publically availabe SED fit
 ## Planned Features
 
 1. Direct conversion of cutouts with modelled morphology into components for Pandeia - e.g. to plan JWST observations.
-2. More interactivity in the viewer - e.g. to select regions for further analysis - e.g. to measure the SED of a region, or to fit a model to it, based on drawing an aperture, or grouping pixels.
-3. Additional SED fitting tools, and improvement of pixel-by-pixel case.
+2. More interactivity in the viewer - e.g. to select regions for further analysis - e.g. to measure the SED of a region, or to fit a model to it, based on drawing an aperture, or grouping pixels (implemented for EAZY SED Fitting.)
+3. Additional SED fitting tools, and improvement of pixel-by-pixel case. Prospector is in progress, and Beagle is planned.
 4. Better tools for MetaClass for population analysis - spatially resolved main sequence, outshining etc.
 5. Furhter reionization estimates - maps of fesc, zi_ion etc
 6. More radial/annular tools - annular SED fitting, radial profiles of properties etc.
@@ -36,7 +36,7 @@ To install, clone the repository and run `pip install .` in the root directory. 
 
 Example scripts and notebooks are provided in the scripts directory. Better documentation is coming soon.
 
-To lauch the viewer, run `expanse-viewer-class` in the terminal after installation.
+To lauch the viewer, run `expanse-viewer` in the terminal after installation.
 
 ## Citation
 

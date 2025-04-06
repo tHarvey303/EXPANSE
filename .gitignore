@@ -8,6 +8,7 @@ stamp_*
 galaxies/temp/*.fits
 galaxies/*.fits
 galaxies/*
+prospector/*
 scripts/private
 galaxies/mock
 galaxies/mock_nonoise
@@ -178,3 +179,5 @@ examples/cloudy/data/*
 
 # Apple specific nonsense
 *.DS_Store
+
+!galaxies/JOF_16.h5

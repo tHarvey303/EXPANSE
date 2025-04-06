@@ -394,9 +394,9 @@ class PipesFitNoLoad:
             self.dof = self.len_photometry - len(params)
 
     def calculate_bic(self):
-        dof = self.calculate_dof()
+        self.calculate_dof()
         ln_evidence = self._load_item_from_h5("lnz")[()]
-        return -2 * ln_evidence + dof * np.log(self.len_photometry)
+        return -2 * ln_evidence + self.dof * np.log(self.len_photometry)
 
     def _get_fit_instructions(self):
         with h5py.File(self.h5_path, "r") as data:
@@ -408,11 +408,12 @@ class PipesFitNoLoad:
     def _recalculate_bagpipes_wavelength_array(
         self,
         bands=None,
-        bagpipes_filter_dir=bagpipes_filter_dir,
         use_bpass=False,
     ):
         if bands is None:
             bands = self.bands
+
+        bagpipes_filter_dir = self.filter_path
 
         if bands is None:
             raise ValueError("No bands provided or stored in object.")
@@ -465,6 +466,7 @@ class PipesFitNoLoad:
         y_scale=None,
         skip_no_obs=False,
         background_spectrum=False,
+        alpha=0.05,
         **kwargs,
     ):
         """Plots best-fitting photometry from fitting
@@ -483,13 +485,13 @@ class PipesFitNoLoad:
             if photometry is not None:
                 mask = photometry[:, 1] > 0.0
                 upper_lims = photometry[:, 1] + photometry[:, 2]
-                ymax = 1.05 * np.max(upper_lims[mask])
+                ymax = 1.05 * np.nanmax(upper_lims[mask])
 
             else:
                 photometry_temp = self._load_item_from_h5(
                     "photometry", percentiles=True, transpose=True
                 )
-                ymax = 1.05 * np.max(photometry_temp[:, 2])
+                ymax = 1.05 * np.nanmax(photometry_temp[:, 2])
 
             if not y_scale:
                 y_scale = int(np.log10(ymax)) - 1
@@ -547,7 +549,7 @@ class PipesFitNoLoad:
                 bestfit_photometry.value,
                 color=colour,
                 zorder=zorder,
-                alpha=0.05,
+                alpha=alpha,
                 s=40,
                 rasterized=True,
             )
@@ -681,7 +683,7 @@ class PipesFitNoLoad:
         self.age_lhs[-1] = 10**9 * self.hubble_time
         self.age_widths = self.age_lhs[1:] - self.age_lhs[:-1]
 
-    def plot_sfh(
+    def plot_sfh_broken(
         self,
         ax,
         colour="black",
@@ -692,6 +694,7 @@ class PipesFitNoLoad:
         logify=False,
         cosmo=None,
         return_sfh=False,
+        override_redshift_ticks=[],
         **kwargs,
     ):
         """Plot star formation history from posterior samples.
@@ -706,6 +709,7 @@ class PipesFitNoLoad:
             logify: Use log scale for y-axis
             cosmo: Astropy cosmology object
             return_sfh: Return SFH arrays instead of plotting
+            override_redshift_ticks: List of redshift values to use for ticks
         """
         # Load SFH data
         sfh_samples = self._load_item_from_h5("sfh")[:]
@@ -725,7 +729,7 @@ class PipesFitNoLoad:
         # Convert times based on plottype
 
         # Calculate percentiles
-        sfh_percentiles = np.percentile(sfh_samples, [16, 50, 84], axis=0)
+        sfh_percentiles = np.nanpercentile(sfh_samples, [16, 50, 84], axis=0)
 
         if return_sfh:
             return (
@@ -760,15 +764,175 @@ class PipesFitNoLoad:
             ax.set_yscale("log")
 
         if add_zaxis and plottype == "absolute":
+            # Add redshift axis based on absolute times
+            ax2 = ax.twiny()
+
+            # Get the current time limits from the plot
+            time_limits = ax.get_xlim()
+
+            if override_redshift_ticks:
+                # Use the provided redshift ticks
+                z_ticks = override_redshift_ticks
+
+                # Calculate the corresponding absolute times for these redshifts
+                # Convert from redshift to age of universe at that redshift
+                z_times_yr = np.array(
+                    [np.interp(z, self.z_array[::-1], self.age_at_z[::-1]) for z in z_ticks]
+                )
+
+                # Convert to the requested timescale
+                z_times = z_times_yr * u.yr.to(u.Unit(timescale))
+
+                # Set the redshift ticks at the corresponding absolute time positions
+                ax2.set_xticks(z_times)
+                ax2.set_xticklabels([f"{z:.1f}" for z in z_ticks])
+            else:
+                # Default behavior: create evenly spaced redshift ticks
+                # Generate some reasonable redshift values
+                z_values = np.linspace(0, 16, 8)  # Adjust range as needed
+                z_times_yr = np.array(
+                    [np.interp(z, self.z_array[::-1], self.age_at_z[::-1]) for z in z_values]
+                )
+                z_times = z_times_yr * u.yr.to(u.Unit(timescale))
+
+                # Filter to only include redshifts that fall within the current time range
+                mask = (z_times >= time_limits[0]) & (z_times <= time_limits[1])
+                z_filtered = z_values[mask]
+                z_times_filtered = z_times[mask]
+
+                if len(z_filtered) > 0:
+                    ax2.set_xticks(z_times_filtered)
+                    ax2.set_xticklabels([f"{z:.1f}" for z in z_filtered])
+
+            # Set the limits of the redshift axis to match the time axis
+            ax2.set_xlim(time_limits)
+            ax2.set_xlabel("Redshift", fontsize="small")
+
+    def plot_sfh(
+        self,
+        ax,
+        colour="black",
+        modify_ax=True,
+        add_zaxis=True,
+        timescale="Myr",
+        plottype="lookback",
+        logify=False,
+        cosmo=None,
+        return_sfh=False,
+        override_redshift_ticks=[],
+        **kwargs,
+    ):
+        """Plot star formation history from posterior samples.
+
+        Args:
+            ax: Matplotlib axis
+            colour: Line color
+            modify_ax: Whether to modify axis labels/ticks
+            add_zaxis: Add redshift axis
+            timescale: Time unit for x-axis
+            plottype: 'lookback' or 'absolute' time
+            logify: Use log scale for y-axis
+            cosmo: Astropy cosmology object
+            return_sfh: Return SFH arrays instead of plotting
+        """
+        # Load SFH data
+        sfh_samples = self._load_item_from_h5("sfh")[:]
+
+        self._recrate_bagpipes_time_grid()
+        redshift = self._get_redshift()
+
+        # also load tage
+        # tage = self._load_item_from_h5("mass_weighted_age")[:]
+        # filter samples with tage < 0
+        # print(len(sfh_samples))
+        # sfh_samples = sfh_samples[(tage > 0) & (tage < 10**9 * self.hubble_time)]
+        # print(len(sfh_samples))
+
+        age_of_universe_at_z = np.interp(redshift, self.z_array, self.age_at_z) * u.Gyr
+        age_of_universe = np.interp(0, self.z_array, self.age_at_z) * u.Gyr
+
+        if cosmo is None:
+            cosmo = self.cosmo
+
+        times = self.ages
+        # Convert times based on plottype
+
+        # Calculate percentiles
+        sfh_percentiles = np.nanpercentile(sfh_samples, [16, 50, 84], axis=0)
+
+        if plottype == "absolute":
+            # need to convert times and SFH percentiles
+            # currently e.g. lookback would be 0 at time of observation and then positive along SFH
+            # absolute should be age of universe at time of observation and then decrease to 0
+            # so need to subtract the time of observation from the times and then flip the SFH percentiles
+            # need a new time array where first value is age of universe at time of observation, and
+            # we count down from there (can count negative to match length) of SFH array. Spacing should be the same
+            # as the original times array
+
+            times = age_of_universe_at_z - times
+
+            print(times)
+
+            if modify_ax:
+                ax.set_xlim(age_of_universe_at_z.to(timescale).value, 0)
+
+        if return_sfh:
+            return (
+                times.to(timescale).value,
+                sfh_percentiles.T,
+            )  # For compatibility with the original function
+
+        min = 0.001 if logify else 0
+
+        default_kwargs = {
+            "lw": 1.5,
+            "color": colour,
+            "zorder": 3,
+        }
+        default_kwargs.update(kwargs)
+        # Plot median SFH
+        ax.plot(
+            times.to(timescale).value,
+            sfh_percentiles[1],
+            **default_kwargs,
+        )
+
+        ax.fill_between(
+            times.to(timescale).value,
+            sfh_percentiles[0],
+            sfh_percentiles[2],
+            color=colour,
+            alpha=0.3,
+            zorder=2,
+            lw=0,
+        )
+
+        if modify_ax:
+            ax.set_xlabel(f"{'Lookback ' if plottype=='lookback' else ''} Time ({timescale})")
+            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)")
+
+        if logify:
+            ax.set_yscale("log")
+
+        if add_zaxis and plottype == "absolute":
             # Add redshift axis based on lookback times
             ax2 = ax.twiny()
             # Calculate redshifts corresponding to lookback times
             # Set ticks and labels
-            time_range = ax.get_xlim()
-            # Convert time_range to match unit of age_at_z
-            z_times = np.linspace(*time_range, 6) * u.Unit(timescale)
-            ax2.set_xticks(np.interp(z_times.to(u.yr).value, self.z_array, self.age_at_z))
-            ax2.set_xlim(time_range)
+            if override_redshift_ticks:
+                z_ticks = override_redshift_ticks
+                # Calculate times corresponding to these redshifts
+                z_times_yr = np.array([np.interp(z, self.z_array, self.age_at_z) for z in z_ticks])
+                z_times = z_times_yr * u.yr.to(u.Unit(timescale))
+                ax2.set_xticks(z_times)
+                ax2.set_xticklabels([f"{z:.1f}" for z in z_ticks])
+
+            else:
+                time_range = ax.get_xlim()
+                # Convert time_range to match unit of age_at_z
+                z_times = np.linspace(*time_range, 6) * u.Unit(timescale)
+                ax2.set_xticks(np.interp(z_times.to(u.yr).value, self.z_array, self.age_at_z))
+                ax2.set_xlim(time_range)
             ax2.set_xlabel("Redshift", fontsize="small")
 
     def plot_sed(
@@ -871,6 +1035,7 @@ class PipesFitNoLoad:
         return_samples=False,
         linelabel="",
         norm_height=False,
+        filter_neg=False,
     ):
         """Plot posterior PDF for a parameter.
 
@@ -887,12 +1052,17 @@ class PipesFitNoLoad:
         # Load parameter samples
         samples = self._load_item_from_h5(parameter)[:]
 
+        from bagpipes.plotting import fix_param_names
+
+        label = fix_param_names(parameter)
+
+        if filter_neg:
+            samples = samples[samples > 0]
+
         # Special handling for some parameters
         if parameter == "sfr" or parameter == "formed_mass":
             samples = np.log10(samples)
-            label = rf"$\log_{{10}}({parameter})$"
-        else:
-            label = parameter
+            label = rf"$\log_{{10}}({label})$"
 
         if return_samples:
             return samples
@@ -901,11 +1071,11 @@ class PipesFitNoLoad:
         from scipy.stats import gaussian_kde
 
         kde = gaussian_kde(samples[~np.isnan(samples)])
-        x_plot = np.linspace(np.min(samples), np.max(samples), 100)
+        x_plot = np.linspace(np.nanmin(samples), np.nanmax(samples), 100)
         y = kde(x_plot)
 
         if norm_height:
-            y = y / np.max(y)
+            y = y / np.nanmax(y)
 
         # Plot PDF
         ax.plot(x_plot, y, color=colour, alpha=alpha, label=linelabel)
@@ -1411,7 +1581,7 @@ class PipesFit:
             fit = self.fit
             mask = fit.galaxy.photometry[:, 1] > 0.0
             upper_lims = fit.galaxy.photometry[:, 1] + fit.galaxy.photometry[:, 2]
-            ymax = 1.05 * np.max(upper_lims[mask])
+            ymax = 1.05 * np.nanmax(upper_lims[mask])
 
             if not y_scale:
                 y_scale = int(np.log10(ymax)) - 1
@@ -1493,7 +1663,7 @@ class PipesFit:
 
     def calc_low_chi2(self):
         if "chisq_phot" in self.fit.posterior.samples.keys():
-            chi2 = np.min(self.fit.posterior.samples["chisq_phot"])
+            chi2 = np.nanmin(self.fit.posterior.samples["chisq_phot"])
             return chi2
         else:
             return -99.99
@@ -1584,7 +1754,7 @@ class PipesFit:
         if self.fitted_type in ["phot", "both"]:
             photometry = np.copy(self.galaxy.photometry)
             mask = photometry[:, 1] > 0.0
-            ymax = 1.05 * np.max((photometry[:, 1] + photometry[:, 2])[mask])
+            ymax = 1.05 * np.nanmax((photometry[:, 1] + photometry[:, 2])[mask])
 
             if not y_scale:
                 y_scale = int(np.log10(ymax)) - 1
@@ -1684,7 +1854,7 @@ class PipesFit:
             if flux_units == u.ABmag:
                 plot_fnu_lim = plot_fnu[(plot_fnu > 15) & (plot_fnu < 32)]
                 plot_fnu_lim = np.append(plot_fnu_lim, three_sig_depths)
-                plot_fnu_up = np.max(plot_fnu_lim) + 1
+                plot_fnu_up = np.nanmax(plot_fnu_lim) + 1
                 plot_fnu_low = np.min(plot_fnu_lim) - 2
                 ax.set_ylim(plot_fnu_up, plot_fnu_low)
             ax.set_xlim(wav[0] - 0.2, wav[-1] + 0.65)
@@ -1828,7 +1998,7 @@ class PipesFit:
             )
 
         except ValueError:
-            print("I shit myself.")
+            print("I crashed.")
             pass
 
         ax.set_xlabel(label, fontsize="small", fontweight="bold")
@@ -2860,7 +3030,7 @@ class PlotPipes:
                 wcs = cutout.wcs
                 data_cutout = cutout.data
                 # Set top value based on central 10x10 pixel region
-                top = np.max(data_cutout[10:20, 10:20])
+                top = np.nanmax(data_cutout[10:20, 10:20])
 
                 bottom_val = top / 10**5
                 stretch = LogStretch(a=0.1)

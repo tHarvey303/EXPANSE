@@ -454,3 +454,52 @@ def load_spectra(
     assert np.all(np.diff(wav) > 0), "Wavelengths must be monotonically increasing."
 
     return wav, flux, flux_err
+
+
+def get_lsf(wave_obs, sigma_v, speclib="miles", zred=0.0, **extras):
+    """This method takes an instrimental resolution curve and returns the
+    quadrature difference between the instrumental dispersion and the library
+    dispersion, in km/s, as a function of restframe wavelength
+
+    :param wave_obs: ndarray
+        Observed frame wavelength (AA)
+
+    :param sigma_v: ndarray
+        Instrumental spectral resolution in terms of velocity dispersion (km/s)
+
+    :param speclib: string
+        The spectral library.  One of 'miles' or 'c3k_a', returned by
+        `sps.ssp.libraries[1]`
+
+        # Borrowed from https://github.com/bd-j/exspect/blob/main/fitting/psb_params.py
+    """
+    lightspeed = 2.998e5  # km/s
+    # filter out some places where sdss reports zero dispersion
+    good = sigma_v > 0
+    wave_obs, sigma_v = wave_obs[good], sigma_v[good]
+    wave_rest = wave_obs / (1 + zred)
+
+    # Get the library velocity resolution function at the corresponding
+    # *rest-frame* wavelength
+    if speclib == "miles":
+        miles_fwhm_aa = 2.54
+        sigma_v_lib = lightspeed * miles_fwhm_aa / 2.355 / wave_rest
+        # Restrict to regions where MILES is used
+        good = (wave_rest > 3525.0) & (wave_rest < 7500)
+    elif speclib == "c3k_a":
+        R_c3k = 3000
+        sigma_v_lib = lightspeed / (R_c3k * 2.355)
+        # Restrict to regions where C3K is used
+        good = (wave_rest > 2750.0) & (wave_rest < 9100.0)
+    else:
+        sigma_v_lib = sigma_v
+        good = slice(None)
+        raise ValueError("speclib of type {} not supported".format(speclib))
+
+    # Get the quadrature difference
+    # (Zero and negative values are skipped by FSPS)
+    dsv = np.sqrt(np.clip(sigma_v**2 - sigma_v_lib**2, 0, np.inf))
+
+    # return the broadening of the rest-frame library spectra required to match
+    # the observed frame instrumental lsf
+    return wave_rest[good], dsv[good]

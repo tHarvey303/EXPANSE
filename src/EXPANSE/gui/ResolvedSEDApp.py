@@ -5,29 +5,39 @@ import os
 import subprocess
 import tempfile
 from io import BytesIO
-
 import click
 import h5py as h5
+import sys
 import holoviews as hv
-import hvplot.xarray  # noqa
+from ..utils import suppress_stdout_stderr
+
+# with suppress_stdout_stderr():
+# import hvplot.xarray  # noqa
 import matplotlib
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import panel as pn
 import param
-import xarray as xr
+
+# import xarray as xr
 from astropy import units as u
 from astropy.io import fits
 from astropy.wcs import WCS
 from bokeh.models import PrintfTickFormatter
 from holoviews import opts, streams
 from matplotlib.colors import Normalize
-
 from ..ResolvedGalaxy import MockResolvedGalaxy, ResolvedGalaxy
+import warnings
 
 # Get fitsmap directory from environment variable
+# Could definetly do this better but at least there is a way to override.
 fitsmap_directory = os.getenv("FITSMAP_DIR", "/nvme/scratch/work/tharvey/fitsmap")
+db_atlas_path = os.getenv(
+    "DB_ATLAS_PATH",
+    f"/nvme/scratch/work/tharvey/EXPANSE/scripts/pregrids/db_atlas_JOF_500000_Nparam_3.dbatlas",
+)
+
 
 MAX_SIZE_MB = 150
 ACCENT = "goldenrod"
@@ -35,6 +45,7 @@ galaxies_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname((os.path.dirname(os.path.abspath(__file__)))))),
     "galaxies",
 )
+
 
 MAXIMIZE_CSS = """
 .plot-container .bk-btn {
@@ -68,6 +79,10 @@ INVISIBLE_TEXT = """
     font-size: 0px;
 }
 """
+
+
+# supress all warnings
+warnings.filterwarnings("ignore", category=UserWarning, append=True)
 
 
 def notify_on_error(func):
@@ -169,6 +184,16 @@ class GalaxyTab(param.Parameterized):
     # Parameters for SED results tab
     galaxy_id = param.String()
     survey = param.String()
+
+    TOTAL_FIT_COLORS = {
+        "TOTAL_BIN": "darkturquoise",
+        "MAG_AUTO": "blue",
+        "MAG_APER": "sandybrown",
+        "MAG_ISO": "purple",
+        "MAG_APER_TOTAL": "orange",
+        "MAG_BEST": "cyan",
+        "RESOLVED": "red",
+    }
     # resolved_galaxy = param.Parameter()
 
     cutout_cmap = param.String(default="Blues")
@@ -178,9 +203,7 @@ class GalaxyTab(param.Parameterized):
     )
 
     active_tab = param.Integer(default=0)
-    which_map = param.Selector(
-        default="pixedfit", objects=["pixedfit", "voronoi", "pixel_by_pixel"]
-    )
+    which_map = param.Selector(default="Nothing selected.", check_on_set=False)
     which_sed_fitter = param.Selector(default="bagpipes", objects=["bagpipes", "dense_basis"])
     which_flux_unit = param.Selector(default="uJy", objects=["uJy", "nJy", "ABmag", "ergscma"])
     multi_choice_bins = param.List(default=["RESOLVED"])
@@ -210,17 +233,11 @@ class GalaxyTab(param.Parameterized):
     sfh_time_axis = param.Selector(default="lookback", objects=["lookback", "absolute"])
 
     sfh_y_max = param.Number(default=None, allow_None=True, doc="Maximum y-axis value for SFH plot")
-
     sfh_y_min = param.Number(default=None, allow_None=True, doc="Minimum y-axis value for SFH plot")
-
     sfh_x_max = param.Number(default=None, allow_None=True, doc="Maximum x-axis value for SFH plot")
-
     sfh_x_min = param.Number(default=None, allow_None=True, doc="Minimum x-axis value for SFH plot")
-
     sfh_log_y = param.Boolean(default=False, doc="Use logarithmic y-axis for SFH plot")
-
     sfh_log_x = param.Boolean(default=False, doc="Use logarithmic x-axis for SFH plot")
-
     sfh_time_unit = param.Selector(default="Gyr", objects=["Gyr", "Myr", "yr"])
 
     # Parameters for cutouts tab
@@ -245,15 +262,20 @@ class GalaxyTab(param.Parameterized):
 
     interactive_aperture_radius = param.Number(default=5.33, bounds=(1, 40))
 
-    TOTAL_FIT_COLORS = {
-        "TOTAL_BIN": "springgreen",
-        "MAG_AUTO": "blue",
-        "MAG_APER": "sandybrown",
-        "MAG_ISO": "purple",
-        "MAG_APER_TOTAL": "orange",
-        "MAG_BEST": "cyan",
-        "RESOLVED": "red",
-    }
+    interactive_sed_min_pc_err = param.Number(default=0.1, bounds=(0, 1))
+    interactive_eazy_templates = param.Selector(
+        default="FSPS Larson",
+        objects=[
+            "FSPS",
+            "FSPS Larson",
+            "JADES",
+            "sfhz",
+            "sfhz+carnall_eelg",
+            "sfhz+carnall_eelg+agn",
+        ],
+    )
+
+    interactive_eazy_z_range = param.List(default=[0.01, 20], bounds=(0, 25))
 
     @notify_on_error
     @param.depends()
@@ -359,7 +381,7 @@ class GalaxyTab(param.Parameterized):
         self.which_run_aperture_widget.link(self, value="which_run_aperture")
 
         # Call the possible_runs_select method to update the options
-        self.possible_runs_select(self.which_sed_fitter)
+        self.possible_runs_select(self.which_sed_fitter, self.which_map)
 
         self.show_sed_photometry_widget.link(self, value="show_sed_photometry")
 
@@ -603,6 +625,8 @@ class GalaxyTab(param.Parameterized):
         )
         self.interactive_sed_fitting_dropdown.link(self, value="which_interactive_sed_fitter")
 
+        self.interactive_sed_fitting_options_accordion = pn.Accordion(("SED Fitter Config", None))
+
         self.interactive_sed_fitting_button = pn.widgets.Button(
             name="Run SED Fitting", button_type="primary"
         )
@@ -634,6 +658,34 @@ class GalaxyTab(param.Parameterized):
 
         self.interactive_aperture_radius_widget.link(self, value="interactive_aperture_radius")
 
+        self.interactive_min_percent_error_widget = pn.widgets.FloatInput(
+            name="Min Percent Error", value=10, step=1, start=0, end=100
+        )
+
+        self.interactive_min_percent_error_widget.link(self, value="min_percent_error")
+        self.interactive_eazy_z_range_widget = pn.widgets.RangeSlider(
+            name="Redshift Range",
+            start=0,
+            end=25,
+            value=(0.01, 20),
+            step=0.01,
+        )
+        self.interactive_eazy_z_range_widget.link(self, value="interactive_eazy_z_range")
+        self.interactive_eazy_templates_widget = pn.widgets.Select(
+            name="Templates",
+            options=[
+                "FSPS",
+                "FSPS Larson",
+                "JADES",
+                "sfhz",
+                "sfhz+carnall_eelg",
+                "sfhz+carnall_eelg+agn",
+            ],
+            value=self.interactive_eazy_templates,
+        )
+
+        self.interactive_eazy_templates_widget.link(self, value="interactive_eazy_templates")
+
     @notify_on_error
     @param.depends("point_selector.point")
     def update_selected_bins(self):
@@ -664,7 +716,9 @@ class GalaxyTab(param.Parameterized):
     )
     @check_dependencies()
     def plot_bagpipes_results(self, parameters=["stellar_mass", "sfr"], max_on_row=3):
-        self.update_pixel_map_from_run_name(self.which_run_resolved)
+        res = self.update_pixel_map_from_run_name(self.which_run_resolved)
+        if not res:
+            return None
 
         if self.which_sed_fitter == "bagpipes":
             sed_results_plot = self.resolved_galaxy.plot_bagpipes_results(
@@ -1118,7 +1172,9 @@ class GalaxyTab(param.Parameterized):
             # print function name and trigger
             print("other_bagpipes_results_func triggered by", triggered)
 
-        self.update_pixel_map_from_run_name(self.which_run_resolved)
+        res = self.update_pixel_map_from_run_name(self.which_run_resolved)
+        if not res:
+            return None
 
         param_property = self.other_bagpipes_properties
         p_run_name = self.which_run_resolved
@@ -1398,6 +1454,7 @@ class GalaxyTab(param.Parameterized):
     @notify_on_error
     @param.depends("which_interactive_sed_fitter")
     def interactive_sed_fitting_options(self):
+        print("Dropdown clicked!")
         if self.which_interactive_sed_fitter == "EAZY-py":
             # options - min percentage error,
             # redshift range
@@ -1412,27 +1469,20 @@ class GalaxyTab(param.Parameterized):
 
             # The accordion should be updated when the which_interactive_sed_fitter changes
 
-            min_percent_error_widget = pn.widgets.FloatInput(
-                name="Min Percent Error", value=10, step=1, start=0, end=100
-            )
-            min_percent_error_widget.link(self, value="min_percent_error")
+            # Update self.interactive_sed_fitting_options_accordion with options
+            # clear it first
 
-            redshift_range_widget = pn.widgets.RangeSlider(
-                name="Redshift Range", start=0, end=10, value=(0, 25), step=0.1
-            )
+            self.interactive_sed_fitting_options_accordion.pop(0)
 
-            redshift_range_widget.link(self, value="redshift_range")
-
-            template_widget = pn.widgets.Select(
-                name="Template",
-                options=[
-                    "FSPS",
-                    "FSPS+Larson",
-                    "BC03",
-                    "JADES",
-                    "ARES",
-                ],
-                value="BC03",
+            self.interactive_sed_fitting_options_accordion.append(
+                (
+                    "SED Fitter Config",
+                    pn.Column(
+                        self.interactive_eazy_z_range_widget,
+                        self.interactive_min_percent_error_widget,
+                        self.interactive_eazy_templates_widget,
+                    ),
+                )
             )
 
     @notify_on_error
@@ -1535,7 +1585,11 @@ class GalaxyTab(param.Parameterized):
                 self.interactive_plot.object = self.interactive_plot.object * shape
 
             if num_regions == 0:
-                print("No regions drawn")
+                # show warning
+                self.app.panel.notifications.warning(
+                    "No regions selected. Please select a region.",
+                    duration=5000,
+                )
                 return
 
             fluxes, flux_errs, flux_unit_arr = [], [], []
@@ -1639,7 +1693,14 @@ class GalaxyTab(param.Parameterized):
                     ax_save_pdf.yaxis.set_tick_params(labelleft=False)
 
                     ez = self.resolved_galaxy.fit_eazy_photometry(
-                        fluxes=fluxes, flux_errs=flux_errs
+                        fluxes=fluxes,
+                        flux_errs=flux_errs,
+                        template_name=str(self.interactive_eazy_templates)
+                        .lower()
+                        .replace(" ", "_"),
+                        z_min=self.interactive_eazy_z_range[0],
+                        z_max=self.interactive_eazy_z_range[1],
+                        min_flux_pc_err=self.interactive_sed_min_pc_err,
                     )
                     datas = []
                     for i, region in enumerate(regions):
@@ -1701,6 +1762,29 @@ class GalaxyTab(param.Parameterized):
                         pass
 
                 elif self.which_interactive_sed_fitter == "Dense Basis":
+                    priors = getattr(self, "db_priors", None)
+                    fit_results, priors = self.resolved_galaxy._run_db_fit(
+                        db_atlas_path,
+                        fluxes.to(u.uJy).value,
+                        flux_errs.to(u.uJy).value,
+                        min_flux_pc_err=self.interactive_sed_min_pc_err,
+                        n_jobs=4,
+                        priors=priors,
+                        fix_redshift=False,
+                        return_priors=True,
+                    )
+                    self.db_priors = priors
+
+                    self.resolved_galaxy._plot_dense_basis_results(
+                        fit_results,
+                        ids=np.one(len(fluxes)),  # Dummy this since this is only used for saving
+                        run_name="",
+                        priors=self.db_priors,
+                    )
+
+                    # Maybe better to just run the save result function, return arrays and plot those?
+                    # Rather than relying on inconsistent internal plotting functions
+
                     raise NotImplementedError("Dense Basis SED fitting is not implemented yet.")
 
             if event.obj.name == "Save regions":
@@ -1880,6 +1964,13 @@ class GalaxyTab(param.Parameterized):
 
     @notify_on_error
     def update_pixel_map_from_run_name(self, event):
+        if self.which_map in ["Nothing selected.", None]:
+            return False
+        if self.which_run_resolved is None:
+            return False
+        if self.which_sed_fitter is None:
+            return False
+
         bin_name = self.resolved_galaxy._get_sed_table_bin_type(
             run_name=self.which_run_resolved, sed_tool=self.which_sed_fitter
         )
@@ -1892,6 +1983,14 @@ class GalaxyTab(param.Parameterized):
             )
 
         self.which_map_widget.options = self.resolved_galaxy.maps
+        if self.which_map not in self.which_map_widget.options:
+            self.which_map = self.which_map_widget.options[0]
+            # Send info notification
+            pn.state.notifications.info(
+                f"Pixel map updated to {self.which_map} for {self.which_sed_fitter} run {self.which_run_resolved}"
+            )
+
+        return True
 
     @notify_on_error
     @param.depends()
@@ -1982,6 +2081,7 @@ class GalaxyTab(param.Parameterized):
                     pn.bind(
                         self.possible_runs_select,
                         self.which_sed_fitter_widget.param.value,
+                        self.which_map_widget.param.value,
                         watch=True,
                     ),
                     pn.Column(
@@ -2018,11 +2118,15 @@ class GalaxyTab(param.Parameterized):
                     self.interactive_aperture_radius_widget,
                     self.interactive_photometry_button,
                     self.interactive_sed_fitting_dropdown,
+                    self.interactive_sed_fitting_options_accordion,
                     self.interactive_sed_fitting_button,
                     self.save_shape_photometry_button,
                     self.clear_interactive_button,
                 ]
             )
+
+            # Trigger the interactive SED fitting options to update
+            self.interactive_sed_fitting_options()
 
             # Add Synthesizer tab options if it's a MockResolvedGalaxy
         if isinstance(self.resolved_galaxy, MockResolvedGalaxy):
@@ -2144,6 +2248,13 @@ class GalaxyTab(param.Parameterized):
         psf_matched = self.psf_mode
         band = self.choose_show_band
 
+        if bin_type in ["Nothing selected.", None]:
+            return pn.pane.Markdown(
+                "### No binning map selected. Please select a binning map from the dropdown.",
+                width=400,
+                height=300,
+            )
+
         array = getattr(self.resolved_galaxy, f"{bin_type}_map")
         if array is None:
             return None
@@ -2156,6 +2267,9 @@ class GalaxyTab(param.Parameterized):
             self.resolved_galaxy.cutout_size,
             self.resolved_galaxy.cutout_size,
         )
+        import xarray as xr
+        import hvplot.xarray  # noqa
+
         im_array = xr.DataArray(
             array,
             dims=["y", "x"],
@@ -2262,7 +2376,7 @@ class GalaxyTab(param.Parameterized):
         )
 
     @notify_on_error
-    def possible_runs_select(self, sed_fitting_tool):
+    def possible_runs_select(self, sed_fitting_tool, binmap_type):
         """
         Update the available SED fitting runs based on the selected tool.
 
@@ -2279,7 +2393,7 @@ class GalaxyTab(param.Parameterized):
         options_resolved = []
         options_aperture = []
         if options is None:
-            options = ["No runs found"]
+            options = ["No runs found."]
         else:
             for option in options.keys():
                 ids = options[option]["#ID"]
@@ -2295,6 +2409,16 @@ class GalaxyTab(param.Parameterized):
                     options_resolved.append(option)
                 if not all_int:
                     options_aperture.append(option)
+
+        remove = []
+        for option in options_resolved:
+            tab_meta = self.resolved_galaxy.sed_fitting_table[sed_fitting_tool][option].meta
+            if "binmap_type" in tab_meta:
+                if tab_meta["binmap_type"] != binmap_type:
+                    remove.append(option)
+
+        for option in remove:
+            options_resolved.remove(option)
 
         self.which_run_resolved_widget.options = options_resolved
         self.which_run_aperture_widget.options = options_aperture
@@ -2318,7 +2442,9 @@ class GalaxyTab(param.Parameterized):
     )
     @check_dependencies()
     def plot_bagpipes_pdf(self, cmap="nipy_spectral_r"):
-        self.update_pixel_map_from_run_name(self.which_run_resolved)
+        res = self.update_pixel_map_from_run_name(self.which_run_resolved)
+        if not res:
+            return None
 
         if self.which_sed_fitter == "bagpipes":
             multi_choice_bins_param_safe = [
@@ -2447,7 +2573,9 @@ class GalaxyTab(param.Parameterized):
                 return self.sed_plot
         """
 
-        self.update_pixel_map_from_run_name(self.which_run_resolved)
+        res = self.update_pixel_map_from_run_name(self.which_run_resolved)
+        if not res:
+            return None
 
         multi_choice_bins_param_safe = [
             int(i) if i != "RESOLVED" and i != np.nan else i for i in self.multi_choice_bins
@@ -2666,7 +2794,9 @@ class GalaxyTab(param.Parameterized):
             pn.pane.Matplotlib: A Matplotlib pane containing the corner plot.
         """
 
-        self.update_pixel_map_from_run_name(self.which_run_resolved)
+        res = self.update_pixel_map_from_run_name(self.which_run_resolved)
+        if not res:
+            return None
 
         multi_choice_bins_param_safe = [
             int(i) if i != "RESOLVED" and i != np.nan else i for i in self.multi_choice_bins
@@ -2756,7 +2886,9 @@ class GalaxyTab(param.Parameterized):
             pn.pane.Matplotlib: A Matplotlib pane containing the SFH plot.
         """
 
-        self.update_pixel_map_from_run_name(self.which_run_resolved)
+        res = self.update_pixel_map_from_run_name(self.which_run_resolved)
+        if not res:
+            return None
 
         multi_choice_bins_param_safe = [
             int(i) if i != "RESOLVED" and i != np.nan else i for i in self.multi_choice_bins
@@ -3161,7 +3293,9 @@ def resolved_sed_interface():
 @click.option("--port", default=5006, help="Port to run the server on.")
 @click.option("--gal_dir", default="internal", help="Directory containing galaxy files.")
 @click.option("--galaxy", default="", help="List of galaxies to load.")
-@click.option("--tab", default="Cutouts", help="Tab to load.")
+@click.option(
+    "--tab", default="Cutouts", help="Tab to load. Options: Cutouts, SED Results, 'Fitsmap'."
+)
 @click.option("--test_mode", default=False, help="Run in test mode.")
 def expanse_viewer(port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", test_mode=False):
     global initial_galaxy
@@ -3190,6 +3324,7 @@ def expanse_viewer(port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", te
         resolved_sed_interface,
         websocket_max_message_size=MAX_SIZE_MB * 1024 * 1024,
         http_server_kwargs={"max_buffer_size": MAX_SIZE_MB * 1024 * 1024},
+        session_expiration_duration=60 * 60 * 100,  # 1 hour in milliseconds
         port=port,
     )
 

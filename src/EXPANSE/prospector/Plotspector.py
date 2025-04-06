@@ -1,4 +1,5 @@
 import sys
+import copy
 
 import astropy.units as u
 
@@ -8,28 +9,40 @@ import matplotlib.pyplot as plt
 from astropy.cosmology import FlatLambdaCDM, z_at_value
 from astropy.cosmology.core import CosmologyError
 from astropy.table import Table
-from matplotlib.ticker import ScalarFormatter
+from matplotlib import gridspec, rcParams
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.ticker import FormatStrFormatter, MaxNLocator, ScalarFormatter
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from numpy.random import choice
-from prospect.models.transforms import (
-    logsfr_ratios_to_agebins,
-    logsfr_ratios_to_masses,
-    logsfr_ratios_to_masses_flex,
-    logsfr_ratios_to_sfrs,
-    tage_from_tuniv,
-    zfrac_to_masses,
-    zfrac_to_sfr,
-)
-from prospect.plotting import FigureMaker
-from prospect.plotting.sed import to_nufnu
-from prospect.plotting.sfh import (
-    nonpar_mwa,
-    nonpar_recent_sfr,
-    parametric_mwa,
-    parametric_sfr,
-)
 from scipy.special import gamma, gammainc
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm
+
+try:
+    from prospect.models.transforms import (
+        logsfr_ratios_to_agebins,
+        logsfr_ratios_to_masses,
+        logsfr_ratios_to_masses_flex,
+        logsfr_ratios_to_sfrs,
+        tage_from_tuniv,
+        zfrac_to_masses,
+        zfrac_to_sfr,
+    )
+    from prospect.plotting import FigureMaker, chain_to_struct
+    from prospect.plotting.corner import _quantile, marginal, quantile
+    from prospect.plotting.sed import convolve_spec, to_nufnu
+    from prospect.plotting.sfh import (
+        nonpar_mwa,
+        nonpar_recent_sfr,
+        parametric_mwa,
+        parametric_sfr,
+    )
+    from prospect.plotting.utils import boxplot, sample_prior
+except ImportError as e:
+    print(e)
+    pass
+
 
 try:
     plt.style.use("/nvme/scratch/work/tharvey/scripts/paper.mplstyle")
@@ -39,9 +52,26 @@ import os
 
 import numpy as np
 import tables
+
 from .utils import weighted_quantile
 
-maggies_to_mag = lambda maggies: -2.5 * np.log10(maggies * 3631) + 8.90
+colorcycle = ["royalblue", "firebrick", "indigo", "darkorange", "seagreen"]
+
+
+def plot_defaults(rcParams):
+    rcParams["font.family"] = "serif"
+    rcParams["font.serif"] = ["STIXGeneral"]
+    rcParams["font.size"] = 12
+    rcParams["mathtext.fontset"] = "custom"
+    rcParams["mathtext.rm"] = "serif"
+    rcParams["mathtext.sf"] = "serif"
+    rcParams["mathtext.it"] = "serif:italic"
+    return rcParams
+
+
+def maggies_to_mag(maggies):
+    return -2.5 * np.log10(maggies * 3631) + 8.9
+
 
 # TODO: Support plotting more SFH
 # TODO: Support plotting dust attenuation law
@@ -50,12 +80,61 @@ maggies_to_mag = lambda maggies: -2.5 * np.log10(maggies * 3631) + 8.90
 # TODO: Support plotting spectra/zoom in spectral region
 # TODO: Support plot maximum likelihood models vs draws
 # TODO: On spectra, show smoothing/resolution
+# TODO: Borrow methods from https://github.com/bd-j/exspect/blob/main/figures/plot_psb_sdss.py
+# self.specax
+# self.photax
+# self.calax for calibration
+
+
+# nice labels for things
+pretty = {
+    "logzsol": r"$\log (Z_{\star}/Z_{\odot})$",
+    "logmass": r"$\log {\rm M}_{\star, {\rm formed}}$",
+    "gas_logu": r"${\rm U}_{\rm neb}$",
+    "gas_logz": r"$\log (Z_{\neb}/Z_{\odot})$",
+    "dust2": r"$\tau_{\rm V}$",
+    "av": r"${\rm A}_{\rm V, diffuse}$",
+    "av_bc": r"${\rm A}_{\rm V, young}$",
+    "dust_index": r"$\Gamma_{\rm dust}$",
+    "igm_factor": r"${\rm f}_{\rm IGM}$",
+    "duste_umin": r"$U_{\rm min, dust}$",
+    "duste_qpah": r"$Q_{\rm PAH}$",
+    "duste_gamma": r"$\gamma_{\rm dust}$",
+    "log_fagn": r"$\log({\rm f}_{\rm AGN})$",
+    "agn_tau": r"$\tau_{\rm AGN}$",
+    "mwa": r"$\langle t_{\star} \rangle_M$ (Gyr)",
+    "ssfr": r"$\log ({\rm sSFR})$ $({\rm yr}^{-1})$",
+    "logsfr": r"$\log({\rm SFR})$ $({\rm M}_{\odot}/{\rm yr}$)",
+    "tau": r"$\tau$ (Gyr)",
+    "logtau": r"$\log(\tau)$ (Gyr)",
+    "tage": r"Age (Gyr)",
+    "ageprime": r"Age/$\tau$",
+    "sigma_smooth": r"$\sigma_v$ (km/s)",
+}
 
 
 class Plotspector(FigureMaker):
+    def __init__(self, show=["mass", "dust2", "logzsol"], *args, **kwargs):
+        # Do other stuff
+
+        super().__init__(*args, **kwargs)
+
+        self.show = show
+        self.chain = chain_to_struct(self.result["chain"], self.model)
+        self.weights = self.result.get("weights", None)
+        self.ind_best = np.argmax(self.result["lnprobability"])
+
+        # Not applicable for all SFH models
+        """# get agebins for the best redshift
+        xbest = self.result["chain"][self.ind_best]
+        self.model.set_parameters(xbest)
+        self.agebins = np.array(self.model.params["agebins"])"""
+
+        self.parchain = self.convert(self.chain)
+
     def save_updated_h5(self, data_to_add, name_to_add):
         tables.file._open_files.close_all()
-        if type(data_to_add) == list:
+        if isinstance(data_to_add, list):
             data_to_add = np.array(data_to_add)
         with h5py.File(self.results_file, "r+") as f:
             try:
@@ -67,9 +146,507 @@ class Plotspector(FigureMaker):
             except KeyError:
                 pass
 
-            data = grp.create_dataset(name_to_add, data=data_to_add)
+            grp.create_dataset(name_to_add, data=data_to_add)
             print("Added data to .h5")
 
+    def plot_observed_photometry(
+        self,
+        ax=None,
+        modify_ax=True,
+        nufnu=False,
+        wav_unit=u.um,
+        flux_unit=u.ABmag,
+        label="Observed Photometry",
+        marker="o",
+        markersize=10,
+        lw=3,
+        ecolor="tomato",
+        markerfacecolor="none",
+        markeredgecolor="tomato",
+        markeredgewidth=3,
+        **kwargs,
+    ):
+        if ax is None:
+            ax = self.sedax
+
+        if "maggies" not in self.obs or self.obs["maggies"] is None:
+            return False
+
+        # TODO: Upper limits for mag plot
+        pmask = self.obs.get("phot_mask", np.ones_like(self.obs["maggies"], dtype=bool))
+        ophot, ounc = self.obs["maggies"][pmask], self.obs["maggies_unc"][pmask]
+        owave = np.array([f.wave_effective for f in self.obs["filters"]])[pmask] * u.AA
+        phot_width = np.array([f.effective_width for f in self.obs["filters"]])[pmask] * u.AA
+        if nufnu:
+            _, ophot = to_nufnu(owave, ophot, microns=False)
+            owave, ounc = to_nufnu(owave, ounc, microns=False)
+            # nufnu in cgs
+            yerr = ounc
+            y = ophot
+            flux_unit = u.erg / u.s / u.cm**2
+
+        else:
+            ophot *= 3631
+            ophot *= u.Jy
+            ounc *= 3631
+            ounc *= u.Jy
+
+            if flux_unit == u.ABmag:
+                mag_err_low = np.abs(2.5 * np.log10(ophot / (ophot - ounc)))
+                mag_err_up = np.abs(2.5 * np.log10(1 + (ounc / ophot)))
+                yerr = [mag_err_low, mag_err_up]
+            else:
+                yerr = ounc
+
+            y = ophot.to(flux_unit, equivalencies=u.spectral_density(owave)).value
+
+        ax.errorbar(
+            owave.to(wav_unit).value,
+            y,
+            yerr=yerr,
+            label=label,
+            marker=marker,
+            alpha=0.8,
+            ls="",
+            lw=lw,
+            ecolor=ecolor,
+            markerfacecolor=markerfacecolor,
+            markeredgecolor=markeredgecolor,
+            markeredgewidth=markeredgewidth,
+            **kwargs,
+        )
+
+        return True
+
+    def plot_observed_spectrum(
+        self,
+        ax=None,
+        modify_ax=True,
+        nufnu=False,
+        wav_unit=u.um,
+        flux_unit=u.ABmag,
+        label="Observed Spectroscopy",
+        plot_type="step",
+        err_type="fill_between",
+        lw=1,
+        color="black",
+        **kwargs,
+    ):
+        if ax is None:
+            ax = self.specax
+
+        if "spectrum" not in self.obs or self.obs["spectrum"] is None:
+            return False
+
+        swave = self.obs.get("wavelength", None)
+        if swave is None:
+            if "zred" in self.model.free_params:
+                zred = self.chain["zred"][self.ind_best]
+            else:
+                zred = self.model.params["zred"]
+            swave = self.sps.wavelengths * (1 + zred)
+
+        spec = copy.copy(self.obs["spectrum"])
+        err = copy.copy(self.obs["unc"])
+
+        if nufnu:
+            swave, spec = to_nufnu(swave, spec, microns=False)
+            _, err = to_nufnu(swave, err, microns=False)
+            flux_unit = u.erg / u.s / u.cm**2
+            spec *= u.erg / u.s / u.cm**2
+            err *= u.erg / u.s / u.cm**2
+        else:
+            spec = spec * 3631.0 * u.Jy
+            err = err * 3631.0 * u.Jy
+
+        swave *= u.AA
+
+        if plot_type == "step":
+            plot_func = ax.step
+        elif plot_type == "line":
+            plot_func = ax.plot
+        else:
+            raise ValueError("plot_type must be 'step' or 'line'")
+
+        plot_func(
+            swave.to(wav_unit).value,
+            spec.to(flux_unit, equivalencies=u.spectral_density(swave)).value,
+            lw=lw,
+            color=color,
+            label=label,
+        )
+
+        if err_type == "fill_between":
+            ax.fill_between(
+                swave.to(wav_unit).value,
+                (spec - err).to(flux_unit, equivalencies=u.spectral_density(swave)).value,
+                (spec + err).to(flux_unit, equivalencies=u.spectral_density(swave)).value,
+                color=color,
+                step="pre",
+                alpha=0.3,
+            )
+            plot_func(
+                swave.to(wav_unit).value,
+                spec.to(flux_unit, equivalencies=u.spectral_density(swave)).value,
+                lw=lw,
+                color=color,
+                label=label,
+                linestyle="--",
+            )
+
+        elif err_type == "errorbar":
+            # make custom errorbar with just a black line, no caps
+
+            ax.errorbar(
+                swave.to(wav_unit).value,
+                spec.to(flux_unit, equivalencies=u.spectral_density(swave)).value,
+                yerr=err.to(flux_unit, equivalencies=u.spectral_density(swave)).value,
+                label=label,
+                lw=lw,
+                fmt="none",
+                capsize=0,
+                color=color,
+                **kwargs,
+            )
+
+        return True
+
+    def plot_best_fit_spectrum(
+        self,
+        ax=None,
+        modify_ax=True,
+        nufnu=False,
+        wav_unit=u.um,
+        flux_unit=u.ABmag,
+        calax=None,
+        resax=None,
+        ticksize=10,
+        fs=18,
+        label="Best Fit Spectrum",
+        lw=3,
+        color="slateblue",
+        **kwargs,
+    ):
+        """Plot the spectroscopy for the model and data (with error bars), and
+        plot residuals
+            -- pass in a list of [res], can iterate over them to plot multiple results
+        good complimentary color for the default one is '#FF420E', a light red
+        """
+
+        if ax is None:
+            ax = self.specax
+
+        # --- Spec Data ---
+        mask = self.obs["mask"]
+        wave = copy.copy(self.obs["wavelength"][mask])
+        ospec, ounc = copy.copy(self.obs["spectrum"][mask]), copy.copy(self.obs["unc"][mask])
+        # units
+        if nufnu:
+            _, ospec = to_nufnu(wave, ospec, microns=False)
+            owave, ounc = to_nufnu(wave, ounc, microns=False)
+            flux_unit = u.erg / u.s / u.cm**2
+            ospec *= flux_unit
+            ounc *= flux_unit
+
+        else:
+            ospec = ospec * 3631 * u.Jy
+            ounc = ounc * 3631 * u.Jy
+            owave = wave
+
+        owave *= u.AA
+
+        ospec = ospec.to(flux_unit, equivalencies=u.spectral_density(owave)).value
+        ounc = ounc.to(flux_unit, equivalencies=u.spectral_density(owave)).value
+
+        # --- Model spectra ---
+        if self.n_seds > 0:
+            spec = self.spec_samples[:, mask]
+            spec_best = self.spec_best[mask]
+            # units
+            if nufnu:
+                _, spec = to_nufnu(owave, spec, microns=False)
+                owave, spec_best = to_nufnu(owave, spec_best, microns=False)
+
+            spec_pdf = np.percentile(spec, axis=0, q=self.qu).T
+
+            if not nufnu:
+                spec_pdf = spec_pdf * 3631 * u.Jy
+                spec_best = spec_best * 3631 * u.Jy
+            else:
+                spec_pdf *= flux_unit
+                spec_best *= flux_unit
+
+            # --- plot posterior ---
+            spec_pdf_mid = (
+                spec_pdf[:, 1].to(flux_unit, equivalencies=u.spectral_density(owave)).value
+            )
+            spec_pdf_low = (
+                spec_pdf[:, 0].to(flux_unit, equivalencies=u.spectral_density(owave)).value
+            )
+            spec_pdf_high = (
+                spec_pdf[:, 2].to(flux_unit, equivalencies=u.spectral_density(owave)).value
+            )
+            spec_best = spec_best.to(flux_unit, equivalencies=u.spectral_density(owave)).value
+
+            owave = owave.to(wav_unit).value
+            ax.fill_between(owave, spec_pdf_low, spec_pdf_high, **self.skwargs)
+            ax.plot(owave, spec_best, **self.spkwargs)
+
+        if resax is not None:
+            # --- plot residuals ---
+            spec_chi = (ospec - spec_best) / ounc
+            resax.plot(owave, spec_chi, linewidth=0.75, **self.spkwargs)
+
+        if calax is not None:
+            # --- plot calibration ---
+            calax.plot(owave, self.cal_best, linewidth=2.0, **self.spkwargs)
+
+        # --- set limits ---
+        # limits
+        xlim = (owave.min() * 0.95, owave.max() * 1.05)
+        ax.set_xlim(*xlim)
+        ymin, ymax = (ospec).min() * 0.9, (ospec).max() * 1.1
+        ax.set_ylim(ymin, ymax)
+
+        # extra line
+        for zax, factor in zip([resax, calax], [0, 1]):
+            zax.axhline(factor, linestyle=":", color="grey")
+            zax.yaxis.set_major_locator(MaxNLocator(5))
+
+        # set labels
+        wave_unit = f"{wav_unit:latex_inline}"
+        fl = int(nufnu) * r"$\nu$" + r"$f_{\nu}$" * nufnu + f" ({flux_unit:latex_inline})"
+        ax.set_ylabel(fl, fontsize=fs)
+        ax.tick_params("y", which="major", labelsize=ticksize)
+
+        if resax is not None:
+            resax.set_ylim(-5, 5)
+            resax.set_ylabel(r"$\chi_{\rm Best}$", fontsize=fs)
+            resax.tick_params(
+                "both", pad=3.5, size=3.5, width=1.0, which="both", labelsize=ticksize
+            )
+
+        if calax is not None:
+            calax.set_ylim(0.79, 1.21)
+            calax.set_ylabel("calibration\nvector", fontsize=fs)
+            calax.set_xlabel(r"$\lambda_{{\rm obs}}$ ({})".format(wave_unit), fontsize=fs)
+            calax.tick_params(
+                "both", pad=3.5, size=3.5, width=1.0, which="both", labelsize=ticksize
+            )
+
+        # --- annotate ---
+        chisq = np.sum(spec_chi**2)
+        ndof = mask.sum()
+        reduced_chisq = chisq / (ndof)
+
+        ax.text(0.01, 0.9, "Spectroscopic fit", fontsize=fs, transform=ax.transAxes, color="k")
+        ax.text(
+            0.01,
+            0.81,
+            r"best-fit $\chi^2$/N$_{\mathrm{spec}}$=" + "{:.2f}".format(reduced_chisq),
+            fontsize=10,
+            ha="left",
+            transform=ax.transAxes,
+            color="black",
+        )
+
+        # --- Legend ---
+        artists = [self.art["spec_data"], self.art["spec_best"]]
+        labels = ["Observed", "Best posterior sample"]
+        ax.legend(artists, labels, loc="upper right", fontsize=8, scatterpoints=1, fancybox=True)
+
+    def plot_best_fit_SED(
+        self,
+        ax=None,
+        modify_ax=True,
+        nufnu=False,
+        wav_unit=u.um,
+        plot_best_spectra=True,
+        flux_unit=u.ABmag,
+        label="Best Fit SED",
+        lw=3,
+        color="slateblue",
+        **kwargs,
+    ):
+        # This methoduses the best fit parameters to plot the best fit SED when fitted to photometry.
+
+        if ax is None:
+            ax = self.sedax
+
+        if "phot_wave" not in self.obs or "wave_effective" not in self.obs:
+            return False
+
+        if "wave_effective" in self.obs:
+            pmask = self.obs.get("phot_mask", np.ones_like(self.obs["maggies"], dtype=bool))
+            pwave = self.obs["wave_effective"][pmask]
+        else:
+            wmask = self.obs.get("mask", np.ones_like(self.obs["wavelength"], dtype=bool))
+            pwave = self.obs["wavelength"][wmask]
+
+        maxw, minw = np.max(pwave * 1.05) * 1.02, np.min(pwave * 0.95) * 0.98
+
+        if self.n_seds > 0:
+            self.spec_wave = self.obs["wavelength"].copy()
+            swave = self.spec_wave.copy()
+            # spec convolve & units
+            ckw = dict(minw=minw, maxw=maxw, R=500 * 2.35, nufnu=nufnu, microns=False)
+            _, spec = convolve_spec(self.spec_wave, self.sed_samples, **ckw)
+            cswave, spec_best = convolve_spec(self.spec_wave, self.sed_best, **ckw)
+            # interpolate back onto obs wavelengths, get quantiles
+            spec = np.array([np.interp(swave, cswave, s) for s in spec])
+            spec_best = np.interp(swave, cswave, spec_best)
+            spec_pdf = np.percentile(spec, axis=0, q=self.qu).T
+            mask = slice(10, -10)  # remove edges that get convolved wrong
+
+            swave = swave * u.AA
+            spec_pdf = spec_pdf * u.erg / u.s / u.cm**2 / u.Hz
+            spec_best *= u.erg / u.s / u.cm**2 / u.Hz
+
+            spec_best = spec_best.to(flux_unit, equivalencies=u.spectral_density(swave)).value
+            spec_pdf_mid = (
+                spec_pdf[:, 1].to(flux_unit, equivalencies=u.spectral_density(swave)).value
+            )
+            spec_pdf_low = (
+                spec_pdf[:, 0].to(flux_unit, equivalencies=u.spectral_density(swave)).value
+            )
+            spec_pdf_high = (
+                spec_pdf[:, 2].to(flux_unit, equivalencies=u.spectral_density(swave)).value
+            )
+
+            swave = swave.to(wav_unit).value
+            # --- plot spectrum posteriors ---
+            ax.plot(swave[mask], spec_pdf_mid[mask], **self.skwargs)
+            ax.fill_between(swave[mask], spec_pdf_low[mask], spec_pdf_high[mask], **self.skwargs)
+
+            if plot_best_spectra:
+                ax.plot(swave[mask], spec_best[mask], color=color)
+
+    def plot_best_fit_photometry(
+        self,
+        ax=None,
+        modify_ax=True,
+        nufnu=False,
+        wav_unit=u.um,
+        flux_unit=u.ABmag,
+        label="Best Fit Photometry",
+        marker="s",
+        markersize=10,
+        lw=3,
+        markerfacecolor="none",
+        markeredgecolor="slateblue",
+        markeredgewidth=3,
+        resax=None,
+        **kwargs,
+    ):
+        if ax is None:
+            ax = self.sedax
+
+        if "phot_wave" not in self.obs or "wave_effective" not in self.obs:
+            return False
+
+        pwave = self.obs["phot_wave"] * u.AA  # What is the differebce here?
+        owave = self.obs["wave_effective"] * u.AA
+
+        ophot = self.obs["maggies"]
+        ounc = self.obs["maggies_unc"]
+
+        if self.n_seds > 0:
+            # photometry
+            phot = self.phot_samples
+            phot_best = self.phot_best
+            # phot units
+            if nufnu:
+                _, phot = to_nufnu(pwave, self.phot_samples, microns=False)
+                _, phot_best = to_nufnu(pwave, self.phot_best, microns=False)
+                _, ophot = to_nufnu(owave, ophot, microns=False)
+                _, ounc = to_nufnu(owave, ounc, microns=False)
+                flux_unit = u.erg / u.s / u.cm**2
+                phot *= flux_unit
+                phot_best *= flux_unit
+            else:
+                phot *= 3631 * u.Jy
+                phot_best *= 3631 * u.Jy
+                ophot *= 3631 * u.Jy
+                ounc *= 3631 * u.Jy
+
+            phot = phot.to(flux_unit, equivalencies=u.spectral_density(owave)).value
+
+            # --- plot phot posterior ---
+            self.bkwargs = dict(alpha=0.8, facecolor=self.pkwargs["color"], edgecolor="k")
+            self.art["phot_post"] = Patch(**self.bkwargs)
+            widths = 0.05 * owave  # phot_width
+            boxplot((phot).T, owave, widths, ax=ax, **self.bkwargs)
+
+        if resax is not None:
+            # --- phot residuals ---
+            phot_chi = (phot_best - ophot) / ounc
+            resax.plot(owave, phot_chi, **self.dkwargs)
+
+    def make_inset(
+        self,
+        ax,
+        minw=6500 * u.AA,
+        maxw=6600 * u.AA,
+        wav_unit=u.micron,
+        flux_unit=u.erg / u.s / u.cm**2 / u.Hz,
+        inset=dict(width="30%", height="37%", loc="lower right"),
+        label=r"H$\alpha$ + [NII]",
+        lw=2,
+        alpha=0.7,
+        fs=16,
+    ):
+        # H-alpha, NII inset
+        # create inset axis
+
+        axi = inset_axes(ax, borderpad=2, **inset)
+
+        if "zred" in self.model.free_params:
+            zred = self.model.params["zred"]
+        elif "zred" in self.model.params:
+            zred = self.model.params["zred"]
+        else:
+            zred = self.parchain["zred"][self.ind_best]
+        wave, ospec = self.obs["wavelength"].copy(), self.obs["spectrum"].copy()
+        xbest = self.result["chain"][self.ind_best]
+        blob = self.spectral_components(xbest)
+        bfit, bfit_nomarg, bfit_nolines = blob
+
+        wave = wave * u.AA
+        ospec = ospec * 3631 * u.Jy
+
+        # find region around H-alpha
+        idx = (wave / (1 + zred) > minw) & (wave / (1 + zred) < maxw)
+
+        ospec = ospec.to(flux_unit, equivalencies=u.spectral_density(wave)).value
+        bfit = bfit.to(flux_unit, equivalencies=u.spectral_density(wave)).value
+        bfit_nomarg = bfit_nomarg.to(flux_unit, equivalencies=u.spectral_density(wave)).value
+        bfit_nolines = bfit_nolines.to(flux_unit, equivalencies=u.spectral_density(wave)).value
+        wave = wave.to(wav_unit).value
+
+        lw_inset = lw * 1.3
+        common = dict(alpha=alpha, lw=lw_inset, linestyle="-")
+        obs_kwargs = dict(color="k", label="Observed")
+        marg_kwargs = dict(zorder=20, color=self.skwargs["color"], label="Nebular marginalization")
+        cloudy_kwargs = dict(zorder=20, color=colorcycle[0], label="CLOUDY grid")
+        cont_kwargs = dict(zorder=10, color="grey", label="Continuum model")
+        axi.plot(wave[idx], ospec[idx], **dict(**common, **obs_kwargs))
+        axi.plot(wave[idx], bfit[idx], **dict(**common, **marg_kwargs))
+        axi.plot(wave[idx], bfit_nomarg[idx], **dict(**common, **cloudy_kwargs))
+        axi.plot(wave[idx], bfit_nolines[idx], **dict(**common, **cont_kwargs))
+
+        # labels
+        axi.set_title(label, fontsize=fs * 0.7, weight="semibold", pad=-3)
+        axi.set_yticklabels([])
+        axi.tick_params("both", which="both", labelsize=fs * 0.4)
+        wave_unit = f"{wav_unit:latex_inline}"
+        axi.set_xlabel(
+            r"$\lambda_{{\rm obs}}$ ({})".format(wave_unit), fontsize=fs * 0.6, labelpad=-1.5
+        )
+
+        # legend
+        axi.legend(prop={"size": 4.5}, loc="upper left")
+
+    '''
     def plot_sed_new(
         self,
         sedax=None,
@@ -85,28 +662,14 @@ class Plotspector(FigureMaker):
         label_spec="auto",
         color="black",
     ):
-        imf_type = self.model.init_config["imf_type"]["init"]
-        if imf_type != 5 and self.result["run_params"]["use_hot_imf"]:
-            print("You probably don't want to use me as I was actually run with a Kroupa IMF")
-            return False
 
-            # This is model config.
+        # This is model config.
         # print(model.init_config)
         """A very basic plot of the observed photometry and the best fit
         photometry and spectrum.
         """
         # --- Data ---
-        pmask = self.obs["phot_mask"]
-        ophot, ounc = self.obs["maggies"][pmask], self.obs["maggies_unc"][pmask]
-        owave = np.array([f.wave_effective for f in self.obs["filters"]])[pmask]
-        phot_width = np.array([f.effective_width for f in self.obs["filters"]])[pmask]
-        if nufnu:
-            _, ophot = to_nufnu(owave, ophot, microns=microns)
-            owave, ounc = to_nufnu(owave, ounc, microns=microns)
-        if normalize:
-            renorm = 1 / np.mean(ophot)
-        else:
-            renorm = 1.0
+
 
         # models
 
@@ -174,25 +737,6 @@ class Plotspector(FigureMaker):
         else:
             ax = sedax
 
-        mag_err_low = np.abs(2.5 * np.log10(ophot / (ophot - ounc)))
-        # If it fails calculate smaller error
-        mag_err_up = np.abs(2.5 * np.log10(1 + (ounc / ophot)))
-        if plot_type == "all" or plot_type == "photometry":
-            ax.errorbar(
-                owave,
-                maggies_to_mag(ophot),
-                yerr=[mag_err_low, mag_err_up],
-                label="Observed photometry",
-                marker="o",
-                markersize=10,
-                alpha=0.8,
-                ls="",
-                lw=3,
-                ecolor="tomato",
-                markerfacecolor="none",
-                markeredgecolor="tomato",
-                markeredgewidth=3,
-            )
 
         # marker='s', markersize=10, alpha=0.8, ls='', lw=3, markerfacecolor='none', markeredgecolor='slateblue', markeredgewidth=3
         """
@@ -229,6 +773,7 @@ class Plotspector(FigureMaker):
         # secax.set_ylabel('AB Mag')
         # fig.canvas.draw()
         # secax.yaxis.set_major_formatter(ScalarFormatter())
+    '''
 
     def nonpar_recent_sfr_flex(
         self,
@@ -324,17 +869,7 @@ class Plotspector(FigureMaker):
 
         self.field = params["field"]
         self.sfh_model = params["sfh_model"]
-        self.fit_type = params["fit_type"]
         # This says what the parameters are
-        bestfit = self.result["bestfit"]
-        labels = np.array(self.result["theta_labels"])
-        theta_best = self.result["chain"][self.ind_best, :]
-
-        imf_type = self.model.init_config["imf_type"]["init"]
-        if imf_type != 5 and self.result["run_params"]["use_hot_imf"]:
-            print("You probably don't want to use me as I was actually run with a Kroupa IMF")
-            return False
-
         try:
             redshift = self.chain["zred"]
 
@@ -352,15 +887,16 @@ class Plotspector(FigureMaker):
         if self.sfh_model in [
             "continuity",
             "continuity_bursty",
-            "non_parametric",
             "continuity_flex",
+            "continuity_psb",
             "dirichlet",
             "alpha",
+            "beta",
+            "stochastic",
         ]:
             if self.sfh_model in [
                 "continuity",
                 "continuity_bursty",
-                "non_parametric",
                 "continuity_flex",
             ]:
                 flex = False
@@ -415,7 +951,7 @@ class Plotspector(FigureMaker):
 
                     # Unclear if this is correct
                     # logsfr_ratios =  np.concatenate([logsfr_ratios_young, logsfr_ratios, logsfr_ratios_old], axis=1)
-                # agebins = logsfr_ratios_to_agebins(logsfr_ratios=logsfr_ratios, agebins=agebins_init)
+                    # agebins = logsfr_ratios_to_agebins(logsfr_ratios=logsfr_ratios, agebins=agebins_init)
 
                 else:
                     agebins = np.array(self.model.init_config["agebins"]["init"])
@@ -612,21 +1148,17 @@ class Plotspector(FigureMaker):
 
             cosmo = FlatLambdaCDM(H0=70, Om0=0.3, Tcmb0=2.725)
 
-            time_convert = lambda lookback_time: z_at_value(
-                cosmo.lookback_time,
-                cosmo.lookback_time(self.redshift) + lookback_time * 10 ** (-3) * u.Gyr,
-            ).value
+            def time_convert(lookback_time):
+                return z_at_value(
+                    cosmo.lookback_time,
+                    cosmo.lookback_time(self.redshift) + lookback_time * 10 ** (-3) * u.Gyr,
+                ).value
 
-            z_convert = lambda z_plot: (
-                cosmo.lookback_time(self.redshift + z_plot) - cosmo.lookback_time(self.redshift)
-            ).value
+            def z_convert(z_plot):
+                return (
+                    cosmo.lookback_time(self.redshift + z_plot) - cosmo.lookback_time(self.redshift)
+                ).value
 
-            # Have to do this for entire chain to get posterior for survivng stellar mass
-            # spec, phot, mfrac = self.model.predict(theta_best, obs=self.obs, sps=self.sps)
-            # self.approx_surviving_mass = np.sum(self.model.params["mass"]) * mfrac
-
-            # ax[0].set_title(f'{field}:{id}, z$_{{phot}}$ = {redshift:.2f}, Log M$_*$ = {float(logmass_best):.2f} M$_{{\odot}}$, Log M$_{{*, 0}}$={np.log10(surviving_mass):.2f}')
-            # ax[0].set_xlabel('Lookback Time (Myr)')
             if modify_ax:
                 if plottype == "lookback":
                     ax.set_xlabel(f"Lookback Time ({timescale})")
@@ -1022,11 +1554,7 @@ class Plotspector(FigureMaker):
         field = run_params["field"]
         sfh_model = run_params["sfh_model"]
         fit_type = run_params["fit_type"]
-        hot_imf = run_params["use_hot_imf"]
-        imf_type = self.model.init_config["imf_type"]["init"]
-        if imf_type != 5 and self.result["run_params"]["use_hot_imf"]:
-            print("You probably don't want to use me as I was actually run with a Kroupa IMF")
-            return False
+
         dust_prior = run_params["dust_prior"]
         age_prior = run_params["age_prior"]
         vary_redshift = run_params["vary_redshift"]
@@ -1184,7 +1712,7 @@ class Plotspector(FigureMaker):
                         if len(mass) != len(draws):
                             mfrac = []
                             print("Found surviving mass in h5 but not the right length.")
-                            self.cause_exception
+                            raise Exception("Wrong length.")
 
                     draws = mass
                     print("Loaded surviving mass from h5.")
@@ -1267,6 +1795,48 @@ class Plotspector(FigureMaker):
         print("Saving PDF: " + path)
         np.savetxt(path, draws, header=header)
 
+    def plot_posteriors(
+        self,
+        paxes,
+        show_extra=False,
+        title_kwargs=dict(fontsize=16 * 0.75),
+        label_kwargs=dict(fontsize=16 * 0.6),
+    ):
+        for i, p in enumerate(self.show):
+            x = np.squeeze(self.parchain[p]).flatten()
+            ax = paxes.flat[i]
+            ax.set_xlabel(pretty.get(p, p), **label_kwargs)
+
+            marginal(x, weights=self.weights, ax=ax, histtype="stepfilled", **self.akwargs)
+
+            if show_extra:
+                # --- quantiles ---
+                qs = _quantile(x, self.qu / 100.0, weights=self.weights)
+                for j, q in enumerate(qs):
+                    lw = 1 + int(j == 1)
+                    paxes[i].axvline(q, ls="dashed", color="k", alpha=0.75, lw=lw)
+                qm, qp = np.diff(qs)
+                title = r"${{{0:.2f}}}_{{-{1:.2f}}}^{{+{2:.2f}}}$"
+                title = title.format(qs[1], qm, qp)
+                ax.set_title(title, va="bottom", pad=2.0, **title_kwargs)
+
+        # priors
+        if self.prior_samples > 0:
+            spans = [ax.get_xlim() for ax in paxes.flat]
+            self.show_priors(paxes.flat, spans, smooth=0.10, **self.rkwargs)
+
+        # --- Prettify ---
+        [ax.set_yticklabels("") for ax in paxes.flat]
+
+    def extra_art(self):
+        self.skwargs = dict(color=colorcycle[1], alpha=0.65)
+        self.akwargs = dict(color=colorcycle[3], alpha=0.65)
+        self.spkwargs = dict(color=colorcycle[1], alpha=1.0)
+
+        self.art["sed_post"] = Patch(**self.skwargs)
+        self.art["all_post"] = Patch(**self.akwargs)
+        self.art["spec_best"] = Line2D([], [], **self.spkwargs)
+
     def save_sed(self, sed_path, microns=True, nufnu=False, save=False):
         # This is model config.
         # print(model.init_config)
@@ -1340,7 +1910,7 @@ class Plotspector(FigureMaker):
 
         for filter, wave, phot in zip(filtname, pwave, phot_best):
             table.meta[str(filter)] = [float(wave), float(phot)]
-        pwave, phot_best  # Best-fit photometry
+        # pwave, phot_best  # Best-fit photometry
 
         if save:
             if sed_path is not None:
@@ -1349,6 +1919,319 @@ class Plotspector(FigureMaker):
                 print("No table name given.")
                 return False
         return table
+
+    def prettify_sed_axes(
+        self,
+        logify=False,
+        nufnu=False,
+        resax=None,
+        sedax=None,
+        wav_unit=u.micron,
+        flux_unit=u.erg * u.cm**-2 * u.s**-1 * u.AA**-1,
+        ticksize=12,
+        lw=0.5,
+        fs=16,
+    ):
+        # --- prettify ---
+        # limits & lines
+
+        if self.sedax is None:
+            return False
+
+        if resax is not None:
+            resax.axhline(0, linestyle=":", color="grey")
+            resax.yaxis.set_major_locator(MaxNLocator(5))
+            resax.set_ylim(-2.8, 2.8)
+
+        if nufnu:
+            flux_unit = u.erg * u.cm**-2 * u.s**-1
+
+        if "maggies" in self.obs and self.obs["maggies"] is not None:
+            ophot = self.obs["maggies"] * 3631 * u.Jy
+            ophot = ophot.to(flux_unit).value
+            ymin, ymax = 0.8 * ophot.min(), 1.2 * ophot.max()
+        else:
+            # Get from the spectrum instead
+            spectrum = self.obs["spectrum"]
+            wav = self.obs["wavelength"] * u.AA
+            sphot = spectrum * 3631 * u.Jy
+            sphot = sphot.to(flux_unit, equivalencies=u.spectral_density(wav)).value
+            ymin, ymax = 0.8 * sphot.min(), 1.2 * sphot.max()
+
+        # set labels
+        wave_unit = f"{wav_unit:latex_inline}"
+        fl = (
+            int(logify) * r"$\log$"
+            + int(nufnu) * r"$\nu$"
+            + r"$f_{\nu}$"
+            + f" ({flux_unit:latex_inline})"
+        )
+
+        if resax is not None:
+            resax.set_ylabel(r"$\chi_{\rm Best}$", fontsize=fs)
+            resax.set_xlabel(
+                r"$\lambda_{{\rm obs}}$ ({})".format(wave_unit), fontsize=fs, labelpad=-1
+            )
+            if logify:
+                resax.set_xscale("log", nonposx="clip", subsx=(2, 5))
+
+            resax.xaxis.set_minor_formatter(FormatStrFormatter("%2.4g"))
+            resax.xaxis.set_major_formatter(FormatStrFormatter("%2.4g"))
+            resax.tick_params(
+                "both", pad=3.5, size=3.5, width=1.0, which="both", labelsize=ticksize
+            )
+
+        if sedax is not None:
+            sedax.set_ylim(ymin, ymax)
+            if logify:
+                sedax.set_yscale("log", nonposy="clip")
+                sedax.set_xscale("log", nonposx="clip")
+
+            sedax.tick_params("y", which="major", labelsize=ticksize)
+
+            sedax.set_ylabel(fl, fontsize=fs)
+
+            # sedax.set_xticklabels([])
+
+            if "maggies" in self.obs and self.obs["maggies"] is not None:
+                # Only show this if we have photometry
+                phot_best = self.phot_best
+                ophot = self.obs["maggies"]
+                ounc = self.obs["maggies_unc"]
+                phot_chi = (phot_best - ophot) / ounc
+                # --- annotate ---
+                chisq = np.sum(phot_chi**2)
+                ndof = self.obs["phot_mask"].sum()
+                reduced_chisq = chisq / (ndof)
+                sedax.text(
+                    0.01, 0.9, r"Photometric fit", fontsize=18, transform=sedax.transAxes, color="k"
+                )
+                sedax.text(
+                    0.01,
+                    0.81,
+                    r"best-fit $\chi^2$/N$_{\mathrm{phot}}$=" + "{:.2f}".format(reduced_chisq),
+                    fontsize=10,
+                    ha="left",
+                    transform=sedax.transAxes,
+                    color="k",
+                )
+            # TODO: Chi2 measure for spectrum
+
+            if "zred" not in self.model.free_params:
+                zred = self.model.params["zred"]
+                zred = zred[0] if isinstance(zred, np.ndarray) or isinstance(zred, list) else zred
+                sedax.text(
+                    0.02,
+                    0.9,
+                    "z=" + "{:.2f}".format(zred),
+                    fontsize=10,
+                    ha="left",
+                    transform=sedax.transAxes,
+                )
+
+            # --- Legend ---
+            label_art_keys = {
+                "spec_best": "Best-fit Spectrum",
+                "phot_best": "Best-fit Photometry",
+                "sed_post": "Model SED",
+                "all_post": "Model Photometry",
+                "phot_data": "Observed Photometry",
+                "spec_data": "Observed Spectrum",
+            }
+
+            artists = [self.art["phot_data"], self.art["phot_post"], self.art["sed_post"]]
+            labels = ["Observed", "Model Photometry", "Model SED"]
+            sedax.legend(
+                artists, labels, loc="lower right", fontsize=10, scatterpoints=1, fancybox=True
+            )
+
+    def plot_all(
+        self,
+        wav_unit=u.micron,
+        spec_flux_unit=u.erg / (u.cm**2 * u.s * u.AA),
+        phot_flux_unit=u.ABmag,
+        inset_region="Ha",
+        logify=False,
+        nufnu=False,
+        ms=5,
+        alpha=0.8,
+        fs=16,
+        ticksize=12,
+        lw=0.5,
+        sed_legend=True,
+    ):
+        self.qu = np.array([16, 50, 84])
+        self.setup_geometry(len(self.show))
+        self.styles()
+        self.extra_art()
+
+        self.plot_posteriors(self.paxes)
+        # self.plot_sfh(self.sfhax)
+
+        self.make_seds()
+
+        spec = self.plot_observed_spectrum(wav_unit=wav_unit, flux_unit=spec_flux_unit, nufnu=nufnu)
+        phot = self.plot_observed_photometry(
+            wav_unit=wav_unit, flux_unit=phot_flux_unit, nufnu=nufnu
+        )
+
+        # If fitted spectrum is available, plot it
+        self.plot_best_fit_spectrum(
+            wav_unit=wav_unit,
+            flux_unit=spec_flux_unit,
+            nufnu=nufnu,
+            resax=self.sresax,
+            calax=self.calax,
+            ticksize=ticksize,
+            lw=lw,
+            fs=fs - 8,
+        )
+
+        # If fitted photometry is available, plot it
+        self.plot_best_fit_photometry(
+            wav_unit=wav_unit, flux_unit=phot_flux_unit, resax=self.resax, nufnu=nufnu
+        )
+        # If we fitted photometry, show a best-fit SED
+        self.plot_best_fit_SED(wav_unit=wav_unit, flux_unit=phot_flux_unit, nufnu=nufnu)
+        # Make look nice
+        self.prettify_sed_axes(
+            logify=logify,
+            nufnu=nufnu,
+            wav_unit=wav_unit,
+            flux_unit=phot_flux_unit,
+            resax=self.resax,
+            sedax=self.sedax,
+            ticksize=ticksize,
+            lw=lw,
+            fs=fs,
+        )
+
+        if phot:
+            xlim = self.sedax.get_xlim()
+            self.specax.set_xlim(*xlim)
+        if spec:
+            self.restframe_axis(self.specax, fontsize=fs - 4, ticksize=ticksize, wav_unit=wav_unit)
+
+            if inset_region is not None:
+                possible_inset_regions = {
+                    "Ha": (6500, 6600) * u.AA,
+                    "OIII+Hb": (4750, 5100) * u.AA,
+                    "UV": (1100, 3200) * u.AA,
+                }
+                if isinstance(inset_region, str):
+                    minw, maxw = possible_inset_regions[inset_region]
+                    inset_region_label = inset_region
+                elif isinstance(inset_region, tuple):
+                    minw, maxw = inset_region
+                    inset_region_label = f"{minw.value}-{maxw.value} {minw.unit}"
+
+                self.make_inset(
+                    self.specax,
+                    wav_unit=wav_unit,
+                    flux_unit=spec_flux_unit,
+                    minw=minw,
+                    maxw=maxw,
+                    label=inset_region_label,
+                )
+
+    def restframe_axis(self, ax, wav_unit=u.micron, fontsize=16, ticksize=12):
+        """Add a second (top) x-axis with rest-frame wavelength"""
+        if "zred" in self.model.params:
+            zred = self.model.params["zred"]
+        else:
+            zred = self.parchain["zred"][self.ind_best]
+        y1, y2 = ax.get_ylim()
+        x1, x2 = ax.get_xlim()
+        ax2 = ax.twiny()
+        ax2.set_xlim(x1 / (1 + zred), x2 / (1 + zred))
+        unit = f"{wav_unit:latex_inline}"
+        ax2.set_xlabel(r"$\lambda_{{\rm rest}}$ ({})".format(unit), fontsize=fontsize)
+        ax2.set_ylim(y1, y2)
+        ax2.tick_params("both", pad=2.5, size=3.5, width=1.0, which="both", labelsize=ticksize)
+        # disable ax2 grid
+        ax2.grid(False)
+
+    def setup_geometry(self, npar):
+        # Work out what we have to plot.
+
+        plot_spec = self.obs["spectrum"] is not None
+        plot_phot = self.obs["maggies"] is not None
+
+        assert plot_spec or plot_phot, "No data to plot!"
+
+        sed_height_ratios = [3, 1, 1.25]
+        spec_height_ratios = [3, 1, 1]
+        remainder = [0.75, 2.0, 0.5, 2.0]  # 1.25
+
+        total_height_ratios = []
+        if plot_phot:
+            total_height_ratios.extend(sed_height_ratios)
+        if plot_spec:
+            total_height_ratios.extend(spec_height_ratios)
+        total_height_ratios.extend(remainder)
+
+        num_rows = len(total_height_ratios)
+
+        base_figsize = (9.5, 14.0)
+
+        if not plot_phot or not plot_spec:
+            base_figsize = (9.5, 10.0)
+
+        self.fig = plt.figure(figsize=base_figsize, facecolor="w", edgecolor="k", dpi=300)
+
+        gs = gridspec.GridSpec(
+            num_rows,
+            npar + 3,
+            width_ratios=(npar + 3) * [num_rows],
+            wspace=0.15,
+            hspace=0.03,
+            height_ratios=total_height_ratios,
+            left=0.1,
+            right=0.98,
+            top=0.99,
+            bottom=0.05,
+        )
+        if plot_phot:
+            ii = 0
+            self.sedax = self.fig.add_subplot(gs[0, :])
+            self.resax = self.fig.add_subplot(gs[1, :], sharex=self.sedax)
+        else:
+            self.sedax, self.resax = None, None
+            ii = 3
+        if plot_spec:
+            self.specax = self.fig.add_subplot(gs[3 - ii, :])
+            self.sresax = self.fig.add_subplot(gs[4 - ii, :], sharex=self.specax)
+            self.calax = self.fig.add_subplot(gs[5 - ii, :], sharex=self.specax)
+        else:
+            self.specax, self.sresax, self.calax = None, None, None
+            ii = 3
+
+        self.sfhax = self.fig.add_subplot(gs[7 - ii :, 0:3])
+        self.paxes = np.array(
+            [self.fig.add_subplot(gs[int(i / 3) * 2 + 7 - ii, 3 + (i % 3)]) for i in range(npar)]
+        )
+
+    def spectral_components(self, x):
+        # generate all three spectra
+        spec_bfit, _, _ = self.model.predict(x, sps=self.sps, obs=self.obs)
+        self.model.params["marginalize_elines"] = False
+        self.model.params["nebemlineinspec"] = True
+        spec_nomarg, _, _ = self.model.predict(x, sps=self.sps, obs=self.obs)
+        self.model.params["marginalize_elines"] = False
+        self.model.params["nebemlineinspec"] = True
+        self.model.params["add_neb_emission"] = False
+        spec_nolines, _, _ = self.model.predict(x, sps=self.sps, obs=self.obs)
+
+        # return the model to its original state
+        self.model.params["marginalize_elines"] = True
+        self.model.params["nebemlineinspec"] = False
+        self.model.params["add_neb_emission"] = True
+
+        spec_bfit = spec_bfit * 3631 * u.Jy
+        spec_nomarg = spec_nomarg * 3631 * u.Jy
+        spec_nolines = spec_nolines * 3631 * u.Jy
+
+        return spec_bfit, spec_nomarg, spec_nolines
 
     def pretty_plot(
         self,
@@ -1370,11 +2253,6 @@ class Plotspector(FigureMaker):
         },
         display_type={"total_mass": "log_10"},
     ):
-        imf_type = self.model.init_config["imf_type"]["init"]
-        if imf_type != 5 and self.result["run_params"]["use_hot_imf"]:
-            print("You probably don't want to use me as I was actually run with a Kroupa IMF")
-            return False
-
         fig = plt.figure(facecolor="w", edgecolor="k", constrained_layout=True)
         gs = fig.add_gridspec(4, 5)
         self.param_name = param_name
@@ -1499,11 +2377,6 @@ class Plotspector(FigureMaker):
         modify_ax=False,
         **kwargs,
     ):
-        imf_type = self.model.init_config["imf_type"]["init"]
-        if imf_type != 5 and self.result["run_params"]["use_hot_imf"]:
-            print("You probably don't want to use me as I was actually run with a Kroupa IMF")
-            return False
-
         if parameter not in ["ssfr", "sfr"]:
             parameter = self.convert_param_name(parameter)
             if parameter == "surviving_mass":
@@ -1543,7 +2416,6 @@ class Plotspector(FigureMaker):
             )
 
         except ValueError:
-            print("I shit myself.")
             pass
 
         if modify_ax:
@@ -1553,8 +2425,7 @@ class Plotspector(FigureMaker):
             ax.tick_params(axis="both", which="major", labelsize="medium")
             ax.tick_params(axis="both", which="minor", labelsize="medium")
 
-    # Need to give Plotspector
-
+    """
     def plot_best_fit(
         self,
         ax,
@@ -1568,11 +2439,6 @@ class Plotspector(FigureMaker):
         **kwargs,
     ):
         microns = True if wav_units == u.um else False
-
-        imf_type = self.model.init_config["imf_type"]["init"]
-        if imf_type != 5 and self.result["run_params"]["use_hot_imf"]:
-            print("You probably don't want to use me as I was actually run with a Kroupa IMF")
-            return False
 
         if not getattr(self, "surviving_mass", False):
             test = self.recalc_surviving_mass(only_quick=False)
@@ -1684,10 +2550,6 @@ class Plotspector(FigureMaker):
         background_spectrum=False,
         **kwargs,
     ):
-        imf_type = self.model.init_config["imf_type"]["init"]
-        if imf_type != 5 and self.result["run_params"]["use_hot_imf"]:
-            print("You probably don't want to use me as I was actually run with a Kroupa IMF")
-            return False
 
         microns = True if wav_units == u.um else False
         try:
@@ -1706,3 +2568,4 @@ class Plotspector(FigureMaker):
             label_phot=label,
             color=colour,
         )
+    """

@@ -72,16 +72,15 @@ def make_params(
         "HOT_45K": "templates/fsps-hot/45k/fsps_45k.param",
         "HOT_60K": "templates/fsps-hot/60k/fsps_60k.param",
         "jades": "templates/jades/jades.param",
+        "sfhz": "templates/sfhz/blue_sfhz_13.param",
+        "sfhz+carnall_eelg": "templates/sfhz/carnall_sfhz_13.param",
+        "sfhz+carnall_eelg+agn": "templates/sfhz/agn_sfhz_13.param",
     }
 
     if template_file is None:
-        template_file = os.path.join(
-            template_dir, templates_dict[template_name]
-        )
+        template_file = os.path.join(template_dir, templates_dict[template_name])
     else:
-        raise ValueError(
-            "Template name not recognized. Please provide a template file path."
-        )
+        raise ValueError("Template name not recognized. Please provide a template file path.")
 
     params = {}
 
@@ -94,9 +93,7 @@ def make_params(
 
     # Galactic extinction
     params["MW_EBV"] = 0  # Setting MW E(B-V) extinction
-    params["CAT_HAS_EXTCORR"] = (
-        False  # Catalog already corrected for reddening?
-    )
+    params["CAT_HAS_EXTCORR"] = False  # Catalog already corrected for reddening?
 
     params["ADD_CGM"] = add_cgm  # Add Asada CGM damping wings?
 
@@ -118,9 +115,7 @@ def make_params(
     params["PRIOR_ABZP"] = cat_flux_unit.to(u.ABmag)  # AB zeropoint
 
     print(f'Zeropoint: {params["PRIOR_ABZP"]}')
-    params["PRIOR_FILTER"] = (
-        28  # Filter from FILTER_RES corresponding to the columns in PRIOR_FILE
-    )
+    params["PRIOR_FILTER"] = 28  # Filter from FILTER_RES corresponding to the columns in PRIOR_FILE
     params["PRIOR_FILE"] = ""
 
     params["FIX_ZSPEC"] = fix_zspec  # Fix redshift to catalog zspec

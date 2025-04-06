@@ -21,17 +21,8 @@ try:
         TemplateLibrary,
         adjust_continuity_agebins,
     )
-    from prospect.models.transforms import (
-        logsfr_ratios_to_agebins,
-        logsfr_ratios_to_masses,
-        logsfr_ratios_to_masses_flex,
-        logsfr_ratios_to_sfrs,
-        psb_logsfr_ratios_to_agebins,
-        tage_from_tuniv,
-        zfrac_to_masses,
-        zfrac_to_sfr,
-        zfrac_to_sfrac,
-    )
+    from prospect.models.transforms import *  # noqa
+    from prospect.models.transforms import dustratio_to_dust1, tage_from_tuniv
     from prospect.plotting import FigureMaker
     from prospect.plotting.corner import allcorner
     from prospect.plotting.sfh import nonpar_mwa, nonpar_recent_sfr, sfh_to_cmf
@@ -56,23 +47,34 @@ from astropy.table import Table
 from joblib import Parallel, delayed
 
 from EXPANSE.bagpipes import calculate_bins
-
-from .Plotspector import Plotspector
-from .utils import filter_catalog, find_bands, load_spectra, provide_phot
+from EXPANSE.prospector import Plotspector
+from EXPANSE.prospector.utils import filter_catalog, find_bands, get_lsf, load_spectra, provide_phot
 
 sampling_default_settings = {
-    "nlive_init": 400,  # dynesty -->
+    # dynesty -->
     "nested_sample": "rwalk",
-    "nested_target_n_effective": 10000,  #  A value of 10,000 for this keyword specifies high-quality posteriors, whereas a value of 3,000 will produce reasonable but approximate posteriors.
-    "nlive_batch": 200,
-    "nested_dlogz_init": 0.05,
-    "nested_maxcall": int(1e7),  # Can reduce this to see how fit is going
+    "nested_target_n_effective": 20000,  #  A value of 10,000 for this keyword specifies high-quality posteriors, whereas a value of 3,000 will produce reasonable but approximate posteriors.
+    "nested_dlogz_init": 0.01,
+    "nested_nlive_batch": 400,  # size of live point "batches"
+    "nested_nlive_init": 1600,  # number of initial live points
+    "nested_weight_kwargs": {"pfrac": 1.0},  # weight posterior over evidence by 100%
+    "nested_bound": "multi",
+    "nested_maxcall": None,  # int(1e7),  # Can reduce this to see how fit is going
+    "nested_maxcall_init": None,
+    "nested_maxiter": None,
     "nwalkers": 28,  # emcee -->
     "niter": 2048,
     "nburn": [16, 32, 64],
 }
 
+# Document options in run_params['input_model] dictionary
+"""
+ - smooth_instrument - bool: If True, smooth the instrument resolution to match the observed spectrum. Need to provide sigma_v in obs dictionary.
+ - mixture_model - bool: If True, use a mixture model to account for pixel outliers.
+ - jitter_model - bool: If True, use a jitter model to account for underestimated uncertainties.
 
+
+ """
 # are we in MPI
 
 try:
@@ -154,8 +156,8 @@ def generate_model_name_from_run_params(run_params):
     return model_name
 
 
-def build_sps(run_params):
-    if run_params["model"]["sfh"]["model"] in [
+def build_sps(run_params, obs=None, **extras):
+    if run_params["model_with_defaults"]["sfh"]["model"] in [
         "continuity",
         "continuity_bursty",
         "continuity_flex",
@@ -164,8 +166,8 @@ def build_sps(run_params):
         "alpha",
         "beta",
     ]:
-        sps = FastStepBasis(zcontinuous=1)
-    elif run_params["model"]["sfh"]["model"] in [
+        sps = FastStepBasis(zcontinuous=1, compute_vega_mags=False)
+    elif run_params["model_with_defaults"]["sfh"]["model"] in [
         "rising",
         "exp",
         "delayed",
@@ -174,9 +176,42 @@ def build_sps(run_params):
         "delayed-tau",
         "delayed-exp",
     ]:
-        sps = CSPSpecBasis(zcontinuous=1)
+        sps = CSPSpecBasis(zcontinuous=1, compute_vega_mags=False)
     else:
         print(f'{run_params["sfh_model"]} not understood.')
+
+    smooth_instrument = run_params["model_with_defaults"].get("smooth_instrument", False)
+
+    if (obs is not None) and (smooth_instrument):
+        if rank == 0:
+            print("Smoothing SSPs to instrumental resolution.")
+
+        # Load the instrumental dispersion
+        load_instrumental_dispersion(run_params, obs)
+
+        # from exspect.utils import get_lsf
+        wave_obs = obs["wavelength"]
+        assert "sigma_v" in obs, "No instrumental velocity dispersion provided for smoothing"
+        sigma_v = obs["sigma_v"]
+        speclib = sps.ssp.libraries[1].decode("utf-8")
+        zred = run_params["model_with_defaults"]["zred"]
+        if type(zred) is dict:
+            if "prior" in zred.keys() and zred["prior"] == "uniform":
+                raise ValueError(
+                    "Cannot use uniform prior for redshift when smoothing with the LSF"
+                )
+
+            if "init" in zred:
+                zred = zred["init"]
+            elif "mean" in zred:
+                zred = zred["mean"]
+            elif "value" in zred:
+                zred = zred["value"]
+
+        wave, delta_v = get_lsf(wave_obs, sigma_v, speclib=speclib, zred=zred, **extras)
+        sps.ssp.params["smooth_lsf"] = True
+        sps.ssp.set_lsf(wave, delta_v)
+
     return sps
 
 
@@ -236,9 +271,15 @@ def setup_parameter(param_name, param_value, model_params, prior_conv=None, mini
 
         if "depends_on" in param_value:
             model_params[param_name]["depends_on"] = param_value["depends_on"]
+            if not callable(param_value["depends_on"]):
+                # Assume it is the name of a function in the namespace
+                model_params[param_name]["depends_on"] = eval(param_value["depends_on"])
 
         if "N" in param_value:
             model_params[param_name]["N"] = param_value["N"]
+
+        if "units" in param_value:
+            model_params[param_name]["units"] = param_value["units"]
 
         # Set prior if provided
         if "prior" in param_value:
@@ -314,6 +355,9 @@ def build_model(run_params):
 
     model_run_params = deepcopy(default_model_priors)
 
+    if "default_model_priors" in run_params:
+        model_run_params = deepcopy(run_params["default_model_priors"])
+
     # Update with provided parameters, merging dictionaries recursively
     def update_dict_recursive(d, u):
         for k, v in u.items():
@@ -322,10 +366,12 @@ def build_model(run_params):
             else:
                 d[k] = v
 
-    update_dict_recursive(model_run_params, run_params["model"])
-    run_params["model"] = model_run_params
+    update_dict_recursive(model_run_params, run_params.get("input_model"))
+    run_params["default_model_priors"] = model_run_params
 
-    if "model" not in run_params:
+    run_params["model_with_defaults"] = model_run_params
+
+    if "input_model" not in run_params:
         raise ValueError("No model parameters provided")
 
     # Check if a pre-built model is provided
@@ -763,9 +809,13 @@ def build_model(run_params):
                 "calibration",
                 "redshift_sigma",
                 "no_redshift_prior",
+                "smooth_instrument",
+                "mixure_model",
+                "jitter_model",
                 "vary_u",
                 "dust_prior",
-                "model",
+                "input_model",
+                "model_with_defaults",
             ]:
                 if rank == 0:
                     print(f"Adding custom parameter: {key}")
@@ -787,19 +837,50 @@ def build_model(run_params):
         if "spectral_smoothing" in model_run_params:
             # Default is vel, tophat[10, 300], fftsmooth
             model_params.update(TemplateLibrary["spectral_smoothing"])
+            if type(model_run_params["spectral_smoothing"]) is dict:
+                for key, value in model_run_params["spectral_smoothing"].items():
+                    if key in model_params:
+                        if value is dict:
+                            setup_parameter(key, value, model_params, prior_conv)
         else:
             print("No spectral smoothing parameters provided.")
 
         if fit_type == "both":
             # Add calibration chebyshev polynomial parameters if requested
+            # Example of using this would be "calibration":{'type': 'optimize_speccal', 'order': 12}
             if "calibration" in model_run_params:
+                cal_type = model_run_params["calibration"]["type"]
+                order = model_run_params["calibration"]["order"]
                 # Options are optimize_speccal and fit_speccal
-                cal_type = run_params["calibration"]
-
                 model_params.update(TemplateLibrary[cal_type])
+                model_params["polyorder"]["init"] = order
+                model_params["spec_norm"]["isfree"] = False
+
                 model = PolySpecModel
 
     # Create and return the model
+
+    # This is a multiplicative noise inflation term. It inflates the noise in
+    # all spectroscopic pixels as necessary to get a statistically acceptable fit.
+    jitter_model = model_run_params.get("jitter_model", False)
+    if jitter_model:
+        model_params["spec_jitter"] = dict(
+            N=1, isfree=True, init=1.0, prior=priors.TopHat(mini=1.0, maxi=3.0)
+        )
+
+    # This is a pixel outlier model. It helps to marginalize over
+    # poorly modeled noise, such as residual sky lines or
+    # even missing absorption lines
+    mixture_model = model_run_params.get("mixture_model", False)
+    if mixture_model:
+        model_params["nsigma_outlier_spec"] = dict(N=1, isfree=False, init=50.0)
+        model_params["f_outlier_spec"] = dict(
+            N=1, isfree=True, init=0.01, prior=priors.TopHat(mini=1e-5, maxi=0.1)
+        )
+        model_params["nsigma_outlier_phot"] = dict(N=1, isfree=False, init=50.0)
+        model_params["f_outlier_phot"] = dict(
+            N=1, isfree=False, init=0.0, prior=priors.TopHat(mini=0, maxi=0.5)
+        )
 
     model = model(model_params)
 
@@ -810,8 +891,63 @@ def build_model(run_params):
 
 
 def build_noise(run_params):
-    # TODO: Implement noise model for photometry and spectra
-    return (None, None)
+    """
+    Build the noise model for the likelihood
+    If requested, add a jitter model to the noise model
+    """
+    jitter_model = run_params["model_with_defaults"].get("jitter_model", False)
+    if jitter_model:
+        if rank == 0:
+            print("Adding jitter model to noise model.")
+        from prospect.likelihood import NoiseModel
+        from prospect.likelihood.kernels import Uncorrelated
+
+        jitter = Uncorrelated(parnames=["spec_jitter"])
+        spec_noise = NoiseModel(kernels=[jitter], metric_name="unc", weight_by=["unc"])
+    else:
+        spec_noise = None
+
+    return spec_noise, None
+
+
+def load_instrumental_dispersion(run_params, obs):
+    """
+    Opens the instrumental dispersion file.
+
+    Parameters
+    ----------
+
+    """
+
+    assert "dispersion_file" in run_params, "Must provide a dispersion file"
+
+    disp_table = Table.read(run_params["dispersion_file"])
+
+    # Check that the dispersion file has the correct columns
+
+    wav_column = ["wav" in i.lower() for i in disp_table.colnames]
+    assert np.any(wav_column), "No wavelength column found in dispersion file"
+    wav_column = disp_table.colnames[np.where(wav_column)[0][0]]
+    wavs = disp_table[wav_column]
+
+    if not hasattr(wavs, "unit"):
+        print("Assuming wavelength of instrumental resolution is in Angstroms")
+        wavs = wavs * u.Angstrom
+
+    if "dispersion" in disp_table.colnames:
+        dispersion = disp_table["dispersion"]
+    elif "R" in disp_table.colnames or "resolution" in disp_table.colnames:
+        R = disp_table["R"] if "R" in disp_table.colnames else disp_table["resolution"]
+        dispersion = 2.998e5 / (R * 2.355)
+    elif "sigma" in disp_table.colnames:
+        dispersion = disp_table["sigma"]
+    else:
+        raise ValueError("No dispersion column found in dispersion file")
+
+    # resample the dispersion to the observed wavelength grid
+    dispersion = np.interp(obs["wavelength"], wavs, dispersion)
+
+    obs["sigma_v"] = dispersion
 
 
 def build_obs(run_params):
@@ -952,6 +1088,7 @@ def build_obs(run_params):
     """
 
     fixed_obs = fix_obs(obs_dict)
+
     return fixed_obs
 
 
@@ -960,7 +1097,7 @@ def build_all(run_params):
     model = build_model(run_params)
     if rank == 0:
         print("Loaded data.")
-    sps = build_sps(run_params)
+    sps = build_sps(run_params, obs=obs)
     if rank == 0:
         print("Built SPS model.")
     noise = build_noise(run_params)
@@ -968,7 +1105,7 @@ def build_all(run_params):
 
 
 def sanity_check_run_params(run_params):
-    required = ["OBJID", "model", "sampler"]
+    required = ["OBJID", "input_model", "sampler"]
 
     for r in required:
         if r not in run_params:
@@ -985,7 +1122,28 @@ def fix_params(params):
             fix_params(value)
         elif isinstance(value, bytes):
             params[key] = str(key)
-        if type(value) not in [int, float, str, list, dict, bool]:
+        elif isinstance(value, tuple):
+            params[key] = list(value)
+
+        if callable(value):
+            params[key] = str(value.__name__)
+
+        if isinstance(value, list):
+            for i, v in enumerate(value):
+                if isinstance(v, u.Quantity):
+                    value[i] = v.value
+                elif isinstance(v, np.ndarray):
+                    value[i] = v.tolist()
+                elif isinstance(v, dict):
+                    fix_params(v)
+                elif isinstance(v, bytes):
+                    value[i] = str(v)
+                elif isinstance(v, tuple):
+                    value[i] = list(v)
+                elif callable(v):
+                    value[i] = str(v)
+
+        if type(params[key]) not in [int, float, str, list, dict, bool, type(None), tuple]:
             print(f"Unrecognized type for {key}: {type(value)}")
             print(f"Value: {value}")
 
@@ -1035,7 +1193,7 @@ def main(config):
         obs, model, sps, noise = build_all(run_params)
 
         # Add SPS libraries to run_params
-        run_params["sps_libraries"] = sps.ssp.libraries
+        run_params["sps_libraries"] = [i.decode() for i in sps.ssp.libraries]
 
         # Get options for the sampler
         path = run_params["run_path"]
@@ -1064,10 +1222,6 @@ def main(config):
         else:
             print(f"Sampler {sampler} not recognized.")
             return False
-
-        # rename model to input_model in run_params
-        run_params["input_model"] = model
-        run_params.pop("model")
 
         try:
             print(f'Beginning {run_params["sampler"]} run. I may take a while.')
@@ -1217,12 +1371,20 @@ def main_parallel(config):
         obs, model, sps, noise = build_all(run_params)
 
         # Add SPS libraries to run_params
-        run_params["sps_libraries"] = sps.ssp.libraries
+        run_params["sps_libraries"] = [i.decode() for i in sps.ssp.libraries]
+
+        remove_obs(run_params)
+        fix_params(run_params)
+
+        try:
+            json.dumps(run_params)
+        except TypeError as e:
+            print(e)
+            print("Run_params not initially serializable. Exiting.")
+            return False
 
         sampler = run_params["sampler"]
         assert sampler == "dynesty", "Only dynesty is supported for parallel runs."
-
-        custom = run_params.get("custom", "")
 
         # spec, phot, mfrac = model.predict(model.theta, obs=obs, sps=sps)
 
@@ -1258,6 +1420,8 @@ def main_parallel(config):
     # caching data depending which can slow down the parallelization
     if (withmpi) & ("logzsol" in model.free_params):
         dummy_obs = dict(filters=None, wavelength=None)
+        if rank == 0:
+            print("Caching SPS over logzsol grid to ensure efficient parallelization.")
 
         logzsol_prior = model.config_dict["logzsol"]["prior"]
         lo, hi = logzsol_prior.range
@@ -1276,18 +1440,16 @@ def main_parallel(config):
 
     lnprobfn_fixed = partial(lnprobfn, sps=sps)
 
-    # rename model to input_model in run_params
-    run_params["input_model"] = model
-    run_params.pop("model")
-
     remove_obs(run_params)
     fix_params(run_params)
 
     # attempt to json serialize the run_params
     try:
         json.dumps(run_params)
-    except TypeError:
+    except TypeError as e:
+        print(e)
         print("Run_params not serializable. Exiting.")
+        print([type(v) for v in run_params.values()])
         return False
 
     if withmpi:
@@ -1355,7 +1517,7 @@ def run_prospector_expanse(input_file_json):
 
 def run_prospector_on_cat(
     file_path,
-    model,
+    input_model,
     run_name="auto",
     n_jobs=6,
     load=False,
@@ -1420,7 +1582,7 @@ def run_prospector_on_cat(
         for param in [
             "field",
             "min_percentage_err",
-            "model",
+            "input_model",
             "sampler",
             "use_builtin",
             "skip_errors",
@@ -1435,7 +1597,8 @@ def run_prospector_on_cat(
         run_params_init["catalog_path"] = file_path
 
         if run_name == "auto":
-            model_name = generate_model_name_from_run_params(run_params_init["model"])
+            # This might fail if relying too much on default model parameters
+            model_name = generate_model_name_from_run_params(run_params_init["input_model"])
             run_name = f"{id}_{model_name}_{sampler}{custom}"
 
         if not run_name.endswith(".h5"):
@@ -1505,6 +1668,7 @@ def run_prospector_on_spec_phot(
     spec_mask: Optional[str] = None,  # Mask to apply to spectrum
     phot_flux_column: str = "FLUX_APER_band",  # Column name for photometry flux
     phot_flux_err_column: str = "FLUXERR_APER_band",  # Column name for photometry flux error
+    resolution_files: Optional[Union[str, List[str]]] = None,  # Instrumental resolution file(s)
     spec_wav_units: Optional[
         u.Unit
     ] = None,  # Units of spectrum wavelength - if not provided will be inferred from file
@@ -1537,6 +1701,13 @@ def run_prospector_on_spec_phot(
         ), "Number of models must match number of spectrum files."
     else:
         model = [model] * spec_fit_number
+
+    if type(resolution_files) == list:
+        assert (
+            len(resolution_files) == spec_fit_number
+        ), "Number of resolution files must match number of spectrum files."
+    else:
+        insrumental_resolution = [resolution_files] * spec_fit_number
 
     if set_IDs is not None:
         if type(set_IDs) is str:
@@ -1625,10 +1796,14 @@ def run_prospector_on_spec_phot(
         wav, flux, flux_err = load_spectra(
             spec_path_i, input_flux_units=spec_flux_units, input_wav_units=spec_wav_units
         )
-        run_params_init["model"] = model_i
+        run_params_init["input_model"] = model_i
         run_params_init["wavelength"] = wav
         run_params_init["spectrum"] = flux
         run_params_init["unc"] = flux_err
+        run_params_init["dispersion_file"] = insrumental_resolution[
+            i
+        ]  # Add instrumental resolution file
+
         if spec_mask is not None:
             run_params_init["mask"] = spec_mask
 
@@ -1661,7 +1836,7 @@ def run_prospector_on_spec_phot(
             run_params_init[param] = copy.deepcopy(locals()[param])
 
         if run_name == "auto":
-            model_name = generate_model_name_from_run_params(run_params_init["model"])
+            model_name = generate_model_name_from_run_params(run_params_init["input_model"])
             run_name = f"{model_name}_{sampler}{custom}"
 
         if not run_name.endswith(".h5"):
@@ -1674,7 +1849,8 @@ def run_prospector_on_spec_phot(
 
         path = f"{run_dir}{field_val}{id}/{run_name}"
 
-        print(f"Saving to {path}")
+        if rank == 0:
+            print(f"Saving to {path}")
 
         if existing_behaviour == "unique" and os.path.exists(f"{path}.h5"):
             ts = time.strftime("%y%b%d-%H.%M", time.localtime())

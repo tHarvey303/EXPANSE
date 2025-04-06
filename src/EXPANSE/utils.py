@@ -7,6 +7,7 @@ import shutil
 import sys
 import threading
 import time
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 
 import h5py as h5
 import matplotlib as mpl
@@ -23,6 +24,7 @@ from matplotlib.colors import (
     to_rgba,
 )
 from matplotlib.patches import FancyArrow
+from matplotlib.patheffects import Normal, SimpleLineShadow
 from photutils.aperture import (
     CircularAperture,
     EllipticalAperture,
@@ -154,6 +156,7 @@ def scale_fluxes(
     b = kron_radius * b
     area_of_aper = np.pi * (aper_diam.to(u.arcsec) / (2 * pix_scale)) ** 2
     area_of_ellipse = np.pi * a * b
+    # Don't use the scale factor if the ellipse is smaller than the aperture
     scale_factor = area_of_aper / area_of_ellipse
     if flux_type == "mag":
         flux_auto = 10 ** ((zero_point - mag_auto) / 2.5)
@@ -162,7 +165,7 @@ def scale_fluxes(
         flux_auto = mag_auto
         flux_aper = mag_aper
 
-    print(flux_auto, flux_aper, scale_factor)
+    # print(flux_auto, flux_aper, scale_factor)
     if (scale_factor > 1) and flux_auto > flux_aper:
         factor = flux_auto / flux_aper
         clip = False
@@ -176,7 +179,7 @@ def scale_fluxes(
         b = aper_diam.to(u.arcsec) / (2 * pix_scale)
         theta = 0
 
-    print(f"Corrected aperture flux by {factor} for kron ellipse flux.")
+    # print(f"Corrected aperture flux by {factor} for kron ellipse flux.")
     # Scale for PSF
     assert type(psf) is np.ndarray, "PSF must be a numpy array"
     assert np.sum(psf) < 1, "PSF should not be normalised, some flux is outside the footprint."
@@ -485,6 +488,8 @@ class PhotometryBandInfo:
         psf_path=None,
         psf_type=None,
         psf_kernel_path=None,
+        psf_matched_image_path=None,
+        psf_matched_err_path=None,
         im_pixel_scale="HEADER",
         image_zp="HEADER",
         image_unit="HEADER",
@@ -493,9 +498,83 @@ class PhotometryBandInfo:
         err_hdu_ext=0,
         seg_hdu_ext=0,
         detection_image=False,
+        psf_matched=False,
+        auto_photometry={},
+        aperture_photometry={},
     ):
+        """
+        band_name : str
+            The name of the band, e.g. 'F444W'
+        survey : str
+            The survey the band is from, e.g. 'HST'
+        image_path : str
+            The path to the image file. Can be a folder, in which case the code will attempt to auto-detect the file.
+        instrument : str
+            The instrument the band is from, e.g. 'WFC3'
+        wht_path : str
+            The path to the weight file. Can be a folder, in which case the code will attempt to auto-detect the file.
+            Can be 'im', which will look for a 'WHT' extension in the image file. Or 'im_folder', which will look for a weight file in the same folder as the image file.
+        err_path : str
+            Optional: The path to the error file. Can be a folder, in which case the code will attempt to auto-detect the file.
+            Can be 'im', which will look for a 'ERR' extension in the image file. Or 'im_folder', which will look for a error file in the same folder as the image file.
+        seg_path : str or None
+            Optional: The path to the segmentation file. Can be a folder, in which case the code will attempt to auto-detect the file.
+            Can be 'im', which will look for a 'SEG' extension in the image file. Or 'im_folder', which will look for a segmentation file in the same folder as the image file.
+        psf_path : str or None
+            Optional: The path to the PSF file. Can be a folder, in which case the code will attempt to auto-detect the file.
+        psf_type : str or None
+            Optional: Name of PSF model, e.g. 'webbpsf', 'empirical' etc. Allows for multiple PSF models to be used.
+            Must be provided if psf_path or psf_kernel_path is provided.
+        psf_kernel_path : str or None
+            Optional: Path to the PSF kernel file. Can be a folder, in which case the code will attempt to auto-detect the file.
+        psf_matched_image_path : str or None
+            Only required if providing both PSF matched images and un-matched images. The path to the PSF matched image file.
+            Otherwise provide this as image_path and set psf_matched = True.
+        psf_matched_err_path : str or None
+            Only required if providing both PSF matched images and un-matched images. The path to the PSF matched error file.
+            Otherwise provide this as err_path and set psf_matched = True.
+        im_pixel_scale : str
+            The pixel scale of the image (arcsec/pixel). Can be 'HEADER', in which case the code will attempt to read the pixel scale from the image header.
+        image_zp : str
+            The AB zero point of the image. Can be 'HEADER', in which case the code will attempt to read the zero point from the image header.
+        image_unit : str
+            The unit of the image. Can be 'HEADER', in which case the code will attempt to read the unit from the image header.
+        im_hdu_ext : int
+            The HDU extension of the image file. If JWST image structure is detected, this will be set to 1.
+        wht_hdu_ext : int
+            The HDU extension of the weight file. If JWST image structure is detected, this will be set to 2.
+        err_hdu_ext : int
+            The HDU extension of the error file. If JWST image structure is detected, this will be set to 3.
+        seg_hdu_ext : int
+            The HDU extension of the segmentation file.
+        detection_image : bool
+            If True, this band is the detection image.
+        psf_matched : string or False
+            Important! This only refers to the basic image arguments here - e.g. image_path, wht_path, err_path.
+            If providing both PSF matched and un-matched images, set this to False.
+            If False, the images are not PSF matched. Otherwise provide the name of the band that the image is PSF matched to.
+        auto_photometry : dict
+            auto photometry for one galaxy of interest
+            Optional - can all be measured with sep once loaded.
+            A dictionary of parameters of already derived autophotometry. Can have any values and will be saved.
+            E.g. {'MAG_AUTO': 25.0, 'FLUX_AUTO': 1e-20, 'FLUXERR_AUTO': 1e-21, 'MAGERR_AUTO': 0.1,
+                    'FLUX_RADIUS': 1.0, 'KRON_RADIUS': 1.0, 'ISOAREA_IMAGE': 1.0, 'ISOAREAF_IMAGE': 1.0}
+
+        aperture_photometry : dict
+            aperture photometry for one galaxy of interest
+            Optional - can all be measured with sep once loaded.
+            A dictionary of aperture photometry. Each key should be the aperture diameter in arcsec as an astropy unit.
+            e.g. {str(0.32*u.arcsec):{'flux':1e-20, 'fluxerr':1e-21, 'depths':[25]}}
+                Photometry is expected to be in Jy
+                The apertures are assumed to be centered on the SkyCoord provided in the ResolvedGalaxy init_from_basics
+
+
+        """
+
         self.band_name = band_name
         self.instrument = instrument
+        self.auto_photometry = auto_photometry
+        self.aperture_photometry = aperture_photometry
 
         if wht_path == "im_folder":
             wht_path = image_path
@@ -690,10 +769,14 @@ class PhotometryBandInfo:
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
             elif len(seg_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No seg files found for band {band_name}. Please provide full path."
+                )
             else:
                 seg_path = seg_path[0]
                 print(f"Auto detected segmentation path {seg_path} for band {band_name}.")
+        elif seg_path is not None and not os.path.exists(seg_path):
+            raise ValueError(f"Segmentation path {seg_path} does not exist.")
 
         if psf_path is not None and os.path.isdir(psf_path):
             psf_path_finder = glob.glob(os.path.join(psf_path, f"*{band_name.upper()}*psf*.fits"))
@@ -727,6 +810,9 @@ class PhotometryBandInfo:
             psf_path = list(set(psf_path_finder))
 
             if len(psf_path) > 1:
+                psf_path = [path for path in psf_path if "norm" not in path]
+
+            if len(psf_path) > 1:
                 raise ValueError(
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
@@ -735,6 +821,8 @@ class PhotometryBandInfo:
             else:
                 psf_path = psf_path[0]
                 print(f"Auto detected PSF path {psf_path} for band {band_name}.")
+        elif psf_path is not None and not os.path.exists(psf_path):
+            raise ValueError(f"PSF path {psf_path} does not exist.")
 
         if psf_kernel_path is not None and os.path.isdir(psf_kernel_path):
             psf_kernel_path_finder = glob.glob(
@@ -778,7 +866,102 @@ class PhotometryBandInfo:
             else:
                 psf_kernel_path = psf_kernel_path[0]
                 print(f"Auto detected PSF kernel path {psf_kernel_path} for band {band_name}.")
+        elif psf_kernel_path is not None and not os.path.exists(psf_kernel_path):
+            raise ValueError(f"PSF kernel path {psf_kernel_path} does not exist.")
 
+        if psf_matched_image_path is not None and os.path.isdir(psf_matched_image_path):
+            psf_matched_image_path_finder = glob.glob(
+                os.path.join(psf_matched_image_path, f"*{band_name.upper()}*psf*.fits")
+            )
+            psf_matched_image_path_finder.extend(
+                glob.glob(os.path.join(psf_matched_image_path, f"*{band_name.lower()}*psf*.fits"))
+            )
+            psf_matched_image_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_matched_image_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*psf*.fits",
+                    )
+                )
+            )
+            psf_matched_image_path_finder.extend(
+                glob.glob(os.path.join(psf_matched_image_path, f"*{band_name.upper()}*PSF*.fits"))
+            )
+            psf_matched_image_path_finder.extend(
+                glob.glob(os.path.join(psf_matched_image_path, f"*{band_name.lower()}*PSF*.fits"))
+            )
+            psf_matched_image_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_matched_image_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*PSF*.fits",
+                    )
+                )
+            )
+
+            # Remove duplicates
+            psf_matched_image_path = list(set(psf_matched_image_path_finder))
+
+            if len(psf_matched_image_path) > 1:
+                raise ValueError(
+                    f"Multiple files found for band {band_name}. Please provide full path."
+                )
+            elif len(psf_matched_image_path) == 0:
+                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+            else:
+                psf_matched_image_path = psf_matched_image_path[0]
+                print(
+                    f"Auto detected PSF matched image path {psf_matched_image_path} for band {band_name}."
+                )
+        elif psf_matched_image_path is not None and not os.path.exists(psf_matched_image_path):
+            raise ValueError(f"PSF matched image path {psf_matched_image_path} does not exist.")
+
+        if psf_matched_err_path is not None and os.path.isdir(psf_matched_err_path):
+            psf_matched_err_path_finder = glob.glob(
+                os.path.join(psf_matched_err_path, f"*{band_name.upper()}*psf*.fits")
+            )
+            psf_matched_err_path_finder.extend(
+                glob.glob(os.path.join(psf_matched_err_path, f"*{band_name.lower()}*psf*.fits"))
+            )
+            psf_matched_err_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_matched_err_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*psf*.fits",
+                    )
+                )
+            )
+            psf_matched_err_path_finder.extend(
+                glob.glob(os.path.join(psf_matched_err_path, f"*{band_name.upper()}*PSF*.fits"))
+            )
+            psf_matched_err_path_finder.extend(
+                glob.glob(os.path.join(psf_matched_err_path, f"*{band_name.lower()}*PSF*.fits"))
+            )
+            psf_matched_err_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_matched_err_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*PSF*.fits",
+                    )
+                )
+            )
+
+            # Remove duplicates
+            psf_matched_err_path = list(set(psf_matched_err_path_finder))
+
+            if len(psf_matched_err_path) > 1:
+                raise ValueError(
+                    f"Multiple files found for band {band_name}. Please provide full path."
+                )
+            elif len(psf_matched_err_path) == 0:
+                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+            else:
+                psf_matched_err_path = psf_matched_err_path[0]
+                print(
+                    f"Auto detected PSF matched error path {psf_matched_err_path} for band {band_name}."
+                )
+        elif psf_matched_err_path is not None and not os.path.exists(psf_matched_err_path):
+            raise ValueError(f"PSF matched error path {psf_matched_err_path} does not exist.")
         # Check if imagepath is a folder
         if os.path.isdir(image_path):
             # Use glob to find the image
@@ -831,12 +1014,25 @@ class PhotometryBandInfo:
             else:
                 image_path = image_path[0]
 
+        if psf_matched_image_path is not None:
+            assert (
+                psf_matched_err_path is not None
+            ), "Must provide a PSF matched error path if PSF matched image path is provided."
+            assert (
+                not psf_matched
+            ), "If providing both PSF matched and un-matched images, set psf_matched = False."
+            assert (
+                image_path != psf_matched_image_path
+            ), "PSF matched image path and image path must be different. If only providing PSF matched images, set image_path  only."
+
+        self.survey = survey
         self.image_path = image_path
         self.wht_path = wht_path
         self.err_path = err_path
         self.seg_path = seg_path
         self.psf_path = psf_path
         self.psf_kernel_path = psf_kernel_path
+
         self.psf_type = psf_type
 
         self.im_pixel_scale = im_pixel_scale
@@ -846,6 +1042,13 @@ class PhotometryBandInfo:
         self.wht_hdu_ext = wht_hdu_ext
         self.err_hdu_ext = err_hdu_ext
         self.seg_hdu_ext = seg_hdu_ext
+
+        self.psf_matched = psf_matched
+        self.psf_matched_image_path = psf_matched_image_path
+        self.psf_matched_err_path = psf_matched_err_path
+
+        if self.psf_path is not None or self.psf_kernel_path is not None:
+            assert self.psf_type is not None, "Must provide a PSF type if PSF path is provided."
 
         if self.instrument == "HEADER":
             instruments = {
@@ -1010,6 +1213,11 @@ class PhotometryBandInfo:
                     f"Auto detected pixel scale {self.im_pixel_scale:.4f} arcsec/pixel from WCS for band {self.band_name}."
                 )
 
+        if self.image_unit == "MJy/sr":
+            # compute zeropoint given pixel scale
+            area_sr = (self.im_pixel_scale.to(u.radian).value) ** 2
+            self.image_zp = -2.5 * np.log10(1e6 * area_sr) + 8.90
+
 
 class FieldInfo:
     """
@@ -1033,7 +1241,13 @@ class FieldInfo:
             self.detection_band = None
 
         # Get list of bands
+        surveys = [band.survey for band in band_info_list]
+        assert len(set(surveys)) == 1, "All bands must be from the same survey."
+        self.survey = surveys[0]
+
         self.band_names = [band.band_name for band in band_info_list]
+        # check unique
+        assert len(self.band_names) == len(set(self.band_names)), "Band names must be unique."
         # Get list of instruments
         self.instruments = [band.instrument for band in band_info_list]
 
@@ -1053,6 +1267,273 @@ class FieldInfo:
         self.psf_paths = {band.band_name: band.psf_path for band in band_info_list}
 
         self.psf_kernel_paths = {band.band_name: band.psf_kernel_path for band in band_info_list}
+
+        self.psf_matched = {band.band_name: band.psf_matched for band in band_info_list}
+        self.all_psf_types = {band.band_name: band.psf_type for band in band_info_list}
+        self.all_psf_matched = all(self.psf_matched.values())
+        self.any_psf_matched = any(self.psf_matched.values())
+        self.psf_matched_band = set(self.psf_matched.values())
+        assert (
+            len(self.psf_matched_band) < 2
+        ), "All bands must be matched to the same band if matched."
+        if len(self.psf_matched_band) == 1 and list(self.psf_matched_band)[0] is not False:
+            print(f"Matched band is {list(self.psf_matched_band)[0]}.")
+            self.psf_matched_band = list(self.psf_matched_band)[0]
+            assert self.psf_matched_band in self.band_names, "Matched band must be in band list."
+            assert (
+                self.psf_matched_band == self.band_names[-1]
+            ), "The assumed convention is to match to the last band."
+        else:
+            self.psf_matched_band = None
+
+        one_type = list(set(self.all_psf_types.values()))
+        if len(one_type) == 1:
+            self.psf_type = one_type[0]
+        else:
+            raise ValueError("All PSFs must be of the same type.")
+
+        self.any_psf_kernel = any([path is not None for path in self.psf_kernel_paths.values()])
+        self.all_psf_kernel = all([path is not None for path in self.psf_kernel_paths.values()])
+
+        all_auto_keys = set([key for band in band_info_list for key in band.auto_photometry.keys()])
+        all_aperture_sizes = set(
+            [key for band in band_info_list for key in band.aperture_photometry.keys()]
+        )
+        # Now get all keys inside each aperture size
+        all_aperture_size_keys = set(
+            [
+                key
+                for band in band_info_list
+                for key in band.aperture_photometry.keys()
+                for key in band.aperture_photometry[key].keys()
+            ]
+        )
+
+        # fix
+        self.auto_photometry = {
+            key: [band.auto_photometry.get(key, None) for band in band_info_list]
+            for key in all_auto_keys
+        }
+        self.aperture_photometry = {
+            key: [band.aperture_photometry.get(key, None) for band in band_info_list]
+            for key in all_aperture_sizes
+        }
+
+        self.psf_folder = "internal"
+        self.psf_kernel_folder = "internal"
+
+        if self.any_psf_matched:
+            # Check if all PSFs are in the same folder
+            psf_folders = set([os.path.dirname(path) for path in self.psf_paths.values()])
+            if len(psf_folders) == 1:
+                self.psf_folder = psf_folders[0]
+
+        if self.any_psf_kernel:
+            # Check if all PSFs are in the same folder
+            psf_kernel_folders = set(
+                [os.path.dirname(path) for path in self.psf_kernel_paths.values()]
+            )
+            if len(psf_kernel_folders) == 1:
+                self.psf_kernel_folder = psf_kernel_folders[0]
+
+        self.psf_matched_image_paths = {
+            band.band_name: band.psf_matched_image_path for band in band_info_list
+        }
+        self.psf_matched_err_paths = {
+            band.band_name: band.psf_matched_err_path for band in band_info_list
+        }
+
+        self.any_psf_matched_image = any(
+            [path is not None for path in self.psf_matched_image_paths.values()]
+        )
+        self.all_psf_matched_image = all(
+            [path is not None for path in self.psf_matched_image_paths.values()]
+        )
+        self.any_psf_matched_err = any(
+            [path is not None for path in self.psf_matched_err_paths.values()]
+        )
+        self.all_psf_matched_err = all(
+            [path is not None for path in self.psf_matched_err_paths.values()]
+        )
+
+    def __str__(self):
+        """
+        Produces an ASCII style table. List bands, instruments, pixel scales, zeropoints, PSF_matched status, and PSF type.
+        Also shows availability of error maps, weight maps, segmentation maps, PSFs, PSF kernels,
+        auto photometry, and aperture photometry for each band.
+        If None fill with --
+        """
+        # Define headers
+        headers = [
+            "Band",
+            "Instrument",
+            "Pixel Scale",
+            "ZP/Unit",
+            "PSF Matched",
+            "PSF Type",
+            "Err",
+            "Wht",
+            "Seg",
+            "PSF",
+            "PSF Kernel",
+            "Auto Phot",
+            "Aper Phot",
+        ]
+
+        # Collect data rows
+        rows = []
+        for band_name in self.band_names:
+            instrument = next(
+                (band.instrument for band in self.band_info_list if band.band_name == band_name),
+                "--",
+            )
+            pixel_scale = self.im_pixel_scales.get(band_name, "--")
+            zero_point = self.im_zps.get(band_name, "--")
+            if zero_point == "--" or zero_point is None:
+                zero_point = self.im_units.get(band_name, "--")
+            psf_matched = "Yes" if self.psf_matched.get(band_name, False) else "No"
+            psf_type = self.all_psf_types.get(band_name, "--")
+
+            # Check for existence of various data products
+            has_err = "Yes" if self.err_paths.get(band_name) is not None else "No"
+            has_wht = "Yes" if self.wht_paths.get(band_name) is not None else "No"
+            has_seg = "Yes" if self.seg_paths.get(band_name) is not None else "No"
+            has_psf = "Yes" if self.psf_paths.get(band_name) is not None else "No"
+            has_psf_kernel = "Yes" if self.psf_kernel_paths.get(band_name) is not None else "No"
+
+            # Check for auto and aperture photometry
+            has_auto_phot = "No"
+            for key in self.auto_photometry:
+                if self.auto_photometry[key][self.band_names.index(band_name)] is not None:
+                    has_auto_phot = "Yes"
+                    break
+
+            has_aper_phot = "No"
+            for aperture_size in self.aperture_photometry:
+                if (
+                    self.aperture_photometry[aperture_size][self.band_names.index(band_name)]
+                    is not None
+                ):
+                    has_aper_phot = "Yes"
+                    break
+
+            # Replace None values with "--"
+            pixel_scale = "--" if pixel_scale is None else f"{pixel_scale:.3f}"
+            zero_point = (
+                "--"
+                if zero_point is None
+                else f"{np.round(zero_point, 3) if isinstance(zero_point, float) else zero_point}"
+            )
+            psf_type = "--" if psf_type is None else psf_type
+
+            rows.append(
+                [
+                    band_name,
+                    instrument,
+                    pixel_scale,
+                    zero_point,
+                    psf_matched,
+                    psf_type,
+                    has_err,
+                    has_wht,
+                    has_seg,
+                    has_psf,
+                    has_psf_kernel,
+                    has_auto_phot,
+                    has_aper_phot,
+                ]
+            )
+
+        # Calculate column widths based on content
+        col_widths = []
+        for i in range(len(headers)):
+            col_width = len(headers[i])
+            for row in rows:
+                col_width = max(col_width, len(str(row[i])))
+            col_widths.append(col_width + 2)  # Add padding
+
+        # Create the table string
+        result = []
+        result.append(f"Field Info for Survey: {self.survey}")
+
+        # Add detection band info if present
+        if self.detection_band:
+            result.append(f"Detection Band: {self.detection_band}")
+            result.append("")
+
+        # Add header row
+        header_row = "".join(f"{header:<{col_widths[i]}}" for i, header in enumerate(headers))
+        result.append(header_row)
+
+        # Add separator
+        separator = "".join("-" * width for width in col_widths)
+        result.append(separator)
+
+        # Add data rows
+        for row in rows:
+            row_str = "".join(f"{str(cell):<{col_widths[i]}}" for i, cell in enumerate(row))
+            result.append(row_str)
+
+        # Add additional information
+        result.append("")
+        result.append(f"All PSF Matched: {self.all_psf_matched}")
+        result.append(f"Any PSF Matched: {self.any_psf_matched}")
+        result.append(f"PSF Type: {self.psf_type or '--'}")
+
+        # Add information about availability of various data products
+        result.append("")
+        result.append(f"All PSF Kernels Available: {self.all_psf_kernel}")
+        result.append(f"Any PSF Kernels Available: {self.any_psf_kernel}")
+
+        result.append("")
+        result.append(f"All PSF Matched Images Available: {self.all_psf_matched_image}")
+        result.append(f"Any PSF Matched Images Available: {self.any_psf_matched_image}")
+
+        result.append("")
+        result.append(f"All PSF Matched Error Maps Available: {self.all_psf_matched_err}")
+        result.append(f"Any PSF Matched Error Maps Available: {self.any_psf_matched_err}")
+
+        # Add path information
+        if self.any_psf_kernel:
+            result.append("")
+            result.append(f"PSF Kernel Folder: {self.psf_kernel_folder}")
+
+        if self.any_psf_matched:
+            result.append("")
+            result.append(f"PSF Folder: {self.psf_folder}")
+
+        # Available photometry information
+        if self.auto_photometry:
+            result.append("")
+            result.append("Auto Photometry Keys: " + ", ".join(self.auto_photometry.keys()))
+
+        if self.aperture_photometry:
+            result.append("")
+            result.append(
+                "Aperture Sizes: " + ", ".join(str(k) for k in self.aperture_photometry.keys())
+            )
+
+        return "\n".join(result)
+
+    def __repr__(self):
+        return self.__str__()
+
+    # Make supscribale over band_info_list
+
+    def __iter__(self):
+        return iter(self.band_info_list)
+
+    def __len__(self):
+        return len(self.band_info_list)
+
+    def __getitem__(self, key):
+        return self.band_info_list[key]
+
+    def __next__(self):
+        return next(self.band_info_list)
+
+    def __contains__(self, item):
+        return item in self.band_info_list
 
 
 def compass(
@@ -1286,7 +1767,7 @@ def measure_cog(sci_cutout, pos, nradii=20, minrad=1, maxrad=10):
     return radii, cog
 
 
-def get_bounding_box(array, scale_border=0, square=False):
+def get_bounding_box(array, scale_border=0, square=False, init_buffer=2, debug=False):
     """Get bounding box coordinates of non-NaN values in 2D array.
 
     Parameters
@@ -1314,6 +1795,31 @@ def get_bounding_box(array, scale_border=0, square=False):
     ymin, ymax = np.where(rows)[0][[0, -1]]
     xmin, xmax = np.where(cols)[0][[0, -1]]
 
+    # Add a 2 pixel buffer by default as the bounding box tends to overlap the edge pixels
+
+    ymin -= init_buffer
+    ymax += init_buffer
+    xmin -= init_buffer
+    xmax += init_buffer
+
+    # print(f"Bounding box: {xmin}, {xmax}, {ymin}, {ymax}")
+
+    if debug:
+        fig, ax = plt.subplots()
+        from matplotlib.patches import Rectangle
+
+        ax.imshow(array, origin="lower", cmap="gray")
+        ax.add_patch(
+            Rectangle(
+                (xmin, ymin),
+                xmax - xmin,
+                ymax - ymin,
+                edgecolor="red",
+                facecolor="none",
+                label="Original",
+            )
+        )
+
     # Store original dimensions for border scaling
     diff_x = xmax - xmin
     diff_y = ymax - ymin
@@ -1323,6 +1829,18 @@ def get_bounding_box(array, scale_border=0, square=False):
     xmax = min(array.shape[1] - 1, xmax + int(scale_border * diff_x))
     ymin = max(0, ymin - int(scale_border * diff_y))
     ymax = min(array.shape[0] - 1, ymax + int(scale_border * diff_y))
+
+    if debug:
+        ax.add_patch(
+            Rectangle(
+                (xmin, ymin),
+                xmax - xmin,
+                ymax - ymin,
+                edgecolor="blue",
+                facecolor="none",
+                label="Scaled",
+            )
+        )
 
     if square:
         # Recalculate dimensions after border scaling
@@ -1346,6 +1864,23 @@ def get_bounding_box(array, scale_border=0, square=False):
 
             xmin = max(0, xmin - pad_left)
             xmax = min(array.shape[1] - 1, xmax + pad_right)
+
+        if debug:
+            ax.add_patch(
+                Rectangle(
+                    (xmin, ymin),
+                    xmax - xmin,
+                    ymax - ymin,
+                    edgecolor="green",
+                    facecolor="none",
+                    label="Square",
+                )
+            )
+
+    if debug:
+        ax.legend()
+        current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        plt.savefig(os.path.join(current_dir, "plots/bounding_box.png"))
 
     return xmin, xmax, ymin, ymax
 
@@ -1984,3 +2519,151 @@ def display_fitsmap(field, out_dir="/nvme/scratch/work/tharvey/fitsmap/", x=800,
     os.system("fitsmap serve &")
 
     return display(IFrame("http://localhost:8000//", x, y))  # noqa: F821
+
+
+def gradient_path_effect(
+    levels=30, max_width=4, color="black", min_alpha=0.1, max_alpha=0.5, scale="log", line_lw=0
+):
+    path_effects = []
+
+    # generate alpha range using scale to distribute the levels
+    if scale == "log":
+        alphas = np.logspace(np.log10(min_alpha), np.log10(max_alpha), levels)
+    elif scale == "linear":
+        alphas = np.linspace(min_alpha, max_alpha, levels)
+    elif scale == "sqrt":
+        alphas = np.linspace(min_alpha**2, max_alpha**2, levels) ** 0.5
+
+    alphas = alphas[::-1]
+
+    for i in range(levels):
+        alpha = alphas[i]
+        width = line_lw + max_width * i / levels
+        path_effects.append(
+            SimpleLineShadow(offset=(0, 0), shadow_color=color, alpha=alpha, linewidth=width)
+        )
+
+    return path_effects
+
+
+def plot_with_shadow(
+    ax,
+    x,
+    y,
+    lw=2,
+    path_effect_kws={
+        "levels": 10,
+        "max_width": 15,
+        "color": "black",
+        "max_alpha": 0.1,
+        "min_alpha": 0.01,
+        "scale": "log",
+    },
+    **kwargs,
+):
+    default_kwargs = {"zorder": 3, "lw": lw}
+    default_kwargs.update(kwargs)
+    if "shadow_zorder" in default_kwargs:
+        default_kwargs["zorder"] = default_kwargs["shadow_zorder"]
+        default_kwargs.pop("shadow_zorder")
+
+    label = ""
+    if "label" in default_kwargs:
+        label = default_kwargs["label"]
+        default_kwargs.pop("label")
+
+    default_kwargs["alpha"] = 0
+    path_effects = gradient_path_effect(**path_effect_kws, line_lw=lw)
+    lines = ax.plot(x, y, **default_kwargs)
+    default_kwargs["alpha"] = kwargs.get("alpha", 1)
+    for line in lines:
+        line.set_path_effects(path_effects)
+    lines_normal = [ax.plot(l.get_xdata(), l.get_ydata())[0] for l in lines]
+    for l, ln in zip(lines, lines_normal):
+        ln.update_from(l)
+        ln.set_path_effects([Normal()])
+
+    default_kwargs["zorder"] = kwargs.get("zorder", 4)
+    default_kwargs["label"] = label
+    lines = ax.plot(x, y, **default_kwargs)
+
+
+def renorm_psf(psfmodel, filt, fov=4.04, pixscl=0.03):
+    """
+    Renormalize the PSF model to account for missing flux.
+
+    Parameters:
+    psfmodel (array): The PSF model.
+    filt (str): The filter for which the PSF model is being generated.
+    fov (float): The field of view (FOV) of the PSF in arcseconds.
+    pixscl (float): The pixel scale of the PSF model in arcseconds per pixel.
+
+    Returns:
+    array: The renormalized PSF model.
+
+    """
+
+    filt = filt.upper()
+
+    # Encircled energy for WFC3 IR within 2" radius, ACS Optical, and UVIS from HST docs
+    encircled = {}
+    encircled["F225W"] = 0.993
+    encircled["F275W"] = 0.984
+    encircled["F336W"] = 0.9905
+    encircled["F435W"] = 0.979
+    encircled["F606W"] = 0.975
+    encircled["F775W"] = 0.972
+    encircled["F814W"] = 0.972
+    encircled["F850LP"] = 0.970
+    encircled["F098M"] = 0.974
+    encircled["F105W"] = 0.973
+    encircled["F125W"] = 0.969
+    encircled["F140W"] = 0.967
+    encircled["F160W"] = 0.966
+    encircled["F090W"] = 0.9837
+    encircled["F115W"] = 0.9822
+    encircled["F150W"] = 0.9804
+    encircled["F200W"] = 0.9767
+    encircled["F277W"] = 0.9691
+    encircled["F356W"] = 0.9618
+    encircled["F410M"] = 0.9568
+    encircled["F444W"] = 0.9546
+
+    # These taken from the Encircled_Energy ETC numbers
+    encircled["F140M"] = 0.984
+    encircled["F162M"] = 0.982
+    encircled["F182M"] = 0.980
+    encircled["F210M"] = 0.978
+    encircled["F250M"] = 0.971
+    encircled["F300M"] = 0.967
+    encircled["F335M"] = 0.963
+    encircled["F360M"] = 0.958
+    encircled["F430M"] = 0.956
+
+    # Normalize to correct for missing flux
+    # Has to be done encircled! Ensquared were calibated to zero angle...
+    w, h = np.shape(psfmodel)
+    Y, X = np.ogrid[:h, :w]
+    r = fov / 2.0 / pixscl
+    center = [w / 2.0, h / 2.0]
+    dist_from_center = np.sqrt((X - center[0]) ** 2 + (Y - center[1]) ** 2)
+    psfmodel /= np.sum(psfmodel[dist_from_center < r])
+    if filt in encircled:
+        psfmodel *= encircled[filt]  # to get the missing flux accounted for
+    else:
+        print(f"WARNING -- I DO NOT HAVE ENCIRCLED ENERGY FOR {filt}! SKIPPING NORM.")
+
+    return psfmodel
+
+
+# Via Stack Overflow
+# https://stackoverflow.com/questions/11130156/suppress-stdout-stderr-print-from-python-functions
+# Via gist https://gist.github.com/vikjam/755930297430091d8d8df70ac89ea9e2
+
+
+@contextmanager
+def suppress_stdout_stderr():
+    """A context manager that redirects stdout and stderr to devnull"""
+    with open(os.devnull, "w") as fnull:
+        with redirect_stderr(fnull) as err, redirect_stdout(fnull) as out:
+            yield (err, out)
