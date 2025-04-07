@@ -41,9 +41,11 @@ This example shows an example of the interactive interface for EAZY SED fitting,
 
 To install, clone the repository and run `pip install .` in the root directory. For best results, also install our fork of Bagpipes from [here](https://github.com/tHarvey303/bagpipes). 
 
-## Usage
+## Examples
 
-Example scripts and notebooks are provided in the scripts directory. Better documentation is coming soon.
+There is a notebook (examples/intro.ipynb) which goes over the basic features of EXPANSE from the beginning of loading in the data. All the plots for the EXPANSE paper are available in scripts/outshining_paper_figure.ipynb, which show more advanced usage. The examples/documentation are a work in progress.
+
+Please get in touch if you're interested in using the code, I'm happy to chat!
 
 To lauch the viewer, run `expanse-viewer` in the terminal after installation.
 
