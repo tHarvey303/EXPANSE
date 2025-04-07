@@ -17,7 +17,6 @@ from astropy.visualization import (
 from astropy.wcs import WCS
 from matplotlib.patches import ConnectionPatch, Rectangle
 from matplotlib.patheffects import withStroke
-from regions import SkyRegion
 from tqdm import tqdm
 
 from ..utils import compass
@@ -794,6 +793,7 @@ def create_plot_with_insets(
 def load_regions_from_reg(reg_path, wcs=None):
     reg = regions.Regions.read(reg_path)
     regions_list = []
+    from regions import SkyRegion
 
     for r in reg:
         # Check if class is inherited from SkyRegion
