@@ -41,6 +41,12 @@ try:
     from prospect.plotting.utils import boxplot, sample_prior
 except ImportError as e:
     print(e)
+
+    # make a dummy class to avoid import errors - yes this is a hack
+    class FigureMaker:
+        def __init__(self, *args, **kwargs):
+            pass
+
     pass
 
 

@@ -353,9 +353,7 @@ db_dict = copy.deepcopy(overall_dict)
 # -------------------------------------------------------------------------------------
 # Do a resolved fit with a continuity bursty SFH
 
-fit_instructions_resolved_bursty = copy.deepcopy(
-    fit_instructions_continuity_bursty
-)
+fit_instructions_resolved_bursty = copy.deepcopy(fit_instructions_continuity_bursty)
 
 meta_resolved_bursty = {
     "run_name": "BURSTY_SFH_RESOLVED",
@@ -384,6 +382,62 @@ def create_dicts(
     first_bin=10 * u.Myr,
     second_bin=None,
 ):
+    """
+    Create a list of dictionaries from a template dictionary.
+    This is useful for creating multiple dictionaries with the same
+    structure, but different values for certain keys.
+
+    Parameters
+    ----------
+    dict : dict
+        The template dictionary to copy.
+    num : int
+        The number of dictionaries to create.
+    override_meta : dict, optional
+        A dictionary of metadata to override in the template dictionary.
+        The default is None. Options are:
+        - "binmap_type": str
+            Which photometry to fit.
+        - "name_append": str
+            A string to append to the run name.
+        - "remove": list
+            A list of keys to remove from the template dictionary.
+        - "redshift": str
+            The redshift to use for the fit. This can be a string or a list of strings. E.g. 'eazy', 'self', or the name of another Bagpipes run.
+        - "redshift_id": str
+            If getting the redshift from a previous Bagpipes run, this is the ID of the galaxy to use.
+        - "redshift_sigma": str
+            The redshift uncertainty to use. This can be a None, a float, a string or a list of strings. E.g. 'eazy', 'self', or the name of another Bagpipes run.
+        - "min_redshift_sigma": float
+            The minimum redshift uncertainty to use. The default is 0.5.
+        - "sampler": str
+            The sampler to use. The default is "multinest".
+        - "run_name": str
+            The name of the run.
+        - "use_bpass": bool
+            Whether to use BPASS models or not. The default is True.
+        - "fit_photometry": str
+            The photometry to fit. The default is "TOTAL_BIN". Overrides what is set in run_bagpipes if it exists.
+        - "update_cont_bins": bool
+            Whether to update the continuity bin edges based on the redshift. The default is False.
+        - "cont_nbins": int
+            The number of bins to use for the continuity SFH. The default is 6.
+        - "cont_first_bin": astropy Quantity
+            The first bin edge for the continuity SFH. The default is 10 * u.Myr.
+
+    redshifts : list, optional
+        A list of redshifts to use for updating the continuity bin edges.
+        The default is None.
+    cont_nbins : int, optional
+        The number of bins to use for the continuity SFH. The default is 6.
+    first_bin : astropy Quantity, optional
+        The first bin edge for the continuity SFH. The default is 10 * u.Myr.
+    second_bin : astropy Quantity, optional
+        The second bin edge for the continuity SFH. The default is None.
+        If None, the bin edges will be calculated based on the redshift.
+
+
+    """
     dict = copy.deepcopy(dict)
     override_meta = copy.deepcopy(override_meta)
 
@@ -400,10 +454,7 @@ def create_dicts(
         dict["meta"].update(override_meta)
 
     results = [copy.deepcopy(dict) for i in range(num)]
-    if (
-        redshifts is not None
-        and "continuity" in dict["fit_instructions"].keys()
-    ):
+    if redshifts is not None and "continuity" in dict["fit_instructions"].keys():
         assert len(redshifts) == num
         print("Updating continuity bin edges for redshifts")
         for redshift, result in zip(redshifts, results):

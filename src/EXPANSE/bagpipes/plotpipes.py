@@ -871,8 +871,6 @@ class PipesFitNoLoad:
 
             times = age_of_universe_at_z - times
 
-            print(times)
-
             if modify_ax:
                 ax.set_xlim(age_of_universe_at_z.to(timescale).value, 0)
 

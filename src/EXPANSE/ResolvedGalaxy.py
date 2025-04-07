@@ -20,6 +20,7 @@ from io import BytesIO
 from pathlib import Path
 
 import astropy.units as u
+import cmasher  # noqa: E402, F401
 import h5py as h5
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -5201,7 +5202,7 @@ class ResolvedGalaxy:
 
     def pixedfit_processing(
         self,
-        use_galfind_seg=True,
+        use_internal_seg=True,
         seg_combine=["F277W", "F356W", "F444W"],
         gal_region_use="pixedfit",
         dir_images=resolved_galaxy_dir,
@@ -5210,6 +5211,32 @@ class ResolvedGalaxy:
         overwrite=False,
         load_anyway=True,  # Won't overwrite, but will create the object.
     ):
+        """
+        Uses piXedfit to create a galaxy region and makes inputs for pixedfit.
+
+        Parameters
+        ----------
+
+        use_internal_seg: bool
+            If True, use the segmentation map from the internal galaxy. If False, make a segmentation map using sep.
+        seg_combine: list
+            List of bands to combine for the segmentation map. Default is ['F277W', 'F356W', 'F444W'].
+        gal_region_use: str
+            The key to use for the galaxy region. Default is 'pixedfit'. This can either be
+            an exisiting region in self.gal_region, or 'pixedfit' to allow pixedfit to compute it from the segmentation maps,
+            or 'detection' to compute it from the detection segmentation map.
+        dir_images: str
+            Directory to save the images. Default is resolved_galaxy_dir.
+        override_psf_type: str
+            If set, will override the psf_type used for the images. Default is None.
+        use_all_pixels: bool
+            If True, use all pixels in the cutouts. If False, use the pixels in the galaxy region.
+        overwrite: bool
+            If True, overwrite the existing images. Default is False.
+        load_anyway: bool
+            If True, create the pixedfit processing object even if the images already exist. Default is True.
+
+        """
         if hasattr(self, "use_psf_type") and override_psf_type is None:
             psf_type = self.use_psf_type
         else:
@@ -5335,7 +5362,7 @@ class ResolvedGalaxy:
 
         seg_type = "galfind"
         # Get galaxy region from segmentation map
-        if not use_galfind_seg:
+        if not use_internal_seg:
             print("Making segmentation maps")
             img_process.segmentation_sep()
             self.seg_imgs = img_process.seg_maps
@@ -5373,16 +5400,17 @@ class ResolvedGalaxy:
 
         if self.gal_region is None:
             self.gal_region = {}
-        galaxy_region = img_process.galaxy_region(segm_maps_ids=segm_maps_ids)
+
+        if "pixedfit" in gal_region_use:
+            galaxy_region = img_process.galaxy_region(segm_maps_ids=segm_maps_ids)
+
+        elif gal_region_use == "detection":
+            galaxy_region = self.add_det_galaxy_region(overwrite=overwrite, force=True)
+            seg_type = "detection"
+        elif gal_region_use in self.gal_region.keys():
+            galaxy_region = self.gal_region[gal_region_use]
 
         self.gal_region[gal_region_use] = galaxy_region
-
-        if gal_region_use == "detection":
-            galaxy_region = self.add_det_galaxy_region(overwrite=overwrite, force=True)
-            det_gal_mask = copy.deepcopy(self.gal_region["detection"]).astype(int)
-            seg_type = "detection"
-
-        # Difference between gal_region - which I think is one image for all bands.
 
         # Calculate maps of multiband fluxes
         flux_maps_fits = f"{dir_images}/{self.survey}_{self.galaxy_id}_fluxmap.fits"
@@ -6543,6 +6571,19 @@ class ResolvedGalaxy:
         override_psf_type=None,
         mask=None,
     ):
+        """
+        Make a boolean galaxy region based on pixels in band_req that have SNR > snr_req
+
+        Parameters
+        ----------
+        snr_req : float - SNR requirement for galaxy region
+        band_req : which band to use for SNR calculation.
+        region_name : str - name of galaxy region. If "auto", use SNR_<snr_req>_<band_req>
+        overwrite : bool - overwrite existing galaxy region
+        override_psf_type : str - which PSF type to use. If None, use self.use_psf_type
+        mask : str or np.ndarray - mask to apply to galaxy region. If str, use self.gal_region[mask]. If None, no mask is applied.
+                If it starts with "seg_", we will use a segmentation map to mask the galaxy region.
+        """
         # Make a boolean galaxy region based on pixels in band_req that have SNR > snr_req
 
         # Use PSF matched data
@@ -6599,6 +6640,19 @@ class ResolvedGalaxy:
             if type(mask) is str:
                 if mask in self.gal_region.keys():
                     mask = self.gal_region[mask]
+
+                elif mask.startswith("seg_"):
+                    mask = copy.copy(self.unmatched_seg[mask.replace("seg_", "")])
+                    if len(np.unique(mask)) > 2:
+                        # Take value at center as 1, set all other values to 0
+                        new_mask = np.zeros_like(mask)
+                        new_mask[
+                            mask == mask[int(self.cutout_size / 2), int(self.cutout_size / 2)]
+                        ] = 1
+                        mask = new_mask
+
+                    mask = mask.astype(bool)
+
                 else:
                     raise ValueError(
                         f"Mask {mask} not found in galaxy region: {self.gal_region.keys()}"
@@ -7262,7 +7316,7 @@ class ResolvedGalaxy:
         save_full_posteriors=False,
         save_spectra=False,
         save_sfh=False,
-        parameters_to_save=["mstar", "sfr", "Av", "Z", "z"],
+        parameters_to_save=["mstar", "sfr", "dust", "met", "zval"],
         verbose=True,
     ):
         # import dense_basis as db
@@ -7375,6 +7429,10 @@ class ResolvedGalaxy:
             path=f"{os.path.dirname(db_atlas_path)}/",
         )
 
+        with h5.File(db_atlas_path, "r") as f:
+            atlas_bands = f.attrs["bands"]
+            atlas_bands = ast.literal_eval(atlas_bands)
+
         if n_jobs > 1:
             fit_results = Parallel(n_jobs=n_jobs)(
                 delayed(run_db_fit_parallel)(
@@ -7430,6 +7488,7 @@ class ResolvedGalaxy:
             parameters_to_save=parameters_to_save,
             additional_name=additional_name,
             plot=plot,
+            atlas_bands=atlas_bands,
         )
 
         return fit_results
@@ -7443,11 +7502,17 @@ class ResolvedGalaxy:
         save=False,
         save_path="",
         priors=None,
+        atlas_bands=None,
     ):
         # Plot the results of the dense_basis fit
 
         self.get_filter_wavs()
-        wavs = np.array([self.filter_wavs[band].to(u.Angstrom).value for band in self.bands])
+        if atlas_bands is not None:
+            bands = [band for band in self.bands if band in atlas_bands]
+        else:
+            bands = self.bands
+
+        wavs = np.array([self.filter_wavs[band].to(u.Angstrom).value for band in bands])
 
         if save_path == "":
             # Get path of the current directory
@@ -7505,6 +7570,7 @@ class ResolvedGalaxy:
         save_sfh=False,
         additional_name="",
         plot=False,
+        atlas_bands=None,
     ):
         """
         Save the dense_basis fit results to the h5 file
@@ -7629,7 +7695,12 @@ class ResolvedGalaxy:
 
             if plot:
                 self._plot_dense_basis_results(
-                    fit_results, ids, db_atlas_name, save=True, priors=priors
+                    fit_results,
+                    ids,
+                    db_atlas_name,
+                    save=False,
+                    priors=priors,
+                    atlas_bands=atlas_bands,
                 )
 
             if save_sfh:
@@ -9161,7 +9232,6 @@ class ResolvedGalaxy:
         )
 
         fit_instructions = bagpipes_config.get("fit_instructions", {})
-
         use_bpass = meta.get("use_bpass", False)
         os.environ["use_bpass"] = str(int(use_bpass))
         run_name = meta.get("run_name", "default")
@@ -9206,7 +9276,6 @@ class ResolvedGalaxy:
 
         if return_run_args:
             rank = 10  # Skips making folders etc.
-
         redshift_sigma = meta.get("redshift_sigma", 0)
         min_redshift_sigma = meta.get("min_redshift_sigma", 0)
         sampler = meta.get("sampler", "multinest")
@@ -9527,7 +9596,7 @@ class ResolvedGalaxy:
                 "binmap_type": binmap_type,
                 "psf_type": psf_type,
                 "redshift": redshift,
-                "redshift_sigma": redshift_sigma,
+                "redshift_sigma": str(redshift_sigma),
                 "fit_photometry": fit_photometry,
                 "exclude_bands": exclude_bands,
             }
@@ -9553,8 +9622,13 @@ class ResolvedGalaxy:
         except:
             raise Exception(f"Catalog {catalog_path} not found")
 
+        from astropy.io.fits.card import Undefined
+
         if meta is not None:
             table.meta.update(meta)
+            for key, value in table.meta.items():
+                if isinstance(value, Undefined):
+                    table.meta.pop(key)
             # Save meta out to the table
             table.write(catalog_path, format="fits", overwrite=True)
 
@@ -10019,7 +10093,7 @@ class ResolvedGalaxy:
                 facecolor=facecolor,
             )
         if bins_to_show == "all":
-            bins_to_show = np.unique(table["bin"])
+            bins_to_show = np.unique(table["#ID"])
 
         if type(marker_colors) is str:
             marker_colors = [marker_colors for i in range(len(bins_to_show))]
@@ -10324,12 +10398,12 @@ class ResolvedGalaxy:
             cmap = plt.get_cmap(cmap)
             marker_colors = cmap(np.linspace(0, 1, len(bins_to_show)))
             # marker_colors = [marker_colors for i in range(len(bins_to_show))]
-
         if plottype == "lookback":
             save_name = run_name
         elif plottype == "absolute":
             save_name = f"{run_name}_absolute"
 
+        redshifts = []
         if cache is None:
             cache = {}
         for (
@@ -10349,6 +10423,9 @@ class ResolvedGalaxy:
                         x_all = resolved_sfh[:, 0] * u.Gyr
                         x_all = x_all.to(time_unit).value
                         if plot:
+                            redshifts.append(
+                                self.sed_fitting_table["bagpipes"][run_name]["input_redshift"][0]
+                            )
                             from .utils import plot_with_shadow
 
                             plot_with_shadow(
@@ -10398,6 +10475,7 @@ class ResolvedGalaxy:
                                 cosmo=None,
                                 label=rbin,
                                 return_sfh=True,
+                                modify_ax=False,
                             )
                             if pos == 0:
                                 x_all = tx
@@ -10414,8 +10492,10 @@ class ResolvedGalaxy:
                             print(e)
                             # print(traceback.format_exc())
                             continue
-
                     if set:
+                        redshifts.append(
+                            self.sed_fitting_table["bagpipes"][run_name]["input_redshift"][0]
+                        )
                         if plot:
                             axes.plot(
                                 x_all,
@@ -10464,6 +10544,7 @@ class ResolvedGalaxy:
                         cache=cache,
                         plotpipes_dir=plotpipes_dir,
                     )
+                    redshifts.append(pipes_obj._get_redshift())
                 except FileNotFoundError as e:  #
                     print(e)
                     print(f"File not found for {run_name} {rbin} (sfh)")
@@ -10484,10 +10565,22 @@ class ResolvedGalaxy:
         if plot and legend:
             axes.legend(fontsize=8)
 
+        redshifts = np.array(redshifts)
+        redshift = np.min(redshifts)
+
         # Set xlim to maximum age given self.redshift
         if plot:
-            axes.set_xlim(0, 1.2 * cosmo.age(self.redshift).to(time_unit).value)
-            axes.set_xlabel(f"Time ({time_unit})")
+            if plottype == "lookback":
+                axes.set_xlim(0, 1.2 * cosmo.age(redshift).to(time_unit).value)
+                a = "Lookback Time"
+
+            elif plottype == "absolute":
+                axes.set_xlim(
+                    cosmo.age(redshift).to(time_unit).value, (100 * u.Myr).to(time_unit).value
+                )
+                a = "Age of Universe"
+
+            axes.set_xlabel(f"{a} ({time_unit})")
             axes.set_ylabel(r"SFR (M$_\odot$ yr$^{-1}$)")
 
         # cbar.set_label('Age (Gyr)', labelpad=10)
@@ -11129,8 +11222,11 @@ class ResolvedGalaxy:
     ):
         if fig is None:
             fig = plt.figure(figsize=(6, 3), constrained_layout=True, facecolor="white")
-        if ax_sed is None:
-            ax = fig.add_subplot(111)
+        if ax_sed is None and ax_pz is None:
+            ax_sed = fig.add_subplot(121)
+            ax_pz = fig.add_subplot(122)
+        elif ax_sed is None:
+            ax_sed = fig.add_subplot(111)
 
         idx = np.where(ez.OBJID == id)[0][0]
         if ax_pz is not None:
@@ -12454,6 +12550,16 @@ class ResolvedGalaxy:
         cmap="cmr.guppy",
         alpha=1,
         fontsize=8,
+        extra_colors=[
+            "firebrick",
+            "orange",
+            "gold",
+            "yellowgreen",
+            "limegreen",
+            "cyan",
+            "blue",
+            "purple",
+        ],
     ):
         """
 
@@ -12504,8 +12610,6 @@ class ResolvedGalaxy:
 
         bins_to_load = []
 
-        show_combined_pdf = False
-
         numbered_bins = []
         for bin in table["#ID"]:
             try:
@@ -12515,7 +12619,6 @@ class ResolvedGalaxy:
 
         if "all" in bins_to_show:
             bins_to_load = copy.copy(numbered_bins)
-            show_combined_pdf = True
 
         for rbin in bins_to_show:
             if rbin not in bins_to_load and rbin != "all":
@@ -12529,14 +12632,19 @@ class ResolvedGalaxy:
                 colors = cm.get_cmap(cmap, len(bins_to_load))
                 colors = {rbin: colors(i) for i, rbin in enumerate(bins_to_load)}
 
-        if type(colors) is list:
+            for bin in bins_to_show:
+                i = 0
+                if bin not in colors.keys() and not bin.isnumeric():
+                    colors[bin] = extra_colors[i]
+                    i += 1
+
+        elif type(colors) is list:
             if colors_from_full_dist:
                 assert len(colors) == len(numbered_bins), "Need to provide a color for each bin"
                 colors = {rbin: colors[i] for i, rbin in enumerate(numbered_bins)}
             else:
                 assert len(colors) == len(bins_to_load), "Need to provide a color for each bin"
                 colors = {rbin: colors[i] for i, rbin in enumerate(bins_to_load)}
-
         samples = {}
         for rbin in bins_to_load:
             try:
@@ -12581,6 +12689,7 @@ class ResolvedGalaxy:
                 color=colors[rbin],
                 percentiles=False,
                 lw=1,
+                label=str(rbin),
                 alpha=alpha,
                 fill_between=fill_between,
                 norm_height=True,
