@@ -28,6 +28,15 @@ Python package to perform resolved SED fitting using publically availabe SED fit
 6. More radial/annular tools - annular SED fitting, radial profiles of properties etc.
 7. Bug fixes, documentation and examples.
 
+## Examples of GUI
+
+Here are a couple of examples of some of the GUI features, including an interface to plot and compare the SED fitting results - SED plots, resolved parameter maps, SFH, corner plots.
+
+![GUI 1](https://github.com/tHarvey303/EXPANSE/blob/master/src/EXPANSE/gui/examples/EXPANSE_1.png)
+
+This example shows an example of the interactive interface for EAZY SED fitting, which lets you place manual apertures and regions and fit their photometry. 
+![GUI 2](https://github.com/tHarvey303/EXPANSE/blob/master/src/EXPANSE/gui/examples/EXPANSE_2.png)
+
 ## Installation
 
 To install, clone the repository and run `pip install .` in the root directory. For best results, also install our fork of Bagpipes from [here](https://github.com/tHarvey303/bagpipes). 
