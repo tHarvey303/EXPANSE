@@ -6,7 +6,6 @@ import astropy.units as u
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import regions
 from astropy.io import fits
 from astropy.visualization import (
     AsymmetricPercentileInterval,
@@ -791,13 +790,14 @@ def create_plot_with_insets(
 
 
 def load_regions_from_reg(reg_path, wcs=None):
+    import regions
+
     reg = regions.Regions.read(reg_path)
     regions_list = []
-    from regions import SkyRegion
 
     for r in reg:
         # Check if class is inherited from SkyRegion
-        if issubclass(type(r), SkyRegion):
+        if issubclass(type(r), regions.SkyRegion):
             r = r.to_pixel(wcs)
 
         x_center = r.center.x
