@@ -2266,12 +2266,13 @@ if __name__ == "__main__":
     surveys = [f"CEERSP{i}" for i in range(1, 11)]
     surveys = ["JOF"]  # ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
     surveys = ["EGS"]
+    surveys = ["CEERSP5"]
     # surveys = [[f"COSMOS-Web-{i}A", f"COSMOS-Web-{i}B"] for i in range(0, 7)]
     # flatten list
     # surveys = [item for sublist in surveys for item in sublist]
     print(surveys)
     outdir_name = "+".join(surveys)
-    outdir_name == "EGS"
+    # outdir_name == "EGS"
     # outdir_name = "COSMOS-Web"
     #
     version = "v11"
@@ -2421,7 +2422,7 @@ if __name__ == "__main__":
     phot_zp = {}
     for band in ["F814W", "F606W"]:
         bands.insert(0, band)
-        band_path = f"/raid/scratch/data/jwst/ceers/ancillary/hlsp_candels_hst_acs_egs-tot-30mas_{band.lower()}_v1.0_drz.fits"
+        band_path = f'/raid/scratch/data/hst/{surveys[0]}/ACS_WFC/mosaic_1084_wisptemp2/30mas/ACS_WFC_{band.replace("F", "f")}_{surveys[0]}_drz_aligned.fits'
         # band_path = f"/raid/scratch/data/hst/JOF/ACS_WFC/30mas/ACS_WFC_{band}_JOF_drz.fits"
 
         im_paths[band] = [band_path]

@@ -9259,6 +9259,21 @@ class ResolvedGalaxy:
                     redshift = float(table["redshift_50"][0])
                 elif "input_redshift" in table.colnames:
                     redshift = float(table["input_redshift"][0])
+            elif redshift in self.meta_properties.keys():
+                print(f"Using redshift from meta_properties: {redshift}")
+                redshift = self.meta_properties[redshift]
+            elif (
+                hasattr(self, "interactive_outputs") and redshift in self.interactive_outputs.keys()
+            ):
+                print(f"Using redshift from interactive outputs: {redshift}")
+                key = meta.get("redshift_key", "z_best")
+                if key in self.interactive_outputs[redshift]["meta"].keys():
+                    redshift = self.interactive_outputs[redshift]["meta"][key]
+                else:
+                    raise Exception(
+                        f"Redshift key {key} not found in interactive outputs for {redshift}"
+                    )
+
         try:
             from mpi4py import MPI
 
@@ -9302,7 +9317,7 @@ class ResolvedGalaxy:
             print(
                 f"Fitting Redshift = {redshift}, Redshift sigma = {redshift_sigma}, allowed range = ({redshift - 3*redshift_sigma}, {redshift + 3*redshift_sigma})"
             )
-        elif redshift_sigma is None and type(redshift) in [float, np.float64]:
+        elif redshift_sigma is None and type(redshift) in [float, np.float64, np.float32]:
             print(f"Fitting fixed redshift = {redshift}.")
         elif type(redshift) in [list, np.ndarray, tuple]:
             assert len(redshift) == 2, "Redshift must be a float or a list of length 2"
@@ -10824,6 +10839,8 @@ class ResolvedGalaxy:
         update_meta_properties=False,
         exclude_bands=[],
         plot=False,
+        custom_append="",
+        **kwargs,
     ):
         """
         Wrapper function for fit_eazy_photometry. Provides either
@@ -10839,6 +10856,9 @@ class ResolvedGalaxy:
         flux_errs = arr[:, 1] * u.uJy
 
         name = f"{phot_name}_{template_name}_{min_percentage_err}"
+
+        if custom_append:
+            name += f"_{custom_append}"
 
         if len(exclude_bands) > 0:
             name += f"_exclude_{exclude_bands}"
@@ -10863,6 +10883,7 @@ class ResolvedGalaxy:
             save_tempfilt_path=save_tempfilt_path,
             tempfilt=tempfilt,
             exclude_bands=exclude_bands,
+            **kwargs,
         )
 
         meta_dict = self.save_eazy_outputs(ez, [name], [fluxes], [flux_errs], save_txt=False)
@@ -10896,6 +10917,7 @@ class ResolvedGalaxy:
         z_max=20.0,
         z_step=0.01,
         min_flux_pc_err=0.05,
+        add_cgm=False,  # Asada+24 damping wing
     ):
         from eazy.photoz import PhotoZ
 
@@ -10972,6 +10994,7 @@ class ResolvedGalaxy:
                 fix_zspec=False,
                 cat_flux_unit=unit,
                 template_dir=template_dir,
+                add_cgm=add_cgm,
             )
 
             print(params)
@@ -10982,6 +11005,8 @@ class ResolvedGalaxy:
 
             if exclude_bands:
                 tempfilt_path += f"_exclude_{'_'.join(exclude_bands)}"
+            if add_cgm:
+                tempfilt_path += "_cgm"
             tempfilt_path += "_tempfilt.pkl"
 
             if load_tempfilt:
@@ -17631,10 +17656,10 @@ class ResolvedGalaxies(np.ndarray):
                 rfunction = function
             rfunction(*args, **kwargs)
 
-    def filter_single_bins(self, binmap):
+    def filter_single_bins(self, binmap, min=1):
         bins = np.array([galaxy.get_number_of_bins(binmap) for galaxy in self.galaxies])
         # return a view of the galaxy array with galaxies which have > 1 bin
-        return self[bins > 1]
+        return self[bins > min]
 
     def filter_IDs(self, IDs, invert=False):
         mask = np.array([galaxy.galaxy_id in IDs for galaxy in self.galaxies])
