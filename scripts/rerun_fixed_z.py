@@ -33,9 +33,7 @@ binmap_type = "voronoi"
 load_only = False
 fit_photometry = "bin"
 
-galaxies = ResolvedGalaxy.init_all_field_from_h5(
-    "JOF_psfmatched", "/raid1/scratch/tharvey/EXPANSE/galaxies/", n_jobs=6
-)
+galaxies = ResolvedGalaxy.init_all_field_from_h5("JOF_psfmatched", galaxies_dir, n_jobs=6)
 
 galaxies = ResolvedGalaxies(galaxies)
 

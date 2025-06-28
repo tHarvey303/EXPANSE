@@ -4244,6 +4244,9 @@ class ResolvedGalaxy:
 
                         copy_attrs(old_hfile, hfile)
 
+        except KeyboardInterrupt:
+            print("KeyboardInterrupt: Finishing writing to .h5")
+
         except FileNotFoundError as e:  # ValueError
             print(f"Blocking Error: {e}")
             traceback.format_exc()
