@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from typing import Optional, Tuple
 
 import h5py as h5
 import matplotlib as mpl
@@ -1326,7 +1327,7 @@ class FieldInfo:
             # Check if all PSFs are in the same folder
             psf_folders = set([os.path.dirname(path) for path in self.psf_paths.values()])
             if len(psf_folders) == 1:
-                self.psf_folder = psf_folders[0]
+                self.psf_folder = psf_folders.pop()
 
         if self.any_psf_kernel:
             # Check if all PSFs are in the same folder
@@ -1334,7 +1335,7 @@ class FieldInfo:
                 [os.path.dirname(path) for path in self.psf_kernel_paths.values()]
             )
             if len(psf_kernel_folders) == 1:
-                self.psf_kernel_folder = psf_kernel_folders[0]
+                self.psf_kernel_folder = psf_kernel_folders.pop()
 
         self.psf_matched_image_paths = {
             band.band_name: band.psf_matched_image_path for band in band_info_list
@@ -1582,7 +1583,9 @@ def compass(
             north_coord_pix[1] - origin_coord_pix[1],
             north_coord_pix[0] - origin_coord_pix[0],
         )
-
+    else:
+        raise ValueError("x_ax must be 'ra' or 'dec'.")
+    
     if return_ang:
         return np.degrees(ang)
 
@@ -2667,3 +2670,394 @@ def suppress_stdout_stderr():
     with open(os.devnull, "w") as fnull:
         with redirect_stderr(fnull) as err, redirect_stdout(fnull) as out:
             yield (err, out)
+
+
+
+def _cf_periodicity_dilution_correction_standalone(cf_shape: Tuple[int, int]) -> np.ndarray:
+    """
+    Calculates the correction factor for DFT-based Correlation Function estimation
+    to account for the assumption of periodicity.
+    Ported from an internal GalSim function.
+
+    Args:
+        cf_shape: Tuple (Ny, Nx) representing the shape of the correlation function array.
+
+    Returns:
+        A 2D NumPy array with the correction factors.
+    """
+    ny, nx = cf_shape
+    
+    # Create coordinate arrays for frequency domain
+    # dx_coords corresponds to frequencies in the x-direction (columns)
+    # dy_coords corresponds to frequencies in the y-direction (rows)
+    dx_coords = np.fft.fftfreq(nx) * float(nx)
+    dy_coords = np.fft.fftfreq(ny) * float(ny)
+    
+    # Create 2D grids of these coordinates
+    # deltax will have shape (Ny, Nx) and vary along columns (axis 1)
+    # deltay will have shape (Ny, Nx) and vary along rows (axis 0)
+    deltax, deltay = np.meshgrid(dx_coords, dy_coords) 
+
+    denominator = (nx - np.abs(deltax)) * (ny - np.abs(deltay))
+    
+    # Avoid division by zero if denominator entries are zero,
+    # though this is unlikely with standard fftfreq outputs for valid shapes.
+    # np.finfo(float).eps could be added for numerical stability if needed.
+    valid_denominator = np.where(denominator == 0, 1.0, denominator) # Avoid true div by zero
+    
+    correction = (float(nx * ny)) / valid_denominator
+    if np.any(denominator == 0): # Put back zeros where they were to avoid infs if original was 0
+        correction[denominator == 0] = 0 # Or handle as error/warning
+
+    return correction
+
+def _generate_noise_from_rootps_standalone(
+    rng: np.random.Generator,
+    shape: Tuple[int, int],
+    rootps: np.ndarray
+) -> np.ndarray:
+    """
+    Generates a real-space noise field from its sqrt(PowerSpectrum).
+    Ported and adapted from an internal GalSim function.
+
+    Args:
+        rng: NumPy random number generator.
+        shape: Tuple (Ny, Nx) of the output real-space noise field.
+        rootps: The half-complex 2D array (Ny, Nx//2 + 1) representing
+                the square root of the Power Spectrum from rfft2.
+
+    Returns:
+        A 2D NumPy array representing the generated correlated noise field.
+    """
+    ny, nx = shape
+
+    # GalSim's GaussianDeviate implies specific scaling for random numbers.
+    # E[|gvec_k|^2] = Ny * Nx for each complex component k if parts are N(0, 0.5*Ny*Nx).
+    sigma_val_for_gvec_parts = np.sqrt(0.5 * ny * nx)
+    
+    gvec_real = rng.normal(scale=sigma_val_for_gvec_parts, size=rootps.shape)
+    gvec_imag = rng.normal(scale=sigma_val_for_gvec_parts, size=rootps.shape)
+    gvec = gvec_real + 1j * gvec_imag
+
+    # Impose Hermitian symmetry properties and scaling for DC/Nyquist terms.
+    # This ensures the iFFT results in a real field with correct variance distribution.
+    rt2 = np.sqrt(2.)
+
+    # DC component (ky=0, kx=0)
+    gvec[0, 0] = rt2 * gvec[0, 0].real
+
+    # Nyquist frequency for y-axis (ky=Ny/2) at kx=0 (if Ny is even)
+    if ny % 2 == 0:
+        gvec[ny // 2, 0] = rt2 * gvec[ny // 2, 0].real
+
+    # Nyquist frequency for x-axis (kx=Nx/2) at ky=0 (if Nx is even)
+    if nx % 2 == 0:
+        gvec[0, nx // 2] = rt2 * gvec[0, nx // 2].real
+
+    # Corner Nyquist component (ky=Ny/2, kx=Nx/2) (if both Ny and Nx are even)
+    if ny % 2 == 0 and nx % 2 == 0:
+        gvec[ny // 2, nx // 2] = rt2 * gvec[ny // 2, nx // 2].real
+    
+    # Conjugate symmetry for the kx=0 column (y-axis frequencies)
+    # gvec[Ny-row, 0] = conj(gvec[row, 0]) for row in 1 .. (Ny/2 - 1) or ((Ny-1)/2)
+    # This handles the negative y-frequencies for kx=0.
+    # The slice `ny-1 : ny//2 : -1` covers rows from Ny-1 down to (Ny//2 + 1).
+    # The slice `1 : (ny+1)//2` covers rows from 1 up to Ny//2.
+    if ny > 1: # This symmetry operation is relevant if Ny > 1 (or Ny > 2 for some ranges)
+         gvec[ny-1 : ny//2 : -1, 0] = np.conj(gvec[1 : (ny+1)//2, 0])
+
+    # Conjugate symmetry for the kx=Nx/2 column (if Nx is even)
+    # This handles negative y-frequencies for the Nyquist x-frequency.
+    if nx % 2 == 0:
+        kx_nyq_idx = nx // 2
+        if ny > 1:
+            gvec[ny-1 : ny//2 : -1, kx_nyq_idx] = np.conj(gvec[1 : (ny+1)//2, kx_nyq_idx])
+            
+    # Element-wise multiplication in Fourier space
+    noise_field_k_space = gvec * rootps
+    
+    # Inverse FFT to get the real-space noise field
+    # The `s` parameter ensures the output shape matches the desired `shape`.
+    noise_real_space = np.fft.irfft2(noise_field_k_space, s=shape)
+    
+    return noise_real_space
+
+def model_and_apply_correlated_noise(
+    source_image_arr: np.ndarray,
+    target_image_arr: np.ndarray,
+    subtract_mean: bool = False,
+    correct_periodicity: bool = True,
+    rng_seed: Optional[int] = None
+) -> np.ndarray:
+    """
+    Models correlated noise from a source image and applies it to a target image.
+
+    The noise model, represented by its Correlation Function (CF), is derived
+    from the `source_image_arr`. This CF is then used to generate a noise field
+    with similar statistical properties, which is subsequently added to the
+    `target_image_arr`.
+
+    This function assumes that the pixel scales of the source and target images
+    are comparable, or that the CF is intended to be interpreted in pixel units.
+    If the images possess different physical pixel scales, appropriate
+    pre-processing (e.g., resampling) might be necessary before using this function
+    for physically accurate noise transfer.
+
+    Args:
+        source_image_arr: A 2D NumPy array. This image is used to model the
+                          correlated noise characteristics.
+        target_image_arr: A 2D NumPy array. Correlated noise will be added to this image.
+        subtract_mean: If True, the mean of the `source_image_arr` is effectively
+                       removed before Power Spectrum estimation by setting the
+                       DC component (PS[0,0]) of the Power Spectrum to zero.
+        correct_periodicity: If True, a correction factor is applied to the
+                             estimated Correlation Function. This factor aims to
+                             compensate for the inherent assumption of periodicity
+                             in Discrete Fourier Transforms.
+        rng_seed: An optional integer seed for the random number generator.
+                  Providing a seed ensures reproducible noise generation.
+
+    Returns:
+        A new 2D NumPy array, which is the `target_image_arr` with the
+        synthesized correlated noise added to it.
+    """
+    if source_image_arr.ndim != 2 or target_image_arr.ndim != 2:
+        raise ValueError("Input images must be 2D numpy arrays.")
+
+    rng = np.random.default_rng(rng_seed)
+    source_shape = source_image_arr.shape
+
+    # --- Part 1: Model Noise (Correlation Function) from source_image_arr ---
+    # Calculate Fourier Transform of the source image
+    ft_array = np.fft.rfft2(source_image_arr)
+    
+    # Power Spectrum (PS) of the source image
+    ps_array_source = np.abs(ft_array)**2 
+    
+    # Normalize PS: Ensures iFFT(PS) results in a CF where CF[0,0] is the variance.
+    ps_array_source /= np.prod(source_shape)
+
+    if subtract_mean:
+        ps_array_source[0, 0] = 0.0 # Zero out DC component of PS
+
+    # Estimate Correlation Function (CF) from the normalized PS
+    # cf_array_prelim is unrolled (origin at [0,0] for DFT purposes)
+    cf_array_prelim = np.fft.irfft2(ps_array_source, s=source_shape)
+
+    if correct_periodicity:
+        correction = _cf_periodicity_dilution_correction_standalone(source_shape)
+        cf_array_prelim *= correction
+    
+    # cf_array_prelim now holds the noise model (unrolled CF).
+    # cf_array_prelim[0,0] approximates the variance of the source noise.
+
+    # --- Part 2: Prepare CF for target_image_arr dimensions ---
+    target_shape = target_image_arr.shape
+    
+    # "Draw" cf_array_prelim onto an array of target_shape.
+    # This involves rolling the source CF to center its peak, then
+    # cropping or padding it to match target dimensions (centers aligned),
+    # and finally unrolling it for FFT.
+    
+    # Roll source CF so that the peak (variance, originally at [0,0]) is at the center
+    cf_source_rolled = np.roll(
+        cf_array_prelim,
+        shift=(source_shape[0] // 2, source_shape[1] // 2),
+        axis=(0, 1)
+    )
+
+    # Create a rolled CF for the target shape by copying the central part of cf_source_rolled
+    cf_target_rolled = np.zeros(target_shape, dtype=float)
+    
+    src_cy, src_cx = source_shape[0] // 2, source_shape[1] // 2
+    trg_cy, trg_cx = target_shape[0] // 2, target_shape[1] // 2
+
+    # Define copy regions to place the center of source_cf onto the center of target_cf
+    # Source region to copy from:
+    y_start_src = max(0, src_cy - trg_cy)
+    y_end_src = min(source_shape[0], src_cy + (target_shape[0] - trg_cy))
+    x_start_src = max(0, src_cx - trg_cx)
+    x_end_src = min(source_shape[1], src_cx + (target_shape[1] - trg_cx))
+
+    # Target region to copy to:
+    y_start_trg = max(0, trg_cy - src_cy)
+    y_end_trg = min(target_shape[0], trg_cy + (source_shape[0] - src_cy))
+    x_start_trg = max(0, trg_cx - src_cx)
+    x_end_trg = min(target_shape[1], trg_cx + (source_shape[1] - src_cx))
+    
+    # Ensure the lengths of the regions to be copied match
+    dy = min(y_end_src - y_start_src, y_end_trg - y_start_trg)
+    dx = min(x_end_src - x_start_src, x_end_trg - x_start_trg)
+
+    if dy > 0 and dx > 0:
+        cf_target_rolled[y_start_trg : y_start_trg+dy, x_start_trg : x_start_trg+dx] = \
+            cf_source_rolled[y_start_src : y_start_src+dy, x_start_src : x_start_src+dx]
+            
+    # Unroll cf_target_rolled to place the origin at [0,0] for DFT
+    # This array represents the CF sampled on the target grid.
+    cf_on_target_grid_unrolled = np.roll(
+        cf_target_rolled,
+        shift=(-(target_shape[0] // 2), -(target_shape[1] // 2)),
+        axis=(0, 1)
+    )
+
+    # Calculate Power Spectrum for this target-shaped CF.
+    # This ps_target_fft is unnormalized (direct output of rfft2).
+    ps_target_fft = np.fft.rfft2(cf_on_target_grid_unrolled)
+    rootps_target = np.sqrt(np.abs(ps_target_fft)) # Magnitudes for sqrt
+
+    # --- Part 3: Generate noise and apply it to the target image ---
+    generated_noise = _generate_noise_from_rootps_standalone(
+        rng, target_shape, rootps_target
+    )
+    
+    # Add the generated noise to the original target image
+    output_image_arr = target_image_arr + generated_noise
+    return output_image_arr
+
+
+
+
+def calculate_radial_correlation(
+    image_arr: np.ndarray,
+    subtract_mean: bool = True,
+    max_pixel_distance: Optional[int] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculates the radially averaged auto-correlation of pixel values in an image
+    as a function of pixel distance.
+
+    The auto-correlation is normalized by the variance of the (mean-subtracted)
+    image, so the correlation at zero distance is 1.0 (assuming non-zero variance).
+
+    Args:
+        image_arr: 2D NumPy array representing the image.
+        subtract_mean: If True (default), subtracts the overall mean of the image
+                       before calculating the correlation. This is generally
+                       recommended for interpreting the result as a standard
+                       correlation coefficient.
+        max_pixel_distance: The maximum integer pixel distance (radius) for which
+                            to calculate the average correlation. If None, it
+                            defaults to a value based on the image dimensions
+                            (typically half the smallest dimension, or the full
+                            extent for 1D-like images).
+
+    Returns:
+        A tuple (distances, correlations):
+        - distances: 1D NumPy array of integer pixel distances [0, 1, 2, ...].
+        - correlations: 1D NumPy array of the corresponding radially averaged
+                        correlation coefficients. The correlation at distance 0
+                        is 1.0 if the image has non-zero variance. Values for
+                        distances where no pixels are found (e.g., beyond image
+                        bounds for a given max_pixel_distance) will be NaN.
+    """
+    if image_arr.ndim != 2:
+        raise ValueError("Input image must be a 2D numpy array.")
+
+    ny, nx = image_arr.shape
+
+    if subtract_mean:
+        # Work with a float version for precision if subtracting mean
+        processed_image = image_arr.astype(float) - np.mean(image_arr)
+    else:
+        # If not subtracting mean, ensure it's float for FFT, operate on copy
+        processed_image = image_arr.astype(float, copy=True)
+
+    # Compute 2D Auto-Correlation Function using FFTs
+    # FT(I) = F (Fourier Transform of the processed image)
+    # Power Spectrum PS = F * conj(F)
+    # The Inverse FFT of PS gives the unnormalized auto-covariance function.
+    # The element (0,0) of this IFFT(PS) is sum_pixels(processed_image**2).
+    
+    ft_array = np.fft.rfft2(processed_image)
+    power_spectrum = np.abs(ft_array)**2  # Element-wise squared magnitude
+
+    # Inverse FFT of the power spectrum gives the unnormalized auto-covariance
+    auto_covariance_unrolled = np.fft.irfft2(power_spectrum, s=processed_image.shape)
+    
+    # The value at lag (0,0) of the unnormalized auto-covariance
+    # is sum(processed_image**2).
+    variance_numerator_term = auto_covariance_unrolled[0,0]
+
+    # Handle images with effectively zero variance (e.g., flat images)
+    # Small epsilon relative to image size to define "effectively zero"
+    epsilon = 1e-12 * np.prod(processed_image.shape)
+    if variance_numerator_term < epsilon:
+        center_y_temp, center_x_temp = ny // 2, nx // 2
+        if max_pixel_distance is None:
+            # For 1D-like arrays (e.g., 1xN or Nx1), use the available extent
+            if ny == 1 or nx == 1:
+                 max_r = max(center_y_temp, center_x_temp)
+            else: # For 2D arrays, default to half the minimum dimension
+                 max_r = min(center_y_temp, center_x_temp)
+        else:
+            max_r = max_pixel_distance
+        
+        max_r = max(0, int(np.floor(max_r))) # Ensure non-negative integer
+
+        distances = np.arange(max_r + 1)
+        correlations = np.full_like(distances, np.nan, dtype=float)
+        if len(correlations) > 0:
+            # Correlation of a variable with itself is 1, even if variance is 0.
+            correlations[0] = 1.0 
+        return distances, correlations
+
+    # Normalize by the value at (0,0) lag to get the auto-correlation coefficient function.
+    # rho(lag) = Cov(lag) / Var
+    # Cov(lag) is effectively (auto_covariance_unrolled[lag] / N_pixels)
+    # Var is effectively (auto_covariance_unrolled[0,0] / N_pixels)
+    # So, rho(lag) = auto_covariance_unrolled[lag] / auto_covariance_unrolled[0,0]
+    correlation_2d_unrolled_normalized = auto_covariance_unrolled / variance_numerator_term
+    
+    # Roll the 2D auto-correlation function so that the (0,0) lag is at the center of the array
+    correlation_2d_rolled = np.roll(
+        correlation_2d_unrolled_normalized,
+        shift=(ny // 2, nx // 2), # Shift to bring (0,0) lag to center
+        axis=(0, 1)
+    )
+    # After rolling, correlation_2d_rolled[ny//2, nx//2] corresponds to the (0,0) lag, value is 1.0.
+
+    # Prepare for radial averaging
+    center_y, center_x = ny // 2, nx // 2
+    
+    # Create a grid of distances from the center of the rolled 2D correlation function
+    # y_indices will be a column vector, x_indices a row vector due to np.ogrid
+    y_indices, x_indices = np.ogrid[-center_y:ny-center_y, -center_x:nx-center_x]
+    distance_from_center_grid = np.sqrt(x_indices**2 + y_indices**2)
+
+    # Determine the maximum radius for computation
+    if max_pixel_distance is None:
+        if ny == 1 or nx == 1: # For 1D-like arrays
+            max_r_computed = max(center_y, center_x)
+        else: # For 2D arrays
+            max_r_computed = min(center_y, center_x)
+    else:
+        max_r_computed = int(np.floor(max_pixel_distance))
+    
+    max_r_computed = max(0, max_r_computed) # Ensure it's not negative
+
+    distances_to_report = np.arange(max_r_computed + 1)
+    avg_correlations_final = np.full(max_r_computed + 1, np.nan, dtype=float)
+
+    # Perform radial binning
+    for d_bin in distances_to_report: # Iterate through integer distances 0, 1, 2, ...
+        # Define a mask for pixels approximately at distance d_bin
+        if d_bin == 0:
+            # For distance 0, select pixels very close to the center
+            mask = distance_from_center_grid < 0.5
+        else:
+            # For other distances, select pixels in an annulus
+            mask = (distance_from_center_grid >= (float(d_bin) - 0.5)) & \
+                   (distance_from_center_grid < (float(d_bin) + 0.5))
+        
+        if np.any(mask):
+            avg_correlations_final[d_bin] = np.mean(correlation_2d_rolled[mask])
+        # If no pixels fall into this radial bin (e.g., d_bin is too large),
+        # the value in avg_correlations_final remains NaN.
+
+    # Ensure correlation at distance 0 is exactly 1.0 if variance was non-zero.
+    # The binning for d_bin=0 should capture correlation_2d_rolled[center_y, center_x].
+    if variance_numerator_term >= epsilon and len(avg_correlations_final) > 0:
+         avg_correlations_final[0] = 1.0
+
+    return distances_to_report, avg_correlations_final

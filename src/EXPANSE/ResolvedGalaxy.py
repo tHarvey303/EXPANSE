@@ -1,7 +1,5 @@
 import ast
 import contextlib
-
-# can write astropy to h5
 import copy
 import datetime
 import glob
