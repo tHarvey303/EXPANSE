@@ -44,7 +44,7 @@ filtered_galaxies = galaxies.filter_single_bins(binmap_type)
 
 override_meta = {
     "redshift": "MAG_APER_0_32 arcsec_fsps_larson_0_05__Asada24_cgm",
-    "redshift_key": "zbest",
+    "redshift_key": "z_best",
     "use_bpass": True,
     "name_append": "_zfix_eazy_cgm",
     "remove": ["redshift_sigma", "min_redshift_sigma"],
@@ -66,12 +66,12 @@ override_meta_resolved = {
     "use_bpass": True,
     "run_name": "CNST_SFH_RESOLVED_VORONOI_Asada24_cgm",
     "redshift": "MAG_APER_0_32 arcsec_fsps_larson_0_05__Asada24_cgm",
-    "redshift_key": "zbest",
+    "redshift_key": "z_best",
 }
 
 # Create a dictionary for the constant redshift model
-resolved_dicts_cnst = resolved_dict_cnst(
-    override_meta=override_meta_resolved, num=len(filtered_galaxies)
+resolved_dicts_cnst = create_dicts(
+    resolved_dict_cnst, override_meta=override_meta_resolved, num=len(filtered_galaxies)
 )
 
 for dicts in [
