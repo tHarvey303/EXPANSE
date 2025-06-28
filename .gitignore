@@ -13,7 +13,9 @@ scripts/private
 galaxies/mock
 galaxies/mock_nonoise
 galaxies/mock*
-data/mock_rms/* copy
+data/mock_rms/*
+data/*
+!data/OutshiningLiterature.csv
 pipes/*
 MinViable.py
 .DS_Store
