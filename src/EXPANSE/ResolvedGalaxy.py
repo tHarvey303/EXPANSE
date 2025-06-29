@@ -1517,16 +1517,15 @@ class ResolvedGalaxy:
                 for key in hfile["interactive_outputs"].keys():
                     interactive_outputs[key] = {}
                     # Get flux and flux_err
+                    interactive_outputs[key]["meta"] = {}
                     for prop in hfile["interactive_outputs"][key].keys():
+                        meta = {}
                         interactive_outputs[key][prop] = hfile["interactive_outputs"][key][prop][()]
                         # Check for meta properties
-                        meta = {}
                         for mkey in hfile["interactive_outputs"][key][prop].attrs.keys():
                             meta[mkey] = hfile["interactive_outputs"][key][prop].attrs[mkey]
-                        if len(meta) > 0:
-                            interactive_outputs[key]["meta"] = meta
-                        else:
-                            meta = None
+
+                        interactive_outputs[key]["meta"][prop] = meta
 
             # hfile.close()
             # Read in photometry table(s)
@@ -9268,11 +9267,15 @@ class ResolvedGalaxy:
             ):
                 print(f"Using redshift from interactive outputs: {redshift}")
                 key = meta.get("redshift_key", "z_best")
-                if key in self.interactive_outputs[redshift]["meta"].keys():
-                    redshift = self.interactive_outputs[redshift]["meta"][key]
+                if key in self.interactive_outputs[redshift]["meta"]["eazy_fit"].keys():
+                    redshift = self.interactive_outputs[redshift]["meta"]["eazy_fit"][key]
                 else:
+                    print(
+                        "available keys are:",
+                        self.interactive_outputs[redshift]["meta"]["eazy_fit"].keys(),
+                    )
                     raise Exception(
-                        f"Redshift key {key} not found in interactive outputs for {redshift}"
+                        f"Redshift key {key} not found in interactive outputs for {redshift} for {self.galaxy_id}."
                     )
 
         try:
