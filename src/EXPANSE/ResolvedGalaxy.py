@@ -9268,7 +9268,7 @@ class ResolvedGalaxy:
                 print(f"Using redshift from interactive outputs: {redshift}")
                 key = meta.get("redshift_key", "z_best")
                 if key in self.interactive_outputs[redshift]["meta"]["eazy_fit"].keys():
-                    redshift = self.interactive_outputs[redshift]["meta"]["eazy_fit"][key]
+                    redshift = float(self.interactive_outputs[redshift]["meta"]["eazy_fit"][key])
                 else:
                     print(
                         "available keys are:",
