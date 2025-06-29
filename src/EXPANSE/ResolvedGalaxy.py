@@ -9550,6 +9550,9 @@ class ResolvedGalaxy:
                 "redshift_sigma": redshift_sigma,
                 "out_dir": f"{run_dir}/posterior/{out_subdir}",
                 "exclude_bands": exclude_bands,
+                "fit_photometry": fit_photometry,
+                "psf_type": psf_type,
+                "vary_filter_list": vary_filter_list,
             }
         if not exist_already or return_run_args:
             fit_cat = pipes.fit_catalogue(
