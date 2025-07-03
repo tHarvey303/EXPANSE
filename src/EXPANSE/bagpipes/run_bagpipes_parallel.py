@@ -1,8 +1,9 @@
 import json
 import os
 import sys
-
+import traceback
 import numpy as np
+import datetime
 
 try:
     from mpi4py import MPI
@@ -146,5 +147,7 @@ if __name__ == "__main__":
 
         sys.exit(0)
     except Exception as e:
+        print(f"Crash on rank {rank} at {datetime.datetime.now()}")
+        print(traceback.format_exc())
         print(e)
         sys.exit(1)
