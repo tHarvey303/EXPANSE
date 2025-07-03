@@ -7220,6 +7220,137 @@ class ResolvedGalaxy:
         if legend:
             ax.legend(loc="lower right", frameon=False)
 
+    def run_sbifitter(
+        self,
+        sbifitter_model_path,
+        fit_photometry="all",
+        binmap_type=None,
+        overwrite=False,
+        extra_features=None,
+        verbose=True,
+    ):
+        """Runs a SBI Fitter model on the galaxy
+
+        Parameters
+        ----------
+
+        sbifitter_model_path : str - path to the saved SBI Fitter model
+        fit_photometry : str - which photometry to use for fitting, default is "all"
+        binmap_type : str - which binmap to use for fitting, default is None,
+                            which uses the one set in self.use_binmap_type
+        overwrite : bool - whether to overwrite existing results, default is False
+        extra_features : dict - map of additonal features to add to the fitting,
+                        key should be feature name, e.g. redshift, and value
+                        should be the value, or a reference to 'self', 'bagpipes', etc.
+        verbose : bool - whether to print progress, default is True
+        """
+
+        if not hasattr(self, "photometry_table"):
+            raise Exception("Need to run measure_flux_in_bins first")
+        if hasattr(self, "use_psf_type"):
+            psf_type = self.use_psf_type
+        else:
+            psf_type = "webbpsf"
+
+        if hasattr(self, "use_binmap_type") and binmap_type is None:
+            binmap_type = self.use_binmap_type
+        elif binmap_type is None:
+            print("Defaulting to pixedfit binning")
+            binmap_type = "pixedfit"
+
+        if verbose:
+            print(f"Using {psf_type} PSF and {binmap_type} binning.")
+
+        flux_table = self._get_flux_table(fit_photometry, psf_type, binmap_type).copy()
+
+        from sbifitter import SBI_Fitter
+
+        fitter = SBI_Fitter.load_saved_model(sbifitter_model_path)
+
+        feature_names = fitter.feature_names
+
+        columns_to_feature_names = {}
+
+        for band in self.bands:
+            for feature in feature_names:
+                if band in feature:
+                    if feature.split(".") == band:
+                        # This means we have the photometry
+                        columns_to_feature_names[feature] = feature
+                    elif feature.startswith("unc_"):
+                        # This means we have the uncertainty
+                        columns_to_feature_names[feature] = f"{band}_err"
+
+        if len(columns_to_feature_names) != len(feature_names):
+            missing_features = set(feature_names) - set(columns_to_feature_names.keys())
+            for missing_feature in missing_features:
+                if missing_feature not in extra_features:
+                    print(
+                        f"Warning: Feature {missing_feature} is not photometry. Plesse indicate how to include it in extra_features."
+                    )
+
+                value = extra_features[missing_feature]
+                columns_to_feature_names[missing_feature] = missing_feature
+
+                if missing_feature == "redshift":
+                    flux_table[missing_feature] = self._get_redshift_from_string(value)
+                else:
+                    if callable(value):
+                        flux_table[missing_feature] = value(flux_table)
+                    elif isinstance(value, (int, float, np.ndarray, list, tuple)):
+                        flux_table[missing_feature] = value
+                    else:
+                        raise ValueError(f"Don't understand input for {missing_feature}.")
+
+        name = fitter.name
+
+        additional_name = f"{psf_type}_{binmap_type}"
+
+        if verbose:
+            print(f"Running sbifitter for {name}")
+            print(f"Using atlas {name}")
+
+        if hasattr(self, "sed_fitting_table"):
+            if "sbifitter" in self.sed_fitting_table.keys():
+                if f"{name}_{additional_name}" in self.sed_fitting_table["sbifitter"].keys():
+                    if not overwrite:
+                        print(f"Run {name}_{additional_name} already exists")
+                        return
+
+        output = fitter.fit_catalogue(
+            observations=flux_table,
+            columns_to_feature_names=columns_to_feature_names,
+            append_to_input=False,
+            flux_units=self.phot_pix_unit,
+        )
+
+        out_name = f"{name}_{additional_name}"
+
+        if "sbifitter" not in self.sed_fitting_table.keys():
+            self.sed_fitting_table["sbifitter"] = {}
+
+        meta = {
+            "name": out_name,
+            "psf_type": psf_type,
+            "binmap_type": binmap_type,
+            "fitter_name": name,
+            "fitter_path": sbifitter_model_path,
+            "fit_photometry": fit_photometry,
+            "extra_features": extra_features,
+        }
+
+        output.meta = meta
+        self.sed_fitting_table["sbifitter"][out_name] = output
+
+        write_table_hdf5(
+            self.sed_fitting_table["sbifitter"][out_name],
+            self.h5_path,
+            f"sed_fitting_table/sbifitter/{out_name}",
+            serialize_meta=True,
+            overwrite=True,
+            append=True,
+        )
+
     def _run_db_fit(
         self,
         db_atlas_path,
@@ -7371,30 +7502,8 @@ class ResolvedGalaxy:
         from .dense_basis import get_priors, run_db_fit_parallel
 
         if fix_redshift:
-            if fix_redshift == "eazy":
-                redshift = self.redshift
-            elif (
-                "dense_basis" in self.sed_fitting_table.keys()
-                and fix_redshift in self.sed_fitting_table["dense_basis"].keys()
-            ):
-                redshift = self.sed_fitting_table["dense_basis"][fix_redshift]["z"]
-            elif (
-                "bagpipes" in self.sed_fitting_table.keys()
-                and fix_redshift in self.sed_fitting_table["bagpipes"].keys()
-            ):
-                table = self.sed_fitting_table["bagpipes"][fix_redshift]
-                if "redshift_50" in table.keys():
-                    assert (
-                        len(table) == 1
-                    ), f"Only one redshift allowed for fix_redshift. {len(table)} found."
-                    redshift = table["redshift_50"][0]
-                elif "input_redshift" in table.keys():
-                    redshift = table["input_redshift"][0]
-
-            else:
-                redshift = fix_redshift
-
-            fix_redshift = redshift
+            if isinstance(fix_redshift, str):
+                self._get_redshift_from_string(fix_redshift)
 
         fluxes = []
         errors = []
@@ -8760,8 +8869,11 @@ class ResolvedGalaxy:
         redshift_sigma=None,
         min_redshift_sigma=0,
         max_redshift_sigma=10000,
+        meta={},
     ):
-        # logic to choose a redshift to fit at
+        # logic to choose a redshift to fit at.
+        # Can be from Bagpipes, EAZY, internal spec-z, Dense Basis,
+        # or a float/int.
         if redshift == "eazy":
             print("Using EAZY redshift.")
             redshift = self.meta_properties[
@@ -8786,8 +8898,29 @@ class ResolvedGalaxy:
                 redshift = float(table["input_redshift"][0])
             else:
                 raise Exception(f"Redshift column not found in {redshift} table")
+        elif (
+            "dense_basis" in self.sed_fitting_table.keys()
+            and redshift in self.sed_fitting_table["dense_basis"].keys()
+        ):
+            redshift = self.sed_fitting_table["dense_basis"][redshift]["z"]
         elif type(redshift) in [float, int]:
             pass
+        elif redshift in self.meta_properties.keys():
+            print(f"Using redshift from meta_properties: {redshift}")
+            redshift = self.meta_properties[redshift]
+        elif hasattr(self, "interactive_outputs") and redshift in self.interactive_outputs.keys():
+            print(f"Using redshift from interactive outputs: {redshift}")
+            key = meta.get("redshift_key", "z_best")
+            if key in self.interactive_outputs[redshift]["meta"]["eazy_fit"].keys():
+                redshift = float(self.interactive_outputs[redshift]["meta"]["eazy_fit"][key])
+            else:
+                print(
+                    "available keys are:",
+                    self.interactive_outputs[redshift]["meta"]["eazy_fit"].keys(),
+                )
+                raise Exception(
+                    f"Redshift key {key} not found in interactive outputs for {redshift} for {self.galaxy_id}."
+                )
 
         else:
             raise Exception(f'String redshift input "{redshift}" not recognized')
@@ -9237,53 +9370,14 @@ class ResolvedGalaxy:
         run_name = meta.get("run_name", "default")
 
         redshift = meta.get("redshift", self.redshift)  # PLACEHOLDER for self.redshift
-        if type(redshift) is str:
-            # logic to choose a redshift to fit at
-            if redshift == "eazy":
-                print("Using EAZY redshift.")
-                redshift = self.meta_properties["zbest_fsps_larson_zfree"]
-            elif redshift == "self":
-                print("Using self redshift.")
-                redshift = self.redshift
-            elif redshift in self.sed_fitting_table["bagpipes"].keys():
-                table = self.sed_fitting_table["bagpipes"][redshift]
-                redshift_id = meta.get("redshift_id", table["#ID"][0])
-                row_index = table["#ID"] == redshift_id
-                table = table[row_index]
-                if len(table) == 0:
-                    raise Exception(
-                        f"No ID {redshift_id} found in {redshift} table when attempting to fetch redshift for bagpipes"
-                    )
-
-                if "redshift_50" in table.colnames:
-                    redshift = float(table["redshift_50"][0])
-                elif "input_redshift" in table.colnames:
-                    redshift = float(table["input_redshift"][0])
-            elif redshift in self.meta_properties.keys():
-                print(f"Using redshift from meta_properties: {redshift}")
-                redshift = self.meta_properties[redshift]
-            elif (
-                hasattr(self, "interactive_outputs") and redshift in self.interactive_outputs.keys()
-            ):
-                print(f"Using redshift from interactive outputs: {redshift}")
-                key = meta.get("redshift_key", "z_best")
-                if key in self.interactive_outputs[redshift]["meta"]["eazy_fit"].keys():
-                    redshift = float(self.interactive_outputs[redshift]["meta"]["eazy_fit"][key])
-                else:
-                    print(
-                        "available keys are:",
-                        self.interactive_outputs[redshift]["meta"]["eazy_fit"].keys(),
-                    )
-                    raise Exception(
-                        f"Redshift key {key} not found in interactive outputs for {redshift} for {self.galaxy_id}."
-                    )
+        if isinstance(redshift, str):
+            redshift = self._get_redshift_from_string(redshift, meta=meta)
 
         try:
             from mpi4py import MPI
 
             rank = MPI.COMM_WORLD.Get_rank()
             size = MPI.COMM_WORLD.Get_size()
-            from mpi4py.futures import MPIPoolExecutor
 
             if size > 1:
                 print("Running with mpirun/mpiexec detected.")
@@ -9401,7 +9495,6 @@ class ResolvedGalaxy:
         # Make list of actual bands for each source
 
         if vary_filter_list:
-            print("Varying filter list")
             nircam_filts = []
             for id in ids:
                 bands = []
@@ -10432,7 +10525,7 @@ class ResolvedGalaxy:
             rbin,
             color,
         ) in zip(bins_to_show, marker_colors):
-            h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
+            # h5_path = f"{run_dir}/posterior/{run_name}/{self.survey}/{self.galaxy_id}/{rbin}.h5"
             if rbin == "RESOLVED":
                 """ Special case where we sum the SFH of all the bins"""
                 found = False
@@ -14183,22 +14276,7 @@ class ResolvedGalaxy:
         if binmap_type not in self.photometry_table[psf_type].keys():
             raise ValueError(f"Binmap type {binmap_type} not found in photometry table")
 
-        if z == "self":
-            z = self.redshift
-        elif type(z) == float:
-            z = z
-        elif type(z) in self.meta_properties.keys():
-            z = self.meta_properties[z]
-        elif z in self.sed_fitting_table["bagpipes"].keys():
-            table = self.sed_fitting_table["bagpipes"][z]
-            if "redshift_50" in table.colnames:
-                z = table["redshift_50"][0]
-            elif "input_redshift" in table.colnames:
-                z = table["input_redshift"][0]
-            else:
-                raise ValueError(f"Redshift not found in {z}")
-        else:
-            raise ValueError("Redshift input not understood.")
+        z = self._get_redshift_from_string(z)
 
         table = self.photometry_table[psf_type][binmap_type]
         self.galfind_photometry_rest = {}
