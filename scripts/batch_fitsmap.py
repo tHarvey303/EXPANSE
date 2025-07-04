@@ -1,5 +1,6 @@
 from EXPANSE.utils import create_fitsmap, PhotometryBandInfo, FieldInfo
 import os
+import traceback
 
 subfolders = {
     "NEP-": "NEP",
@@ -175,4 +176,5 @@ if __name__ == "__main__":
                 f"Failed to create fitsmap for {survey} version {version} with instruments {instruments}. Skipping."
             )
             print(f"Error: {e}")
+            traceback.print_exc()
             continue

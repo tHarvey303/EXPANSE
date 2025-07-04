@@ -2533,7 +2533,8 @@ def create_fitsmap(
         out_dir=out_path,
         title=f'{survey} {filter_field if filter_field != None else ""}',
         cat_wcs_fits_file=cat_wcs_header,
-        procs_per_task=6,
+        procs_per_task=3,
+        task_procs=2,
         norm_kwargs=norm,
     )
 

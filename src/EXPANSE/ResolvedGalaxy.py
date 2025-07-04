@@ -7293,7 +7293,7 @@ class ResolvedGalaxy:
                 columns_to_feature_names[missing_feature] = missing_feature
 
                 if missing_feature == "redshift":
-                    flux_table[missing_feature] = self._get_redshift_from_string(value)
+                    flux_table[missing_feature] = self._get_redshift_from_string(value)[0]
                 else:
                     if callable(value):
                         flux_table[missing_feature] = value(flux_table)
@@ -7503,7 +7503,7 @@ class ResolvedGalaxy:
 
         if fix_redshift:
             if isinstance(fix_redshift, str):
-                self._get_redshift_from_string(fix_redshift)
+                fix_redshift, _ = self._get_redshift_from_string(fix_redshift)
 
         fluxes = []
         errors = []
@@ -9371,7 +9371,7 @@ class ResolvedGalaxy:
 
         redshift = meta.get("redshift", self.redshift)  # PLACEHOLDER for self.redshift
         if isinstance(redshift, str):
-            redshift = self._get_redshift_from_string(redshift, meta=meta)
+            redshift, _ = self._get_redshift_from_string(redshift, meta=meta)
 
         try:
             from mpi4py import MPI
@@ -14276,7 +14276,7 @@ class ResolvedGalaxy:
         if binmap_type not in self.photometry_table[psf_type].keys():
             raise ValueError(f"Binmap type {binmap_type} not found in photometry table")
 
-        z = self._get_redshift_from_string(z)
+        z, _ = self._get_redshift_from_string(z)
 
         table = self.photometry_table[psf_type][binmap_type]
         self.galfind_photometry_rest = {}
