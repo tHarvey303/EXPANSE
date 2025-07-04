@@ -4,6 +4,7 @@ import sys
 import traceback
 import numpy as np
 import datetime
+import copy
 
 try:
     from mpi4py import MPI
@@ -69,11 +70,14 @@ if __name__ == "__main__":
                 )
 
             if type(input_dict[galaxy]["cat_filt_list"][0]) == str:
-                cat_filt_list_t = [input_dict[galaxy]["cat_filt_list"]] * len(idd)
+                cat_filt_list_t = [copy.deepcopy(input_dict[galaxy]["cat_filt_list"])] * len(idd)
             elif (type(input_dict[galaxy]["cat_filt_list"][0]) == list) & (
                 len(input_dict[galaxy]["cat_filt_list"]) == len(idd)
             ):
-                cat_filt_list_t = input_dict[galaxy]["cat_filt_list"]
+                cat_filt_list_t = copy.deepcopy(input_dict[galaxy]["cat_filt_list"])
+
+            assert cat_filt_list_t is not None, "cat_filt_list_t cannot be None"
+            assert [] not in cat_filt_list_t, "cat_filt_list_t cannot be empty"
 
             fit_instructions.extend(fit_inst)
             assert len(cat_filt_list_t) == len(
