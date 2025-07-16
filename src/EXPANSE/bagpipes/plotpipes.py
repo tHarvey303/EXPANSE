@@ -1490,6 +1490,13 @@ class PipesFit:
         )
         return fig
 
+    def _get_redshift(self):
+        """Get the median redshift from the fit."""
+        if "redshift" in self.fit.fitted_model.params:
+            return np.median(self.fit.posterior.samples["redshift"])
+        else:
+            return self.fit.fitted_model.model_components["redshift"]
+
     def plot_sfh(
         self,
         ax,

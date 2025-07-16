@@ -642,7 +642,9 @@ class PhotometryBandInfo:
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
             elif len(wht_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No wht files found for band {band_name}. Please provide full path."
+                )
             else:
                 wht_path = wht_path[0]
                 print(f"Auto detected weight path {wht_path} for band {band_name}.")
@@ -726,7 +728,9 @@ class PhotometryBandInfo:
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
             elif len(err_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No err files found for band {band_name}. Please provide full path."
+                )
             else:
                 err_path = err_path[0]
                 print(f"Auto detected error path {err_path} for band {band_name}.")
@@ -818,7 +822,9 @@ class PhotometryBandInfo:
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
             elif len(psf_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No PSF files found for band {band_name}. Please provide full path."
+                )
             else:
                 psf_path = psf_path[0]
                 print(f"Auto detected PSF path {psf_path} for band {band_name}.")
@@ -840,6 +846,21 @@ class PhotometryBandInfo:
                     )
                 )
             )
+            psf_kernel_path_finder.extend(
+                glob.glob(
+                    os.path.join(
+                        psf_kernel_path,
+                        f"*{band_name[0].lower()}{band_name[1:].upper()}*kernel*.fits",
+                    )
+                )
+            )
+            psf_kernel_path_finder.extend(
+                glob.glob(os.path.join(psf_kernel_path, f"*{band_name.upper()}*kernel*.fits"))
+            )
+            psf_kernel_path_finder.extend(
+                glob.glob(os.path.join(psf_kernel_path, f"*{band_name.lower()}*PSF*.fits"))
+            )
+
             psf_kernel_path_finder.extend(
                 glob.glob(os.path.join(psf_kernel_path, f"*{band_name.upper()}*PSF*.fits"))
             )
@@ -863,7 +884,9 @@ class PhotometryBandInfo:
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
             elif len(psf_kernel_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No PSF kernel files found for band {band_name}. Please provide full path."
+                )
             else:
                 psf_kernel_path = psf_kernel_path[0]
                 print(f"Auto detected PSF kernel path {psf_kernel_path} for band {band_name}.")
@@ -908,7 +931,9 @@ class PhotometryBandInfo:
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
             elif len(psf_matched_image_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No PSF-matched images files found for band {band_name}. Please provide full path."
+                )
             else:
                 psf_matched_image_path = psf_matched_image_path[0]
                 print(
@@ -955,7 +980,9 @@ class PhotometryBandInfo:
                     f"Multiple files found for band {band_name}. Please provide full path."
                 )
             elif len(psf_matched_err_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No PSF-matched err files found for band {band_name}. Please provide full path."
+                )
             else:
                 psf_matched_err_path = psf_matched_err_path[0]
                 print(
@@ -999,6 +1026,7 @@ class PhotometryBandInfo:
                     "i2dnobg.fits",
                     "i2d.fits",
                     "i2dnobgnobg.fits",
+                    "i2dnobgxy.fits",
                 ]
                 # See if any one of the files has a common ending
                 good_endings = []
@@ -1014,11 +1042,13 @@ class PhotometryBandInfo:
                     )
                 else:
                     raise ValueError(
-                        f"No files found for band {band_name}. Please provide full path."
+                        f"No image files found for band {band_name}. Please provide full path."
                     )
 
             elif len(image_path) == 0:
-                raise ValueError(f"No files found for band {band_name}. Please provide full path.")
+                raise ValueError(
+                    f"No image files found for band {band_name}. Please provide full path."
+                )
             else:
                 image_path = image_path[0]
 
@@ -1102,21 +1132,20 @@ class PhotometryBandInfo:
             self.instrument = instruments[self.band_name.upper()]
             print(f"Auto detected instrument {self.instrument} for band {self.band_name}.")
 
-        if (
-            self.image_path == self.wht_path == self.err_path
-            or (self.wht_path == "im")
-            or (self.err_path == "im")
-        ):
+        hdulist = fits.open(self.image_path, ignore_missing_simple=True)
+        names = [hdu.name for hdu in hdulist]
+
+        if "SCI" in names and "WHT" in names and "ERR" in names:
             print(f"Detected single HDUList for {self.band_name}.")
             print(
                 "Assuming JWST style HDUList with PrimaryHDU (0), SCI [1],  WHT [2], and ERR [3]."
             )
             if self.im_hdu_ext == 0:
-                self.im_hdu_ext = "SCI"
+                self.im_hdu_ext = names.index("SCI")
             if self.wht_hdu_ext == 0:
-                self.wht_hdu_ext = "WHT"
+                self.wht_hdu_ext = names.index("WHT")
             if self.err_hdu_ext == 0:
-                self.err_hdu_ext = "ERR"
+                self.err_hdu_ext = names.index("ERR")
 
             self.err_path = self.image_path
             self.wht_path = self.image_path
@@ -1233,6 +1262,88 @@ class PhotometryBandInfo:
             area_sr = (self.im_pixel_scale.to(u.radian).value) ** 2
             self.image_zp = -2.5 * np.log10(1e6 * area_sr) + 8.90
 
+    @property
+    def phot_data(self):
+        with fits.open(self.image_path, ignore_missing_simple=True) as hdul:
+            data = hdul[self.im_hdu_ext].data
+            if data is None:
+                raise ValueError(f"No data found in image {self.image_path}.")
+            return data
+
+    @property
+    def wht_data(self):
+        if self.wht_path is None:
+            return None
+        with fits.open(self.wht_path, ignore_missing_simple=True) as hdul:
+            data = hdul[self.wht_hdu_ext].data
+            if data is None:
+                raise ValueError(f"No data found in weight image {self.wht_path}.")
+            return data
+
+    @property
+    def err_data(self):
+        if self.err_path is None:
+            return None
+        with fits.open(self.err_path, ignore_missing_simple=True) as hdul:
+            data = hdul[self.err_hdu_ext].data
+            if data is None:
+                raise ValueError(f"No data found in error image {self.err_path}.")
+            return data
+
+    @property
+    def seg_data(self):
+        if self.seg_path is None:
+            return None
+        with fits.open(self.seg_path, ignore_missing_simple=True) as hdul:
+            data = hdul[self.seg_hdu_ext].data
+            if data is None:
+                raise ValueError(f"No data found in segmentation image {self.seg_path}.")
+            return data
+
+    @property
+    def psf_data(self):
+        if self.psf_path is None:
+            return None
+        with fits.open(self.psf_path, ignore_missing_simple=True) as hdul:
+            data = hdul[0].data
+            if data is None:
+                raise ValueError(f"No data found in PSF image {self.psf_path}.")
+            return data
+
+    @property
+    def psf_kernel_data(self):
+        if self.psf_kernel_path is None:
+            return None
+        with fits.open(self.psf_kernel_path, ignore_missing_simple=True) as hdul:
+            data = hdul[0].data
+            if data is None:
+                raise ValueError(f"No data found in PSF kernel image {self.psf_kernel_path}.")
+            return data
+
+    @property
+    def psf_matched_image_data(self):
+        if self.psf_matched_image_path is None:
+            return None
+        with fits.open(self.psf_matched_image_path, ignore_missing_simple=True) as hdul:
+            data = hdul[0].data
+            if data is None:
+                raise ValueError(
+                    f"No data found in PSF matched image {self.psf_matched_image_path}."
+                )
+            return data
+
+    @property
+    def psf_matched_err_data(self):
+        if self.psf_matched_err_path is None:
+            return None
+        with fits.open(self.psf_matched_err_path, ignore_missing_simple=True) as hdul:
+            data = hdul[0].data
+            if data is None:
+                raise ValueError(
+                    f"No data found in PSF matched error image {self.psf_matched_err_path}."
+                )
+            return data
+
 
 class FieldInfo:
     """
@@ -1249,44 +1360,49 @@ class FieldInfo:
             raise ValueError("More than one detection image found in band_info_list.")
 
         elif detection_images.count(True) == 1:
-            self.detection_band = [
+            self.detection_band_name = [
                 band.band_name for band in band_info_list if band.detection_image
             ][0]
+            self.detection_band = band_info_list[detection_images.index(True)]
             # Remove detection image from list
             self.band_info_list = [band for band in band_info_list if not band.detection_image]
         else:
             self.detection_band = None
+            self.detection_band_name = None
+            self.band_info_list = band_info_list
 
         # Get list of bands
-        surveys = [band.survey for band in band_info_list]
+        surveys = [band.survey for band in self.band_info_list]
         assert len(set(surveys)) == 1, f"All bands must be from the same survey: {surveys}"
         self.survey = surveys[0]
 
-        self.band_names = [band.band_name for band in band_info_list]
+        self.band_names = [band.band_name for band in self.band_info_list]
         # check unique
         assert len(self.band_names) == len(set(self.band_names)), "Band names must be unique."
         # Get list of instruments
-        self.instruments = [band.instrument for band in band_info_list]
+        self.instruments = [band.instrument for band in self.band_info_list]
 
-        self.im_pixel_scales = {band.band_name: band.im_pixel_scale for band in band_info_list}
-        self.im_zps = {band.band_name: band.image_zp for band in band_info_list}
-        self.im_units = {band.band_name: band.image_unit for band in band_info_list}
-        self.im_exts = {band.band_name: band.im_hdu_ext for band in band_info_list}
-        self.wht_exts = {band.band_name: band.wht_hdu_ext for band in band_info_list}
-        self.rms_err_exts = {band.band_name: band.err_hdu_ext for band in band_info_list}
-        self.seg_exts = {band.band_name: band.seg_hdu_ext for band in band_info_list}
+        self.im_pixel_scales = {band.band_name: band.im_pixel_scale for band in self.band_info_list}
+        self.im_zps = {band.band_name: band.image_zp for band in self.band_info_list}
+        self.im_units = {band.band_name: band.image_unit for band in self.band_info_list}
+        self.im_exts = {band.band_name: band.im_hdu_ext for band in self.band_info_list}
+        self.wht_exts = {band.band_name: band.wht_hdu_ext for band in self.band_info_list}
+        self.rms_err_exts = {band.band_name: band.err_hdu_ext for band in self.band_info_list}
+        self.seg_exts = {band.band_name: band.seg_hdu_ext for band in self.band_info_list}
 
-        self.im_paths = {band.band_name: band.image_path for band in band_info_list}
-        self.wht_paths = {band.band_name: band.wht_path for band in band_info_list}
-        self.err_paths = {band.band_name: band.err_path for band in band_info_list}
-        self.seg_paths = {band.band_name: band.seg_path for band in band_info_list}
+        self.im_paths = {band.band_name: band.image_path for band in self.band_info_list}
+        self.wht_paths = {band.band_name: band.wht_path for band in self.band_info_list}
+        self.err_paths = {band.band_name: band.err_path for band in self.band_info_list}
+        self.seg_paths = {band.band_name: band.seg_path for band in self.band_info_list}
 
-        self.psf_paths = {band.band_name: band.psf_path for band in band_info_list}
+        self.psf_paths = {band.band_name: band.psf_path for band in self.band_info_list}
 
-        self.psf_kernel_paths = {band.band_name: band.psf_kernel_path for band in band_info_list}
+        self.psf_kernel_paths = {
+            band.band_name: band.psf_kernel_path for band in self.band_info_list
+        }
 
-        self.psf_matched = {band.band_name: band.psf_matched for band in band_info_list}
-        self.all_psf_types = {band.band_name: band.psf_type for band in band_info_list}
+        self.psf_matched = {band.band_name: band.psf_matched for band in self.band_info_list}
+        self.all_psf_types = {band.band_name: band.psf_type for band in self.band_info_list}
         self.all_psf_matched = all(self.psf_matched.values())
         self.any_psf_matched = any(self.psf_matched.values())
         self.psf_matched_band = set(self.psf_matched.values())
@@ -1304,23 +1420,29 @@ class FieldInfo:
             self.psf_matched_band = None
 
         one_type = list(set(self.all_psf_types.values()))
+        # remove None
+        one_type = [ptype for ptype in one_type if ptype is not None]
         if len(one_type) == 1:
             self.psf_type = one_type[0]
+        elif len(one_type) == 0:
+            self.psf_type = None
         else:
-            raise ValueError("All PSFs must be of the same type.")
+            raise ValueError(f"All PSFs must be of the same type, got {one_type}.")
 
         self.any_psf_kernel = any([path is not None for path in self.psf_kernel_paths.values()])
         self.all_psf_kernel = all([path is not None for path in self.psf_kernel_paths.values()])
 
-        all_auto_keys = set([key for band in band_info_list for key in band.auto_photometry.keys()])
+        all_auto_keys = set(
+            [key for band in self.band_info_list for key in band.auto_photometry.keys()]
+        )
         all_aperture_sizes = set(
-            [key for band in band_info_list for key in band.aperture_photometry.keys()]
+            [key for band in self.band_info_list for key in band.aperture_photometry.keys()]
         )
         # Now get all keys inside each aperture size
         all_aperture_size_keys = set(
             [
                 key
-                for band in band_info_list
+                for band in self.band_info_list
                 for key in band.aperture_photometry.keys()
                 for key in band.aperture_photometry[key].keys()
             ]
@@ -1328,11 +1450,11 @@ class FieldInfo:
 
         # fix
         self.auto_photometry = {
-            key: [band.auto_photometry.get(key, None) for band in band_info_list]
+            key: [band.auto_photometry.get(key, None) for band in self.band_info_list]
             for key in all_auto_keys
         }
         self.aperture_photometry = {
-            key: [band.aperture_photometry.get(key, None) for band in band_info_list]
+            key: [band.aperture_photometry.get(key, None) for band in self.band_info_list]
             for key in all_aperture_sizes
         }
 
@@ -1347,17 +1469,18 @@ class FieldInfo:
 
         if self.any_psf_kernel:
             # Check if all PSFs are in the same folder
-            psf_kernel_folders = set(
-                [os.path.dirname(path) for path in self.psf_kernel_paths.values()]
-            )
+            psf_kernel_folders = []
+            for path in self.psf_kernel_paths.values():
+                if path is not None:
+                    psf_kernel_folders.append(os.path.dirname(path))
             if len(psf_kernel_folders) == 1:
                 self.psf_kernel_folder = psf_kernel_folders.pop()
 
         self.psf_matched_image_paths = {
-            band.band_name: band.psf_matched_image_path for band in band_info_list
+            band.band_name: band.psf_matched_image_path for band in self.band_info_list
         }
         self.psf_matched_err_paths = {
-            band.band_name: band.psf_matched_err_path for band in band_info_list
+            band.band_name: band.psf_matched_err_path for band in self.band_info_list
         }
 
         self.any_psf_matched_image = any(
@@ -1475,7 +1598,7 @@ class FieldInfo:
 
         # Add detection band info if present
         if self.detection_band:
-            result.append(f"Detection Band: {self.detection_band}")
+            result.append(f"Detection Band: {self.detection_band_name}")
             result.append("")
 
         # Add header row
@@ -2387,24 +2510,26 @@ def create_fitsmap(
 
         catalog_path = out_path + "catalog.cat"
         # filter_field will be a js variable name, so we need to remove any special characters
-        filter_field = (
-            filter_field.replace(" ", "_")
-            .replace("-", "_")
-            .replace(".", "_")
-            .replace("(", "_")
-            .replace(")", "_")
-            .replace("+", "_")
-            .replace("=", "_")
-            .replace("/", "_")
-        )
-        filtered_catalog_path = out_path + f"catalog_{filter_field}.cat"
 
-        if "x" in output_table.colnames and "y" in output_table.colnames:
-            if use_wcs and "ra" in output_table.colnames and "dec" in output_table.colnames:
-                output_table.remove_column("x")
-                output_table.remove_column("y")
-                filtered_output_table.remove_column("x")
-                filtered_output_table.remove_column("y")
+        if filter_val != None and filter_field != None and filter_field != "None":
+            filter_field = (
+                filter_field.replace(" ", "_")
+                .replace("-", "_")
+                .replace(".", "_")
+                .replace("(", "_")
+                .replace(")", "_")
+                .replace("+", "_")
+                .replace("=", "_")
+                .replace("/", "_")
+            )
+            filtered_catalog_path = out_path + f"catalog_{filter_field}.cat"
+
+            if "x" in output_table.colnames and "y" in output_table.colnames:
+                if use_wcs and "ra" in output_table.colnames and "dec" in output_table.colnames:
+                    output_table.remove_column("x")
+                    output_table.remove_column("y")
+                    filtered_output_table.remove_column("x")
+                    filtered_output_table.remove_column("y")
 
         # add SED plot columns
         img_array = []
@@ -2461,28 +2586,29 @@ def create_fitsmap(
             f.write("B\n")
             for band in blue_bands:
                 if band in bands:
-                    f.write(f"{field_info.im_paths[band]}[1]\n")
+                    f.write(f"{field_info.im_paths[band]}[{field_info.im_exts[band]}]\n")
             f.write("\nG\n")
             for band in green_bands:
                 if band in bands:
-                    f.write(f"{field_info.im_paths[band]}[1]\n")
+                    f.write(f"{field_info.im_paths[band]}[{field_info.im_exts[band]}]\n")
             f.write("\nR\n")
             for band in red_bands:
                 if band in bands:
-                    f.write(f"{field_info.im_paths[band]}[1]\n")
+                    f.write(f"{field_info.im_paths[band]}[{field_info.im_exts[band]}]\n")
             f.write(f"""\nindir  /
     outname  {survey}_RGB
     outdir  {out_path}
-    samplesize 20000
+    samplesize 2000
     stampsize  2000
     showstamps  0
     satpercent  0.001
     noiselum    0.10
     colorsatfac  1
+    correctbias  1
     deletetests  1
     testfirst   0
-    sampledx  0
-    sampledy  0""")
+    sampledx  3000
+    sampledy  3000""")
         # Run trilogy
         # subprocess.run(['python', '/nvme/scratch/software/trilogy/trilogy3.py', out_path + 'trilogy.in'])
         Trilogy(out_path + "trilogy.in", images=None).run()

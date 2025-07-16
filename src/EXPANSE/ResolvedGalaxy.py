@@ -1745,6 +1745,7 @@ class ResolvedGalaxy:
                 out_zeropoint = u.uJy.to(u.ABmag)
                 scale_factor = 10 ** ((out_zeropoint - zero_point) / 2.5)
                 final_data = data * scale_factor * u.uJy
+                final_data = final_data.to(u.uJy).value
                 unit = u.uJy
             elif field_info.im_units[band] is not None:
                 unit = u.Unit(field_info.im_units[band])
@@ -1753,11 +1754,11 @@ class ResolvedGalaxy:
                     scale_factor = field_info.im_pixel_scales[band] ** 2
                     data = data * unit * scale_factor
 
-                    final_data = data.to(u.uJy)
+                    final_data = data.to(u.uJy).value
                 else:
                     scale_factor = 1
                     final_data = data * unit * scale_factor
-                    final_data = final_data.to(u.uJy)
+                    final_data = final_data.to(u.uJy).value
             else:
                 raise Exception(f"No zero point or unit for {band}")
 
@@ -1780,7 +1781,7 @@ class ResolvedGalaxy:
                 # Do the same conversion for the rms_err data
                 rms_err_data = rms_err_cutout.data
                 rms_err_data_final = rms_err_data * scale_factor * unit
-                rms_err_imgs[band] = copy.deepcopy(rms_err_data_final.to(u.uJy))
+                rms_err_imgs[band] = copy.deepcopy(rms_err_data_final.to(u.uJy)).value
                 del rms_err_data
 
             if field_info.seg_paths[band] is not None:
@@ -1805,7 +1806,9 @@ class ResolvedGalaxy:
                     size=(cutout_size, cutout_size),
                     wcs=wcs,
                 )
-                psf_im_data[band] = psf_im_cutout.data
+                psf_im_data = psf_im_cutout.data
+                psf_im_data_final = psf_im_data * scale_factor * unit
+                psf_im_data[band] = copy.deepcopy(psf_im_data_final.to(u.uJy).value)
                 del psf_matched_data
             if field_info.psf_matched_err_paths[band] is not None:
                 # Get the PSF matched rms_err
@@ -1817,7 +1820,10 @@ class ResolvedGalaxy:
                     size=(cutout_size, cutout_size),
                     wcs=wcs,
                 )
-                psf_rms_err_data[band] = psf_rms_err_cutout.data
+                psf_rms_err_final = psf_rms_err_cutout.data
+                psf_rms_err_final = psf_rms_err_final * scale_factor * unit
+
+                psf_rms_err_data[band] = copy.deepcopy(psf_rms_err_final.to(u.uJy).value)
                 del psf_matched_rms_err_data
 
             if field_info.psf_paths[band] is not None:
@@ -1841,13 +1847,16 @@ class ResolvedGalaxy:
             if field_info.psf_kernel_paths[band] is not None:
                 # Get the PSF kernel
                 psf_kernel_path = field_info.psf_kernel_paths[band]
-
                 kernel_data = fits.getdata(psf_kernel_path)
-
                 if psf_kernels is None:
                     psf_kernels = {}
 
-                psf_kernels[band] = copy.deepcopy(kernel_data)
+                psf_type = field_info.psf_type
+
+                if psf_type not in psf_kernels.keys():
+                    psf_kernels[psf_type] = {}
+
+                psf_kernels[psf_type][band] = copy.deepcopy(kernel_data)
 
         already_psf_matched = field_info.all_psf_matched
         any_psf_matched = field_info.any_psf_matched
@@ -1896,6 +1905,78 @@ class ResolvedGalaxy:
         if len(unmatched_seg) == 0:
             unmatched_seg = None
 
+        if field_info.detection_band is not None:
+            det_band = field_info.detection_band
+
+            if det_band.image_zp is not None:
+                zero_point = det_band.image_zp
+                out_zeropoint = u.uJy.to(u.ABmag)
+                scale_factor = 10 ** ((out_zeropoint - zero_point) / 2.5)
+                unit = u.uJy
+            elif field_info.im_units[band] is not None:
+                unit = u.Unit(det_band.image_unit)
+                if unit == u.Unit("MJy/sr"):
+                    # Convert using pixel scale
+                    scale_factor = det_band.im_pixel_scale**2
+                else:
+                    scale_factor = 1
+            else:
+                raise Exception(f"No zero point or unit for {det_band}")
+
+            # open seg, image, and err and make det_data
+            # dict with keys 'phot', 'rms_err', 'seg'
+            def get_data(path, ext, scale_factor, unit):
+                data = fits.getdata(path, ext)
+                header = fits.getheader(path, ext)
+                wcs = WCS(header)
+                cutout = Cutout2D(
+                    data, position=sky_coord, size=(cutout_size, cutout_size), wcs=wcs
+                )
+                if isinstance(unit, str):
+                    unit = u.Unit(copy.copy(unit))
+                data = cutout.data * scale_factor
+                return data * unit
+
+            det_data = {}
+
+            if det_band in phot_imgs:
+                det_data["phot"] = copy.deepcopy(phot_imgs[det_band])
+            else:
+                det_data["phot"] = (
+                    get_data(
+                        det_band.image_path,
+                        det_band.im_hdu_ext,
+                        scale_factor=scale_factor,
+                        unit=unit,
+                    )
+                    .to(u.uJy)
+                    .value
+                )
+
+            if det_band in rms_err_imgs:
+                det_data["rms_err"] = copy.deepcopy(rms_err_imgs[det_band])
+            else:
+                det_data["rms_err"] = (
+                    get_data(
+                        det_band.err_path,
+                        det_band.err_hdu_ext,
+                        scale_factor=scale_factor,
+                        unit=unit,
+                    )
+                    .to(u.uJy)
+                    .value
+                )
+
+            if det_band in seg_imgs:
+                det_data["seg"] = copy.deepcopy(seg_imgs[det_band])
+            else:
+                det_data["seg"] = get_data(
+                    det_band.seg_path, det_band.seg_hdu_ext, scale_factor=1, unit=1
+                )
+
+        else:
+            det_data = None
+
         return cls(
             galaxy_id=galaxy_id,
             sky_coord=sky_coord,
@@ -1934,6 +2015,7 @@ class ResolvedGalaxy:
             unmatched_data=unmatched_data,
             unmatched_rms_err=unmatched_rms_err,
             unmatched_seg=unmatched_seg,
+            det_data=det_data,
         )
 
     def get_filter_wavs(self, facilities={"JWST": ["NIRCam"], "HST": ["ACS", "WFC3_IR"]}):
@@ -3291,7 +3373,7 @@ class ResolvedGalaxy:
                     "miny": y_cent - cutout_size / 2,
                     "maxy": y_cent + cutout_size / 2,
                 }
-                print(vals)
+
                 if vals["miny"] < 0:
                     vals["miny"] = 0
                 if vals["maxy"] > im_size[1]:
@@ -3399,8 +3481,6 @@ class ResolvedGalaxy:
                     sigma_level=1,
                     wht_data=None,
                     plot=False,
-                    sig_clip=sig_clip,
-                    sig_clip_kwargs=sigma_clip_kwargs,
                 )
 
                 depth = depth[0] * u.ABmag
@@ -3579,7 +3659,6 @@ class ResolvedGalaxy:
                     err_path = self.rms_err_paths[band]
                     hdu = fits.open(err_path)
 
-                    print(hdu[self.rms_err_exts[band]])
                     err_data = hdu[self.rms_err_exts[band]].section[
                         int(y_cent - cutout_size / 2) : int(y_cent + cutout_size / 2),
                         int(x_cent - cutout_size / 2) : int(x_cent + cutout_size / 2),
@@ -4270,7 +4349,7 @@ class ResolvedGalaxy:
             run = False
             # Try and load from .h5
             if not init_run and os.path.exists(self.h5_path):
-                print("Creating PSF matched data", self.galaxy_id)
+                # print("Creating PSF matched data", self.galaxy_id)
 
                 h5file = h5.File(self.h5_path, "a")
                 if "psf_matched_data" in h5file.keys():
@@ -4417,7 +4496,7 @@ class ResolvedGalaxy:
                     )
 
             else:
-                print("not running")
+                print("Not running PSF matching, already done.")
 
             if not init_run:
                 h5file.close()
@@ -6503,20 +6582,65 @@ class ResolvedGalaxy:
         hfile[group].create_dataset(name, data=data, compression=compression)
         if meta is not None:
             for key in meta.keys():
-                print(f"Setting meta, {key}, {str(meta[key])}")
+                # print(f"Setting meta, {key}, {str(meta[key])}")
                 hfile[group][name].attrs[key] = str(meta[key])
             if setattr_gal_meta is not None:
                 setattr(self, setattr_gal_meta, meta)
 
         hfile[group][name].attrs["creation_time"] = str(datetime.datetime.now())
 
-        print(f"\r added to {hfile}, {group}, {name}")
+        # print(f"\r added to {hfile}, {group}, {name}")
 
         hfile.close()
 
         if setattr_gal is not None:
-            print(f"Setting {setattr_gal} attribute.")
+            # print(f"Setting {setattr_gal} attribute.")
             setattr(self, setattr_gal, original_data)
+
+    def _smooth_map(self, map_data, connectivity=4):
+        """
+        Uses cv2 to drop unconnected
+        regions, smooth edges and fill holes
+        of binary maps.
+
+        connectivity 4 for horizontal/vertical, 8 for diagonal as well
+
+        """
+
+        import cv2
+
+        image = copy.copy(map_data)
+
+        binary = (image * 255).astype(np.uint8)
+
+        # Find connected components
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            binary, connectivity=connectivity
+        )
+
+        # Skip background (label 0) and find largest component
+        if num_labels <= 1:
+            return np.zeros_like(binary)
+
+        # Get areas of all components (excluding background)
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        largest_label = np.argmax(areas) + 1  # +1 because we excluded background
+
+        # Create output image with only largest component
+        output = np.zeros_like(binary)
+        output[labels == largest_label] = 255
+
+        # Now smooth the edges and fill holes
+
+        output = cv2.morphologyEx(output, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        output = cv2.morphologyEx(output, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+        output = cv2.morphologyEx(output, cv2.MORPH_DILATE, np.ones((3, 3), np.uint8))
+
+        output = cv2.morphologyEx(output, cv2.MORPH_ERODE, np.ones((3, 3), np.uint8))
+        # Convert back to boolean
+
+        output = (output > 0).astype(bool)
+        return output
 
     def plot_err_cutouts(self, **kwargs):
         return self.plot_cutouts(plot="rms_err", **kwargs)
@@ -6570,6 +6694,7 @@ class ResolvedGalaxy:
         overwrite=False,
         override_psf_type=None,
         mask=None,
+        smooth=False,
     ):
         """
         Make a boolean galaxy region based on pixels in band_req that have SNR > snr_req
@@ -6578,11 +6703,16 @@ class ResolvedGalaxy:
         ----------
         snr_req : float - SNR requirement for galaxy region
         band_req : which band to use for SNR calculation.
+                If "all", use all bands. If list, use all bands in list.
+                If "auto", use all bands except those in no_use_bands.
+                If _wide, use all wide bands.
+                If _nobreak, use all bands except those in no_use_bands.
         region_name : str - name of galaxy region. If "auto", use SNR_<snr_req>_<band_req>
         overwrite : bool - overwrite existing galaxy region
         override_psf_type : str - which PSF type to use. If None, use self.use_psf_type
         mask : str or np.ndarray - mask to apply to galaxy region. If str, use self.gal_region[mask]. If None, no mask is applied.
                 If it starts with "seg_", we will use a segmentation map to mask the galaxy region.
+        smooth : bool - whether to smooth the galaxy region using cv2
         """
         # Make a boolean galaxy region based on pixels in band_req that have SNR > snr_req
 
@@ -6641,6 +6771,19 @@ class ResolvedGalaxy:
                 if mask in self.gal_region.keys():
                     mask = self.gal_region[mask]
 
+                elif mask.startswith("seg_det"):
+                    if self.det_data is not None:
+                        mask = copy.copy(self.det_data["seg"])
+                        if len(np.unique(mask)) > 2:
+                            # Take value at center as 1, set all other values to 0
+                            new_mask = np.zeros_like(mask)
+                            new_mask[
+                                mask == mask[int(self.cutout_size / 2), int(self.cutout_size / 2)]
+                            ] = 1
+                            mask = new_mask
+
+                    mask = mask.astype(bool)
+
                 elif mask.startswith("seg_"):
                     mask = copy.copy(self.unmatched_seg[mask.replace("seg_", "")])
                     if len(np.unique(mask)) > 2:
@@ -6666,9 +6809,12 @@ class ResolvedGalaxy:
 
             region_name = f"SNR_{snr_req}_{band_req}"
 
+        if smooth:
+            galaxy_region = self._smooth_map(galaxy_region, connectivity=4)
+
         self.add_to_h5(galaxy_region, "galaxy_region", region_name, overwrite=overwrite)
 
-        if not hasattr(self, "gal_region"):
+        if not hasattr(self, "gal_region") or self.gal_region is None:
             self.gal_region = {}
 
         self.gal_region[region_name] = galaxy_region
@@ -6687,7 +6833,7 @@ class ResolvedGalaxy:
 
         # Count number of pixels in galaxy region
         number_of_bins = np.sum(galaxy_region)
-        binmap = np.zeros_like(galaxy_region)
+        binmap = np.zeros_like(galaxy_region, dtype=int)
 
         # Loop over each pixel in the galaxy region and assign a bin number
         bin_number = 1
@@ -6751,6 +6897,8 @@ class ResolvedGalaxy:
         table["ID"] = [str(i) for i in range(1, int(np.max(binmap)) + 1)]
         table["type"] = "bin"
 
+        print(correct_errors_for_correlated_noise)
+
         if correct_errors_for_correlated_noise:
             print("Correcting binned pixel errors for correlated noise.")
         for pos, band in enumerate(self.bands):
@@ -6788,7 +6936,7 @@ class ResolvedGalaxy:
 
             table[band] = u.Quantity(np.array(fluxes), unit=self.phot_pix_unit[band])
             table[f"{band}_err"] = u.Quantity(np.array(flux_errs), unit=self.phot_pix_unit[band])
-
+        print(table)
         mask = binmap != 0
         assert np.isclose(
             np.sum(self.psf_matched_data[psf_type][band][mask]),
@@ -6813,13 +6961,16 @@ class ResolvedGalaxy:
         for pos, band in enumerate(self.bands):
             mask = binmap != 0
             flux = np.sum(self.psf_matched_data[psf_type][band][mask])
-            factor = self.derive_rms_correction_factor(
-                np.sum(mask), bands=band, overwrite=overwrite_corr
-            )
+
+            if correct_errors_for_correlated_noise:
+                factor = self.derive_rms_correction_factor(
+                    np.sum(mask), bands=band, overwrite=overwrite_corr
+                )
+            else:
+                factor = 1
+
             flux_err = np.sqrt(np.sum(self.psf_matched_rms_err[psf_type][band][mask] ** 2))
             flux_err *= factor
-
-            print("TOTAL_BIN", band, np.sum(mask), factor)
 
             if type(flux) in [u.Quantity, u.Magnitude, Masked(u.Quantity)]:
                 assert flux.unit == self.phot_pix_unit[band]
@@ -8884,7 +9035,7 @@ class ResolvedGalaxy:
             redshift = self.redshift
         elif redshift in self.sed_fitting_table["bagpipes"].keys():
             table = self.sed_fitting_table["bagpipes"][redshift]
-            redshift_id = redshift.get("redshift_id", table["#ID"][0])
+            redshift_id = meta.get("redshift_id", table["#ID"][0])
             row_index = table["#ID"] == redshift_id
             table = table[row_index]
             if len(table) == 0:
@@ -9473,6 +9624,9 @@ class ResolvedGalaxy:
             bands = [band for band in self.bands if band not in exclude_bands]
         else:
             bands = self.bands
+
+        if len(bands) == 0:
+            raise ValueError("No bands to fit. Please check your exclude_bands list.")
 
         self.exclude_bands = exclude_bands
 
@@ -14322,6 +14476,7 @@ class ResolvedGalaxy:
         aper_diam=0.32 * u.arcsec,
         n_jobs=1,
         z="self",
+        override_name=None,
         **kwargs,
     ):
         """
@@ -14338,7 +14493,7 @@ class ResolvedGalaxy:
         kappa_UV_conv_author_year = str, K_UV conversion ref e.g. MD14
         line_names = [], use self.available_em_lines for options
         calc_wav = u.Quantity : calculate propety (only for dust attenuation) at this wavelength
-
+        override_name = str : override the name of the run. If None it will just be the binmap_type.
 
         Property description: name : required kwargs
 
@@ -14358,6 +14513,11 @@ class ResolvedGalaxy:
         if not hasattr(self, "galfind_photometry_rest"):
             print("Warning: galfind photometry not initialized, initializing with default values")
             self.init_galfind_phot(binmap_type=binmap_type, z=z)
+
+        if override_name is None:
+            run_name = binmap_type
+        else:
+            run_name = override_name
 
         from galfind import (
             PDF,
@@ -14450,12 +14610,12 @@ class ResolvedGalaxy:
             if load_in:
                 if (
                     self.photometry_properties is not None
-                    and binmap_type in self.photometry_properties.keys()
-                    and property_name in self.photometry_properties[binmap_type].keys()
+                    and run_name in self.photometry_properties.keys()
+                    and property_name in self.photometry_properties[run_name].keys()
                 ):
-                    for prop_name in self.photometry_properties[binmap_type].keys():
-                        ppdf = np.squeeze(self.photometry_properties[binmap_type][prop_name][pos])
-                        kwargs = self.photometry_meta_properties[binmap_type][prop_name]
+                    for prop_name in self.photometry_properties[run_name].keys():
+                        ppdf = np.squeeze(self.photometry_properties[run_name][prop_name][pos])
+                        kwargs = self.photometry_meta_properties[run_name][prop_name]
                         saved_kwargs = getattr(self, f"{prop_name}_kwargs", {})
 
                         phot.property_PDFs[prop_name] = PDF.from_1D_arr(
@@ -14576,7 +14736,7 @@ class ResolvedGalaxy:
 
             self.add_to_h5(
                 all_PDFs,
-                f"photometry_properties/{binmap_type}/",
+                f"photometry_properties/{run_name}/",
                 property_name,
                 setattr_gal=f"{property_name}",
                 overwrite=True,
@@ -14585,15 +14745,15 @@ class ResolvedGalaxy:
             )
             if getattr(self, "photometry_properties", None) is None:
                 self.photometry_properties = {}
-            if binmap_type not in self.photometry_properties.keys():
-                self.photometry_properties[binmap_type] = {}
-            self.photometry_properties[binmap_type][property_name] = all_PDFs
+            if run_name not in self.photometry_properties.keys():
+                self.photometry_properties[run_name] = {}
+            self.photometry_properties[run_name][property_name] = all_PDFs
 
             if getattr(self, "photometry_meta_properties", None) is None:
                 self.photometry_meta_properties = {}
-            if binmap_type not in self.photometry_meta_properties.keys():
-                self.photometry_meta_properties[binmap_type] = {}
-            self.photometry_meta_properties[binmap_type][property_name] = out_kwargs
+            if run_name not in self.photometry_meta_properties.keys():
+                self.photometry_meta_properties[run_name] = {}
+            self.photometry_meta_properties[run_name][property_name] = out_kwargs
 
         if np.all(np.isnan(map)):
             print(f"Calculation not possible for {property_name}")
