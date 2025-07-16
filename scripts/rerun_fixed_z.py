@@ -33,7 +33,7 @@ binmap_type = "voronoi"
 load_only = False
 fit_photometry = "bin"
 
-galaxies = ResolvedGalaxy.init_all_field_from_h5("JOF_psfmatched", galaxies_dir, n_jobs=6)
+galaxies = ResolvedGalaxy.init_all_field_from_h5("JOF_psfmatched", galaxies_dir, n_jobs=int(n_jobs))
 
 galaxies = ResolvedGalaxies(galaxies)
 
@@ -53,7 +53,7 @@ override_meta = {
 bagpipes_configs = create_dicts(
     continuity_dict, override_meta=override_meta, num=len(filtered_galaxies)
 )
-
+'''
 filtered_galaxies.run_bagpipes_parallel(
     bagpipes_configs,
     n_jobs=n_jobs,
@@ -61,7 +61,7 @@ filtered_galaxies.run_bagpipes_parallel(
     run_dir=run_dir,
     load_only=load_only,
 )
-
+'''
 override_meta_resolved = {
     "use_bpass": True,
     "run_name": "CNST_SFH_RESOLVED_VORONOI_Asada24_cgm",

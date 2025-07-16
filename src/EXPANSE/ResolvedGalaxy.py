@@ -9651,11 +9651,11 @@ class ResolvedGalaxy:
         if vary_filter_list:
             nircam_filts = []
             for id in ids:
-                bands = []
+                i_bands = []
                 for band in bands:
                     if id not in ids_bands[band]:
-                        bands.append(f"{filt_dir}/{band}.dat")
-                nircam_filts.append(bands)
+                        i_bands.append(f"{filt_dir}/{band}.dat")
+                nircam_filts.append(i_bands)
 
         if redshift is None:
             print("Allowing free redshift.")
