@@ -5821,7 +5821,7 @@ class ResolvedGalaxy:
 
         print(f"Number of bins: {np.max(bin_number)}")
         # Reshape bin_number to 2D given the galaxy region mask
-        bin_number_2d = np.zeros_like(galaxy_region)
+        bin_number_2d = np.zeros(galaxy_region.shape, dtype=int)
         # check it is 2D
         assert np.ndim(bin_number_2d) == 2, f"Bin number map is not 2D: {np.shape(bin_number_2d)}"
         # bin_number_2d[galaxy_region != 1] =
@@ -6173,7 +6173,7 @@ class ResolvedGalaxy:
         else:
             if bin_type not in self.gal_region.keys():
                 raise ValueError(
-                    f"gal_region not found for {bin_type}. Run pixedfit_processing() first"
+                    f"gal_region not found for bin_type: {bin_type}. Run pixedfit_processing() first"
                 )
         gal_region = self.gal_region[bin_type]
         nrows = len(self.bands) // 6 + 1
@@ -6254,11 +6254,6 @@ class ResolvedGalaxy:
             wcs = WCS(header)
             # print(wcs.world_to_pixel(self.sky_coord))
             # print(wcs_test.world_to_pixel(self.sky_coord))
-            skycoord = SkyCoord(
-                self.meta_properties["ALPHA_J2000"] * u.deg,
-                self.meta_properties["DELTA_J2000"] * u.deg,
-                frame="icrs",
-            )
 
             cutout = Cutout2D(
                 data,
@@ -6742,7 +6737,7 @@ class ResolvedGalaxy:
             band_req_use = band_req_temp
 
             # Require in all bands
-            galaxy_region = np.ones_like(self.psf_matched_data[psf_type][band_req_use[0]])
+            galaxy_region = np.ones(self.psf_matched_data[psf_type][band_req_use[0]].shape, dtype=bool)
             for band in band_req_use:
                 snr_map = (
                     self.psf_matched_data[psf_type][band] / self.psf_matched_rms_err[psf_type][band]
@@ -6753,7 +6748,7 @@ class ResolvedGalaxy:
         elif type(band_req) is str and band_req in self.bands:
             band_req_use = band_req
 
-            galaxy_region = np.zeros_like(self.psf_matched_data[psf_type][band_req_use])
+            galaxy_region = np.zeros(self.psf_matched_data[psf_type][band_req_use].shape, dtype=bool)
 
             snr_map = (
                 self.psf_matched_data[psf_type][band_req_use]
@@ -7379,6 +7374,12 @@ class ResolvedGalaxy:
         overwrite=False,
         extra_features=None,
         verbose=True,
+        grid_path=None,
+        model_name=None,
+        override_noise_models=None,
+        return_feature_array=False,
+        num_samples=1000,
+        extra_append="",
     ):
         """Runs a SBI Fitter model on the galaxy
 
@@ -7394,6 +7395,13 @@ class ResolvedGalaxy:
                         key should be feature name, e.g. redshift, and value
                         should be the value, or a reference to 'self', 'bagpipes', etc.
         verbose : bool - whether to print progress, default is True
+        grid_path : str - path to the grid to use for fitting, default is None
+        model_name : str - name of the model to use for fitting, default is None
+        override_noise_models : dict - dictionary of noise models to override, default is None
+            If None, the noise models from the SBI Fitter model will be used.
+        return_feature_array : bool - whether to return the feature array, default is False.
+            Only for debugging purposes.
+        num_samples : int - number of samples to draw for each photometry bin. Default is 1000.
         """
 
         if not hasattr(self, "photometry_table"):
@@ -7416,24 +7424,31 @@ class ResolvedGalaxy:
 
         from sbifitter import SBI_Fitter
 
-        fitter = SBI_Fitter.load_saved_model(sbifitter_model_path)
+        self.sbi_fitter = SBI_Fitter.load_saved_model(sbifitter_model_path,
+                                                    grid_path=grid_path,
+                                                    model_name=model_name,
+                                                    load_arrays=False)
 
-        feature_names = fitter.feature_names
+        if override_noise_models is not None:
+            self.sbi_fitter.feature_array_flags["empirical_noise_models"] = override_noise_models
 
+        print(f'Loaded SBI Fitter model from {sbifitter_model_path}')
+
+        feature_names = self.sbi_fitter.feature_names
         columns_to_feature_names = {}
 
         for band in self.bands:
             for feature in feature_names:
                 if band in feature:
-                    if feature.split(".") == band:
+                    if feature.split(".")[-1] == band and 'unc_' not in feature:
                         # This means we have the photometry
-                        columns_to_feature_names[feature] = feature
+                        columns_to_feature_names[band] = feature
                     elif feature.startswith("unc_"):
                         # This means we have the uncertainty
-                        columns_to_feature_names[feature] = f"{band}_err"
+                        columns_to_feature_names[f"{band}_err"] = feature
 
         if len(columns_to_feature_names) != len(feature_names):
-            missing_features = set(feature_names) - set(columns_to_feature_names.keys())
+            missing_features = set(feature_names) - set(columns_to_feature_names.values())
             for missing_feature in missing_features:
                 if missing_feature not in extra_features:
                     print(
@@ -7453,7 +7468,9 @@ class ResolvedGalaxy:
                     else:
                         raise ValueError(f"Don't understand input for {missing_feature}.")
 
-        name = fitter.name
+        name = self.sbi_fitter.name
+
+        name = f'{name}{extra_append}'
 
         additional_name = f"{psf_type}_{binmap_type}"
 
@@ -7468,12 +7485,51 @@ class ResolvedGalaxy:
                         print(f"Run {name}_{additional_name} already exists")
                         return
 
-        output = fitter.fit_catalogue(
+        print(f"Fitting {len(flux_table)} rows with {name}")
+
+        
+        '''
+        required_flux_unit = self.sbi_fitter.feature_array_flags["normed_flux_units"]
+        import unyt
+        if isinstance(required_flux_unit, unyt.Unit):
+            unit = required_flux_unit.to_astropy()
+        else:
+            unit = required_flux_unit
+
+        print(f"Required flux unit: {unit}")
+
+        self.get_filter_wavs()
+
+        if unit == 'AB':
+            # Convert fluxes to AB units
+            for band in self.bands:
+                if band in flux_table.colnames:
+                    flux_table[f"{band}_err"] = 2.5 * flux_table[band]/(np.log(10) * flux_table[f"{band}_err"]).value
+                    flux_table[band] = flux_table[band].to(u.ABmag, equivalencies=u.spectral_density(self.filter_wavs[band])).value
+        elif isinstance(unit, u.Unit):
+            # Convert fluxes to the required unit
+            for band in self.bands:
+                if band in flux_table.colnames:
+                    flux_table[band] = flux_table[band].to(unit, equivalencies=u.spectral_density(self.filter_wavs[band])).value
+                    flux_table[f"{band}_err"] = flux_table[f"{band}_err"].to(unit, equivalencies=u.spectral_density(self.filter_wavs[band])).value
+        else:
+            raise ValueError(f"Unknown flux unit {required_flux_unit} in SBI Fitter model.")
+        '''
+        print('Running sbifitter.')
+        import unyt
+
+        output = self.sbi_fitter.fit_catalogue(
             observations=flux_table,
             columns_to_feature_names=columns_to_feature_names,
             append_to_input=False,
-            flux_units=self.phot_pix_unit,
+            flux_units=unyt.uJy,
+            return_feature_array=return_feature_array,
+            check_out_of_distribution=False,
+            num_samples=num_samples,
         )
+
+        if return_feature_array:
+            return output
 
         out_name = f"{name}_{additional_name}"
 
@@ -7752,6 +7808,210 @@ class ResolvedGalaxy:
         )
 
         return fit_results
+
+    def plot_property_map(self,
+        property_name,
+        sed_fitting_tool,
+        run_name,
+        binmap_type=None,
+        remove_log10=True,
+        log_scale=False,
+        cmap="viridis",
+        add_compass=True,
+        add_scalebar=True,
+        compass_center=(25, 35),
+        compass_arrow_length=0.5*u.arcsec,
+        compass_arrow_width=1,
+        compass_text_scale_factor=1.4,
+        compass_color='white',
+        text_fontsize=12,
+        fill_nan_color='black',
+        show_extent=True,
+        label=None,
+        set_cmap_ticks=None,
+        scale_factor=1,
+    ):
+        """
+        Plot a property map for a given property name from the sed_fitting_tool results.
+        Parameters
+        ----------
+        property_name : str - name of the property to plot, e.g. 'mstar', 'sfr', 'dust', 'met', 'zval'
+        sed_fitting_tool    : str - name of the sed fitting tool, e.g. 'dense_basis', 'sbifitter'
+        binmap_type : str - which binmap to use for plotting, default is None,
+                            which uses the one set in self.use_binmap_type
+        run_name : str - name of the run to plot, e.g. 'run1', 'run2'
+        remove_log10 : bool - whether to remove the log10 from the property name, default is True
+        log_scale : bool - whether to use a logarithmic scale for the color map, default is False
+        cmap : str - name of the colormap to use, default is 'viridis'
+        add_compass : bool - whether to add a compass to the plot, default is True
+        add_scalebar : bool - whether to add a scalebar to the plot, default is True
+        compass_center : tuple - center of the compass in pixels, default is (25, 25)
+        compass_arrow_length : float - length of the compass arrow in arcseconds, default is 0.5 arcsec
+        compass_arrow_width : float - width of the compass arrow in pixels, default is 1 pixel
+        compass_text_scale_factor : float - scale factor for the compass text size, default is 1.4
+        compass_color : str - color of the compass, default is 'white'
+        text_fontsize : int - font size for the text in the plot, default is 12
+        fill_nan_color : str - color to fill NaN values in the property map, default is 'black'
+        show_extent : bool - whether to show the extent of the property map, default is True
+        """
+  
+
+        if not hasattr(self, "sed_fitting_table"):
+            raise Exception("Need to run sed fitting first")
+        if sed_fitting_tool not in self.sed_fitting_table.keys():
+            raise Exception(f"Sed fitting tool {sed_fitting_tool} not found in sed_fitting table")
+
+        if run_name not in self.sed_fitting_table[sed_fitting_tool].keys():
+            raise Exception(f"Sed fitting tool {run_name} not found in sed_fitting table for {sed_fitting_tool}")
+
+        table = self.sed_fitting_table[sed_fitting_tool][run_name]
+
+        if binmap_type is None:
+            if 'binmap_type' in table.meta.keys():
+                binmap_type = table.meta['binmap_type']
+            elif hasattr(self, "use_binmap_type"):
+                binmap_type = self.use_binmap_type
+            else:
+                binmap_type = "pixedfit"
+
+        if property_name not in table.colnames:
+                property_name = f'{property_name}_50'
+                if property_name not in table.colnames:
+                    raise Exception(f"Property {property_name} not found in table")
+
+        binmap = getattr(self, f"{binmap_type}_map", None)
+        if binmap is None:
+            raise Exception(f"Binmap {binmap_type} not found in object. Please run measure_flux_in_bins first.")
+
+        property_map = self.convert_table_to_map(
+            table,
+            "ID",
+            property_name,
+            binmap,
+            remove_log10=remove_log10,
+        )
+        wcs = WCS(self.phot_img_headers["F444W"])
+
+        x_pix, y_pix = wcs.all_world2pix(self.sky_coord.ra.deg, self.sky_coord.dec.deg, 1)
+        wcs = wcs[
+            int(y_pix - self.cutout_size / 2) : int(y_pix + self.cutout_size / 2),
+            int(x_pix - self.cutout_size / 2) : int(x_pix + self.cutout_size / 2),
+        ]
+
+        fig = plt.figure(figsize=(8, 6), dpi=140, facecolor="white")
+
+        ax = fig.add_subplot(111)# projection=wcs)
+        ax.grid(False)
+
+        if fill_nan_color is not None:
+            # set cmap to set 'bad' values to a specific color
+            cmap = plt.get_cmap(cmap)
+            cmap.set_bad(color=fill_nan_color)
+
+        property_map *= scale_factor  # Apply scale factor to the property map
+
+        im = ax.imshow(
+            property_map,
+            cmap=cmap,
+            origin="lower",
+            interpolation="nearest",
+            vmin=np.nanmin(property_map),
+            vmax=np.nanmax(property_map),
+        )
+
+        if log_scale:
+            im.set_norm(LogNorm(vmin=np.nanmin(property_map), vmax=np.nanmax(property_map)))
+
+        if label is None:
+            label = f"{property_name.replace('_50', '').replace('_', ' ')}"
+
+        cax = make_axes_locatable(ax).append_axes("right", size="5%", pad=0.05)
+        cbar = plt.colorbar(im, cax=cax)
+
+        cbar.set_label(label, fontsize=text_fontsize)
+
+        if set_cmap_ticks is not None:
+            cbar.set_ticks(set_cmap_ticks)
+            if set_cmap_ticks[-1] > 1000:
+                formatter = ScalarFormatter(useOffset=False, useMathText=True)
+            else:
+                formatter = ScalarFormatter(useOffset=False)
+            cbar.ax.yaxis.set_major_formatter(formatter)
+
+
+        if add_compass:
+            ra, dec = wcs.all_pix2world(compass_center[0], compass_center[1], 0)
+
+            compass(
+                ra,
+                dec,
+                wcs,
+                ax,
+                arrow_length=compass_arrow_length,
+                x_ax="ra",
+                ang_text=False,
+                arrow_width=compass_arrow_width,
+                arrow_color=compass_color,
+                text_color=compass_color,
+                fontsize=text_fontsize,
+                return_ang=False,
+                compass_text_scale_factor=compass_text_scale_factor,
+            )
+        if add_scalebar:
+            re = 15  # pixels
+            d_A = cosmo.angular_diameter_distance(self.redshift)
+            pix_scal = u.pixel_scale(self.im_pixel_scales["F444W"].value * u.arcsec / u.pixel)
+            re_as = (re * u.pixel).to(u.arcsec, pix_scal)
+            re_kpc = (re_as * d_A).to(u.kpc, u.dimensionless_angles())
+
+            # First scalebar
+            scalebar = AnchoredSizeBar(
+                ax.transData,
+                0.5 / self.im_pixel_scales["F444W"].value,
+                '0.5"',
+                "lower right",
+                pad=0.3,
+                color=compass_color,
+                frameon=False,
+                size_vertical=1,
+                fontproperties=FontProperties(size=text_fontsize),
+            )
+            ax.add_artist(scalebar)
+            # Plot scalebar with physical size
+            scalebar = AnchoredSizeBar(
+                ax.transData,
+                re,
+                f"{re_kpc:.1f}",
+                "lower left",
+                pad=0.3,
+                color=compass_color,
+                frameon=False,
+                size_vertical=1,
+                fontproperties=FontProperties(size=text_fontsize),
+            )
+            scalebar.set(path_effects=[PathEffects.withStroke(linewidth=3, foreground="white")])
+            ax.add_artist(scalebar)
+
+        ax.set_xlim(ax.get_xlim())
+        ax.set_ylim(ax.get_ylim())
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        if show_extent:
+            # Add a single contour showing step between numbers and nans 
+            mock_img = np.nan_to_num(property_map, nan=0)
+            contours = ax.contour(
+                mock_img,
+                levels=[0.5],
+                colors=compass_color,
+                linewidths=0.5,
+                linestyles="dotted",
+                alpha=0.5,
+            )
+
+        return fig
+
+
 
     def _plot_dense_basis_results(
         self,
@@ -8978,6 +9238,16 @@ class ResolvedGalaxy:
         return fig
 
     def _get_flux_table(self, fit_photometry, psf_type, binmap_type):
+
+        if psf_type not in self.photometry_table.keys():
+            raise ValueError(
+                f"PSF type {psf_type} not found in photometry_table. Available types: {self.photometry_table.keys()}"
+            )
+        if binmap_type not in self.photometry_table[psf_type].keys():
+            raise ValueError(
+                f"Binmap type {binmap_type} not found in photometry_table[{psf_type}]. Available types: {self.photometry_table[psf_type].keys()}"
+            )
+
         flux_table = copy.deepcopy(self.photometry_table[psf_type][binmap_type])
         if fit_photometry == "all":
             mask = np.ones(len(flux_table), dtype=bool)
@@ -10480,7 +10750,7 @@ class ResolvedGalaxy:
 
             region.plot(
                 ax=ax,
-                edgecolor=region.visual["color"] if region.visual["color"] != 0 else "black",
+                edgecolor=region.visual["color"] if region.visual["color"] not in [0, ""] else "black",
             )
 
             """
@@ -10608,7 +10878,7 @@ class ResolvedGalaxy:
                 wav.to(wav_unit),
                 flux[band].to(flux_unit, equivalencies=u.spectral_density(wav)).value,
                 yerr=yerr,
-                color=color,
+                color=color if color != "" else "black",
                 marker=marker,
                 markersize=10,
                 label=label if (label is not None and pos == len(self.bands) - 1) else "",

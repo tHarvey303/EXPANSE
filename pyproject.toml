@@ -93,6 +93,7 @@ dependencies = [
   "requests",
   "pandas",
   "corner",
+  "regions",
   "bagpipes @ git+https://github.com/tHarvey303/bagpipes/",
 ]
 

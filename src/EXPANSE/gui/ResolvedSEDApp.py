@@ -1134,7 +1134,12 @@ class GalaxyTab(param.Parameterized):
     def do_other_plot(self):
         try:
             if self.other_plot_select == "Galaxy Region":
-                fig = self.resolved_galaxy.plot_gal_region(facecolor=self.facecolor)
+                available_regions = list(self.resolved_galaxy.gal_region.keys())
+                if 'detection' not in available_regions:
+                    region = available_regions[0]
+                else:
+                    region = 'detection'
+                fig = self.resolved_galaxy.plot_gal_region(facecolor=self.facecolor, bin_type=region)
             elif self.other_plot_select == "Fluxes":
                 fig = self.resolved_galaxy.pixedfit_plot_map_fluxes()
             elif self.other_plot_select == "Segmentation Map":

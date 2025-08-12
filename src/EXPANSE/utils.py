@@ -149,6 +149,7 @@ def scale_fluxes(
     zero_point=28.08,
     aper_diam=0.32 * u.arcsec,
     pix_scale=0.03 * u.arcsec,
+    max_auto_correction=None,  # If set, will not correct if the auto flux is larger than this value
 ):
     """Scale fluxes to total flux using PSF
     Scale mag_aper to mag_auto (ideally measured in LW stack), and then derive PSF correction by placing a elliptical aperture around the PSF.
@@ -172,6 +173,10 @@ def scale_fluxes(
         clip = False
     else:
         factor = 1
+        clip = True
+
+    if max_auto_correction is not None and factor > max_auto_correction:
+        factor = 1 # Don't apply the correction if the auto flux is larger than this value - typically only happens for very faint objects anyway
         clip = True
 
     if clip:
@@ -459,9 +464,13 @@ def send_email(contents, subject="", address="tharvey303@gmail.com"):
     print("Sent email.")
 
 
-def calculate_ab_zeropoint(known_jy, unknown_counts):
+def calculate_ab_zeropoint(unknown_counts, known_jy=None, ab_mag_known=None):
     # Convert μJy to AB magnitude
-    ab_mag_known = -2.5 * np.log10(known_jy) + 8.90
+    if known_jy is None and ab_mag_known is None:
+        raise ValueError("Must provide either known_jy or ab_mag_known.")
+
+    if ab_mag_known is None:
+        ab_mag_known = -2.5 * np.log10(known_jy) + 8.90
 
     # Calculate zeropoint
     zeropoint = ab_mag_known + 2.5 * np.log10(unknown_counts)
