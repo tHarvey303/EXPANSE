@@ -89,7 +89,7 @@ cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 # This class is designed to hold all the data for a galaxy, including the cutouts, segmentation maps, and RMS error maps.
 
 """TODO:
-        1. Store aperture photometry, auto photometry from catalogue. 
+        1. Store aperture photometry, auto photometry from catalogue.
         2. Pixel binning.
         3. Does ERR map need to be convolved with PSF?
 """
@@ -1668,6 +1668,7 @@ class ResolvedGalaxy:
         forced_phot_band: typing.List[str] = ["F277W", "F356W", "F444W"],
         meta_properties={},
         overwrite=False,
+        already_cutout=False,
     ):
         """
         This function is the barebones function to initialize a Galaxy,
@@ -1697,6 +1698,8 @@ class ResolvedGalaxy:
             Any additional meta properties to store. Any keys/values should be serializable (e..g basic types)
         overwrite : bool
             If True, will overwrite any existing galaxy with the same ID/survey
+        already_cutout : bool
+            If True, the input images are already cutouts. Skips all cutout making steps. Set cutout_size to the size of the input images.
 
         """
 
@@ -1724,15 +1727,21 @@ class ResolvedGalaxy:
             im_header = fits.getheader(im_path, field_info.im_exts[band])
             wcs = WCS(im_header)
             phot_img_headers[band] = str(im_header)
+            if not already_cutout:
+                cutout = Cutout2D(
+                    im_data,
+                    position=sky_coord,
+                    size=(cutout_size, cutout_size),
+                    wcs=wcs,
+                )
 
-            cutout = Cutout2D(
-                im_data,
-                position=sky_coord,
-                size=(cutout_size, cutout_size),
-                wcs=wcs,
-            )
-
-            data = cutout.data
+                data = cutout.data
+            else:
+                data = im_data
+                # assert square
+                if im_data.shape[0] != im_data.shape[1]:
+                    raise Exception("Input cutout images must be square!")
+                cutout_size = im_data.shape[0]
 
             # Check if data is all O or NaN
             if np.all(data == 0) or np.all(np.isnan(data)):
@@ -1771,15 +1780,21 @@ class ResolvedGalaxy:
             if field_info.err_paths[band] is not None:
                 rms_err_path = field_info.err_paths[band]
                 rms_err_data = fits.getdata(rms_err_path, field_info.rms_err_exts[band])
-                rms_err_cutout = Cutout2D(
-                    rms_err_data,
-                    position=sky_coord,
-                    size=(cutout_size, cutout_size),
-                    wcs=wcs,
-                )
+                if not already_cutout:
+                    rms_err_cutout = Cutout2D(
+                        rms_err_data,
+                        position=sky_coord,
+                        size=(cutout_size, cutout_size),
+                        wcs=wcs,
+                    )
 
-                # Do the same conversion for the rms_err data
-                rms_err_data = rms_err_cutout.data
+                    # Do the same conversion for the rms_err data
+                    rms_err_data = rms_err_cutout.data
+                else:
+                    rms_err_data = rms_err_data
+                    # assert square
+                    if rms_err_data.shape[0] != rms_err_data.shape[1]:
+                        raise Exception("Input cutout images must be square!")
                 rms_err_data_final = rms_err_data * scale_factor * unit
                 rms_err_imgs[band] = copy.deepcopy(rms_err_data_final.to(u.uJy)).value
                 del rms_err_data
@@ -1787,12 +1802,15 @@ class ResolvedGalaxy:
             if field_info.seg_paths[band] is not None:
                 seg_path = field_info.seg_paths[band]
                 seg_data = fits.getdata(seg_path)
-                seg_cutout = Cutout2D(
-                    seg_data,
-                    position=sky_coord,
-                    size=(cutout_size, cutout_size),
-                    wcs=wcs,
+                if not already_cutout:
+                    seg_cutout = Cutout2D(
+                        seg_data,
+                        position=sky_coord,
+                        size=(cutout_size, cutout_size),
+                        wcs=wcs,
                 )
+                else:
+                    seg_cutout = seg_data
                 seg_imgs[band] = copy.deepcopy(seg_cutout.data)
                 del seg_data
 
@@ -1800,13 +1818,20 @@ class ResolvedGalaxy:
                 # Get the PSF matched image
                 psf_matched_path = field_info.psf_matched_image_paths[band]
                 psf_matched_data = fits.getdata(psf_matched_path)
-                psf_im_cutout = Cutout2D(
-                    psf_matched_data,
-                    position=sky_coord,
-                    size=(cutout_size, cutout_size),
-                    wcs=wcs,
-                )
-                psf_im_data = psf_im_cutout.data
+                if not already_cutout:
+                    psf_im_cutout = Cutout2D(
+                        psf_matched_data,
+                        position=sky_coord,
+                        size=(cutout_size, cutout_size),
+                        wcs=wcs,
+                    )
+                    psf_im_data = psf_im_cutout.data
+
+                else:
+                    psf_im_data = psf_matched_data
+                    # assert square
+                    if psf_im_data.shape[0] != psf_im_data.shape[1]:
+                        raise Exception("Input cutout images must be square!")
                 psf_im_data_final = psf_im_data * scale_factor * unit
                 psf_im_data[band] = copy.deepcopy(psf_im_data_final.to(u.uJy).value)
                 del psf_matched_data
@@ -1814,13 +1839,20 @@ class ResolvedGalaxy:
                 # Get the PSF matched rms_err
                 psf_matched_rms_err_path = field_info.psf_matched_err_paths[band]
                 psf_matched_rms_err_data = fits.getdata(psf_matched_rms_err_path)
-                psf_rms_err_cutout = Cutout2D(
-                    psf_matched_rms_err_data,
-                    position=sky_coord,
-                    size=(cutout_size, cutout_size),
-                    wcs=wcs,
-                )
-                psf_rms_err_final = psf_rms_err_cutout.data
+                if not already_cutout:      
+                    psf_rms_err_cutout = Cutout2D(
+                        psf_matched_rms_err_data,
+                        position=sky_coord,
+                        size=(cutout_size, cutout_size),
+                        wcs=wcs,
+                    )
+                    psf_rms_err_final = psf_rms_err_cutout.data
+                else:
+                    psf_rms_err_final = psf_matched_rms_err_data
+                    # assert square
+                    if psf_rms_err_final.shape[0] != psf_rms_err_final.shape[1]:
+                        raise Exception("Input cutout images must be square!")
+
                 psf_rms_err_final = psf_rms_err_final * scale_factor * unit
 
                 psf_rms_err_data[band] = copy.deepcopy(psf_rms_err_final.to(u.uJy).value)
@@ -1929,12 +1961,15 @@ class ResolvedGalaxy:
                 data = fits.getdata(path, ext)
                 header = fits.getheader(path, ext)
                 wcs = WCS(header)
-                cutout = Cutout2D(
-                    data, position=sky_coord, size=(cutout_size, cutout_size), wcs=wcs
-                )
+                if not already_cutout:
+                    cutout = Cutout2D(
+                        data, position=sky_coord, size=(cutout_size, cutout_size), wcs=wcs
+                    ).data
+                else:
+                    cutout = data
                 if isinstance(unit, str):
                     unit = u.Unit(copy.copy(unit))
-                data = cutout.data * scale_factor
+                data = cutout * scale_factor
                 return data * unit
 
             det_data = {}
