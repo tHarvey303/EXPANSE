@@ -150,6 +150,8 @@ def scale_fluxes(
     aper_diam=0.32 * u.arcsec,
     pix_scale=0.03 * u.arcsec,
     max_auto_correction=None,  # If set, will not correct if the auto flux is larger than this value
+    tab1=None,  # If provided, will use this table instead of reading from file
+    tab2=None,  # If provided, will use this table instead of reading from file
 ):
     """Scale fluxes to total flux using PSF
     Scale mag_aper to mag_auto (ideally measured in LW stack), and then derive PSF correction by placing a elliptical aperture around the PSF.
@@ -159,7 +161,7 @@ def scale_fluxes(
     area_of_aper = np.pi * (aper_diam.to(u.arcsec) / (2 * pix_scale)) ** 2
     area_of_ellipse = np.pi * a * b
     # Don't use the scale factor if the ellipse is smaller than the aperture
-    scale_factor = area_of_aper / area_of_ellipse
+    scale_factor = area_of_ellipse / area_of_aper
     if flux_type == "mag":
         flux_auto = 10 ** ((zero_point - mag_auto) / 2.5)
         flux_aper = 10 ** ((zero_point - mag_aper) / 2.5)
@@ -167,8 +169,7 @@ def scale_fluxes(
         flux_auto = mag_auto
         flux_aper = mag_aper
 
-    # print(flux_auto, flux_aper, scale_factor)
-    if (scale_factor > 1) and flux_auto > flux_aper:
+    if (scale_factor > 1) and (flux_auto > flux_aper):
         factor = flux_auto / flux_aper
         clip = False
     else:
@@ -176,7 +177,7 @@ def scale_fluxes(
         clip = True
 
     if max_auto_correction is not None and factor > max_auto_correction:
-        factor = 1 # Don't apply the correction if the auto flux is larger than this value - typically only happens for very faint objects anyway
+        factor = 1  # Don't apply the correction if the auto flux is larger than this value - typically only happens for very faint objects anyway
         clip = True
 
     if clip:
@@ -199,16 +200,19 @@ def scale_fluxes(
     # circular_aperture_phot = aperture_photometry(psf, circular_aperture)
 
     # get path of this file
-    file_path = os.path.abspath(__file__)
-    psf_path = os.path.dirname(os.path.dirname(os.path.dirname(file_path))) + "/psfs"
-    file1 = f"{psf_path}/Encircled_Energy_LW_ETCv2.txt"
-    tab1 = Table.read(file1, format="ascii")
+    if tab1 is None:
+        file_path = os.path.abspath(__file__)
+        psf_path = os.path.dirname(os.path.dirname(os.path.dirname(file_path))) + "/psfs"
+        file1 = f"{psf_path}/Encircled_Energy_LW_ETCv2.txt"
+        tab1 = Table.read(file1, format="ascii")
 
-    file2 = f"{psf_path}/ACS_WFC_EE.txt"
-    tab2 = Table.read(file2, format="ascii.commented_header")
+    if tab2 is None:
+        file2 = f"{psf_path}/ACS_WFC_EE.txt"
+        tab2 = Table.read(file2, format="ascii.commented_header")
 
     if band in tab1.colnames:
         tab = tab1
+        tab["aper_radius"] = tab["aper_radius"] / pix_scale.to(u.arcsec.value)
     elif band in tab2["band"]:
         tab = tab2
         # Current tab is bands in row and aper_radius in column, need to swap this
@@ -217,9 +221,9 @@ def scale_fluxes(
         tab.columns = tab.iloc[0]
         tab = tab.drop(tab.index[0])
         # Rename band to aper_radius
-        tab["aper_radius"] = [float(i) * pix_scale for i in tab.index]
+        tab["aper_radius"] = [float(i) for i in tab.index]
 
-    x = tab["aper_radius"] / pix_scale
+    x = tab["aper_radius"]
     y = tab[band]
     f = interp1d(x, y, kind="linear", fill_value=(0, 1.0), bounds_error=False)
 

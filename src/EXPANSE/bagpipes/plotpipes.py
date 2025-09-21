@@ -333,6 +333,7 @@ class PipesFitNoLoad:
         facecolor="white",
         extra_samples=["sfr"],
         fontsize=13,
+        rotation=None,
     ):
         self.calculate_dof()
 
@@ -373,6 +374,10 @@ class PipesFitNoLoad:
 
             ax.xaxis.label.set_fontsize(fontsize)
             ax.yaxis.label.set_fontsize(fontsize)
+            if rotation:
+                for label in ax.get_xticklabels():
+                    label.set_rotation(45)
+                    label.set_ha("right")
 
         return fig
 
@@ -1475,6 +1480,7 @@ class PipesFit:
         color="black",
         facecolor="white",
         fontsize=13,
+        rotation=None,
     ):
         from bagpipes import plot_corner
 

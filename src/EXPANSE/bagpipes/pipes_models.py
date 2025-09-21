@@ -307,7 +307,6 @@ sfh_type = "iyer2019"
 
 sfh["massformed"] = (5.0, 12.0)  # Log_10 total stellar mass formed: M_Solar
 sfh["metallicity"] = (1e-3, 2.5)
-
 sfh["sfr"] = (
     1e-3,
     1e3,

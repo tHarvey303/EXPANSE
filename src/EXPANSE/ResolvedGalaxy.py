@@ -3059,7 +3059,7 @@ class ResolvedGalaxy:
         filters = [self.band_codes[band] for band in filters]
 
         mask = np.isfinite(flux) & np.isfinite(wav)
-        mags = flux[mask]
+        flux = flux[mask]
         wav = wav[mask]
 
         output_unit = flux.unit
@@ -3068,7 +3068,7 @@ class ResolvedGalaxy:
         # print('Removed nans from input SED')
         if len(flux) != len(wav) != len(filters):
             print("Inputs are different lengths!")
-        if type(wav[0]) == float:
+        if isinstance(wav[0], float):
             print("Assuming microns")
             wav = [i * u.um for i in wav]
 
@@ -6737,7 +6737,9 @@ class ResolvedGalaxy:
             band_req_use = band_req_temp
 
             # Require in all bands
-            galaxy_region = np.ones(self.psf_matched_data[psf_type][band_req_use[0]].shape, dtype=bool)
+            galaxy_region = np.ones(
+                self.psf_matched_data[psf_type][band_req_use[0]].shape, dtype=bool
+            )
             for band in band_req_use:
                 snr_map = (
                     self.psf_matched_data[psf_type][band] / self.psf_matched_rms_err[psf_type][band]
@@ -6748,7 +6750,9 @@ class ResolvedGalaxy:
         elif type(band_req) is str and band_req in self.bands:
             band_req_use = band_req
 
-            galaxy_region = np.zeros(self.psf_matched_data[psf_type][band_req_use].shape, dtype=bool)
+            galaxy_region = np.zeros(
+                self.psf_matched_data[psf_type][band_req_use].shape, dtype=bool
+            )
 
             snr_map = (
                 self.psf_matched_data[psf_type][band_req_use]
@@ -7424,15 +7428,14 @@ class ResolvedGalaxy:
 
         from sbifitter import SBI_Fitter
 
-        self.sbi_fitter = SBI_Fitter.load_saved_model(sbifitter_model_path,
-                                                    grid_path=grid_path,
-                                                    model_name=model_name,
-                                                    load_arrays=False)
+        self.sbi_fitter = SBI_Fitter.load_saved_model(
+            sbifitter_model_path, grid_path=grid_path, model_name=model_name, load_arrays=False
+        )
 
         if override_noise_models is not None:
             self.sbi_fitter.feature_array_flags["empirical_noise_models"] = override_noise_models
 
-        print(f'Loaded SBI Fitter model from {sbifitter_model_path}')
+        print(f"Loaded SBI Fitter model from {sbifitter_model_path}")
 
         feature_names = self.sbi_fitter.feature_names
         columns_to_feature_names = {}
@@ -7440,7 +7443,7 @@ class ResolvedGalaxy:
         for band in self.bands:
             for feature in feature_names:
                 if band in feature:
-                    if feature.split(".")[-1] == band and 'unc_' not in feature:
+                    if feature.split(".")[-1] == band and "unc_" not in feature:
                         # This means we have the photometry
                         columns_to_feature_names[band] = feature
                     elif feature.startswith("unc_"):
@@ -7470,7 +7473,7 @@ class ResolvedGalaxy:
 
         name = self.sbi_fitter.name
 
-        name = f'{name}{extra_append}'
+        name = f"{name}{extra_append}"
 
         additional_name = f"{psf_type}_{binmap_type}"
 
@@ -7487,8 +7490,7 @@ class ResolvedGalaxy:
 
         print(f"Fitting {len(flux_table)} rows with {name}")
 
-        
-        '''
+        """
         required_flux_unit = self.sbi_fitter.feature_array_flags["normed_flux_units"]
         import unyt
         if isinstance(required_flux_unit, unyt.Unit):
@@ -7514,8 +7516,8 @@ class ResolvedGalaxy:
                     flux_table[f"{band}_err"] = flux_table[f"{band}_err"].to(unit, equivalencies=u.spectral_density(self.filter_wavs[band])).value
         else:
             raise ValueError(f"Unknown flux unit {required_flux_unit} in SBI Fitter model.")
-        '''
-        print('Running sbifitter.')
+        """
+        print("Running sbifitter.")
         import unyt
 
         output = self.sbi_fitter.fit_catalogue(
@@ -7809,7 +7811,8 @@ class ResolvedGalaxy:
 
         return fit_results
 
-    def plot_property_map(self,
+    def plot_property_map(
+        self,
         property_name,
         sed_fitting_tool,
         run_name,
@@ -7820,12 +7823,12 @@ class ResolvedGalaxy:
         add_compass=True,
         add_scalebar=True,
         compass_center=(25, 35),
-        compass_arrow_length=0.5*u.arcsec,
+        compass_arrow_length=0.5 * u.arcsec,
         compass_arrow_width=1,
         compass_text_scale_factor=1.4,
-        compass_color='white',
+        compass_color="white",
         text_fontsize=12,
-        fill_nan_color='black',
+        fill_nan_color="black",
         show_extent=True,
         label=None,
         set_cmap_ticks=None,
@@ -7854,7 +7857,6 @@ class ResolvedGalaxy:
         fill_nan_color : str - color to fill NaN values in the property map, default is 'black'
         show_extent : bool - whether to show the extent of the property map, default is True
         """
-  
 
         if not hasattr(self, "sed_fitting_table"):
             raise Exception("Need to run sed fitting first")
@@ -7862,26 +7864,30 @@ class ResolvedGalaxy:
             raise Exception(f"Sed fitting tool {sed_fitting_tool} not found in sed_fitting table")
 
         if run_name not in self.sed_fitting_table[sed_fitting_tool].keys():
-            raise Exception(f"Sed fitting tool {run_name} not found in sed_fitting table for {sed_fitting_tool}")
+            raise Exception(
+                f"Sed fitting tool {run_name} not found in sed_fitting table for {sed_fitting_tool}"
+            )
 
         table = self.sed_fitting_table[sed_fitting_tool][run_name]
 
         if binmap_type is None:
-            if 'binmap_type' in table.meta.keys():
-                binmap_type = table.meta['binmap_type']
+            if "binmap_type" in table.meta.keys():
+                binmap_type = table.meta["binmap_type"]
             elif hasattr(self, "use_binmap_type"):
                 binmap_type = self.use_binmap_type
             else:
                 binmap_type = "pixedfit"
 
         if property_name not in table.colnames:
-                property_name = f'{property_name}_50'
-                if property_name not in table.colnames:
-                    raise Exception(f"Property {property_name} not found in table")
+            property_name = f"{property_name}_50"
+            if property_name not in table.colnames:
+                raise Exception(f"Property {property_name} not found in table")
 
         binmap = getattr(self, f"{binmap_type}_map", None)
         if binmap is None:
-            raise Exception(f"Binmap {binmap_type} not found in object. Please run measure_flux_in_bins first.")
+            raise Exception(
+                f"Binmap {binmap_type} not found in object. Please run measure_flux_in_bins first."
+            )
 
         property_map = self.convert_table_to_map(
             table,
@@ -7900,7 +7906,7 @@ class ResolvedGalaxy:
 
         fig = plt.figure(figsize=(8, 6), dpi=140, facecolor="white")
 
-        ax = fig.add_subplot(111)# projection=wcs)
+        ax = fig.add_subplot(111)  # projection=wcs)
         ax.grid(False)
 
         if fill_nan_color is not None:
@@ -7937,7 +7943,6 @@ class ResolvedGalaxy:
             else:
                 formatter = ScalarFormatter(useOffset=False)
             cbar.ax.yaxis.set_major_formatter(formatter)
-
 
         if add_compass:
             ra, dec = wcs.all_pix2world(compass_center[0], compass_center[1], 0)
@@ -7998,7 +8003,7 @@ class ResolvedGalaxy:
         ax.set_yticks([])
 
         if show_extent:
-            # Add a single contour showing step between numbers and nans 
+            # Add a single contour showing step between numbers and nans
             mock_img = np.nan_to_num(property_map, nan=0)
             contours = ax.contour(
                 mock_img,
@@ -8010,8 +8015,6 @@ class ResolvedGalaxy:
             )
 
         return fig
-
-
 
     def _plot_dense_basis_results(
         self,
@@ -8803,6 +8806,7 @@ class ResolvedGalaxy:
             colors=colors,
             rgb_stretch_obj=rgb_stretch_obj,
             rgb_bands=rgb_bands,
+            box_fontsize=12,
         )
 
         # overview_subfig.get_layout_engine().set(h_pad=0, hspace=0)
@@ -8823,7 +8827,7 @@ class ResolvedGalaxy:
                 label_type="run",
             )
 
-        ax_sed.legend(fontsize=8, frameon=False)
+        ax_sed.legend(fontsize=13, frameon=False)
 
         # Plot PDFs
         pdf_subfig = top_row[1]
@@ -8851,7 +8855,7 @@ class ResolvedGalaxy:
                     axes=ax,
                     legend=False,
                     colors_from_full_dist=False,
-                    fontsize=10,
+                    fontsize=15,
                 )
         # Plot corner (bottom right)
 
@@ -8867,7 +8871,8 @@ class ResolvedGalaxy:
                 run_dir=pipes_run_dir,
                 facecolor="white",
                 colors=colors_runs[run],
-                fontsize=28,
+                fontsize=30,
+                rotation=45,
             )
 
         dummy_fig.set_facecolor("white")
@@ -8908,7 +8913,7 @@ class ResolvedGalaxy:
                     total_params=[],
                     scale_border=0.2,
                     add_scalebar=True,
-                    text_fontsize=8,
+                    text_fontsize=10,
                     area_norm=True,
                     show_info=False,
                     origin=None,
@@ -9238,7 +9243,6 @@ class ResolvedGalaxy:
         return fig
 
     def _get_flux_table(self, fit_photometry, psf_type, binmap_type):
-
         if psf_type not in self.photometry_table.keys():
             raise ValueError(
                 f"PSF type {psf_type} not found in photometry_table. Available types: {self.photometry_table.keys()}"
@@ -10515,6 +10519,7 @@ class ResolvedGalaxy:
         plotpipes_dir="pipes_scripts/",
         run_dir="pipes/",
         fontsize=18,
+        rotation=None,
     ):
         if run_name is None:
             run_name = list(self.sed_fitting_table["bagpipes"].keys())
@@ -10567,6 +10572,7 @@ class ResolvedGalaxy:
                 color=color,
                 facecolor=facecolor,
                 fontsize=fontsize,
+                rotation=rotation,
             )
             for ax in fig.get_axes():
                 fig_xlim.append(ax.get_xlim())
@@ -10750,7 +10756,9 @@ class ResolvedGalaxy:
 
             region.plot(
                 ax=ax,
-                edgecolor=region.visual["color"] if region.visual["color"] not in [0, ""] else "black",
+                edgecolor=region.visual["color"]
+                if region.visual["color"] not in [0, ""]
+                else "black",
             )
 
             """
@@ -12498,6 +12506,7 @@ class ResolvedGalaxy:
                     show_kron_ellipse=False,
                     stretch_object=rgb_stretch_obj,
                     use_psf_matched=True,
+                    text_fontsize=text_fontsize,
                 )
                 done = True
                 param_str = ""
@@ -12561,7 +12570,7 @@ class ResolvedGalaxy:
                             f"{param_50:.2f}$^{{+{param_84-param_50:.2f}}}_{{-{param_50-param_16:.2f}}}$ {unit}",
                             ha="left",
                             va="top",
-                            fontsize=10,
+                            fontsize=text_fontsize,
                             transform=axes[i].transAxes,
                             color="black",
                         )
@@ -12635,7 +12644,7 @@ class ResolvedGalaxy:
                     norm = Normalize(vmin=min, vmax=max)
 
                 gunit = self.param_unit(param.split(":")[-1])
-                unit = f" ({log}{gunit:latex})" if gunit != u.dimensionless_unscaled else ""
+                unit = f" ({log}{gunit:latex_inline})" if gunit != u.dimensionless_unscaled else ""
                 param_str = (
                     param.replace("_", r"\ ")
                     if param not in override_param_names.keys()
@@ -12671,7 +12680,7 @@ class ResolvedGalaxy:
                             f"{total_param}:{value[0]:.2f}{berr} {unit}",
                             ha="center",
                             va="bottom",
-                            fontsize=8,
+                            fontsize=text_fontsize,
                             transform=axes[i].transAxes,
                             color=color,
                             path_effects=[
@@ -12709,7 +12718,7 @@ class ResolvedGalaxy:
                     cbar.ax.xaxis.set_minor_formatter(ScalarFormatter())
 
                     cbar.set_label(
-                        rf"$\rm{{{param_str}}}${unit}",
+                        rf"$\rm{{{param_str}}}$" + f"\n{unit}",
                         labelpad=10,
                         fontsize=text_fontsize,
                     )
@@ -12717,7 +12726,7 @@ class ResolvedGalaxy:
 
                     # cbar.ax.xaxis.get_offset_text().set_fontsize(0)
                     cbar.ax.xaxis.set_ticks_position("top")
-                    cbar.ax.xaxis.set_tick_params(labelsize=9, which="both")
+                    cbar.ax.xaxis.set_tick_params(labelsize=text_fontsize - 2, which="both")
                     # Disable minor tick labels
                     cbar.ax.xaxis.set_minor_formatter(NullFormatter())
                     cbar.ax.xaxis.set_label_position("top")
@@ -12812,7 +12821,7 @@ class ResolvedGalaxy:
                 1.03,
                 textstr,
                 transform=axes[0].transAxes,
-                fontsize=9,
+                fontsize=text_fontsize,
                 verticalalignment="bottom",
                 horizontalalignment="center",
                 bbox=props,

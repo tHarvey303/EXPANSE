@@ -493,6 +493,8 @@ def renorm_psf(psfmodel, filt, fov=4.04, pixscl=0.03):
     encircled["F335M"] = 0.963
     encircled["F360M"] = 0.958
     encircled["F430M"] = 0.956
+    encircled["F460M"] = 0.953
+    encircled["F480M"] = 0.952
 
     # Normalize to correct for missing flux
     # Has to be done encircled! Ensquared were calibated to zero angle...
@@ -646,7 +648,7 @@ def find_stars(
         psf_mask = [None] * len(filenames)
     stars = []
     for filename, psfmsk in zip(filenames, psf_mask):
-        img, hdr = fits.getdata(filename, header=True)
+        img, hdr = fits.getdata(filename, header=True, ignore_missing_simple=True)
         wcs = WCS(hdr)
 
         if psfmsk is not None:
@@ -918,7 +920,7 @@ class PSF:
 
                 self.filename = None
             else:
-                img, hdr = fits.getdata(image, header=True)
+                img, hdr = fits.getdata(image, header=True, ignore_missing_simple=True)
                 wcs = WCS(hdr)
                 xx, yy = wcs.all_world2pix(x, y, 0)
                 self.filename = images
@@ -1539,7 +1541,7 @@ def convolve_images(
             tstart = time.time()
             fn_kernel = os.path.join(kernel_dir, f"{band}_kernel.fits")
             print("  using kernel ", fn_kernel.split("/")[-1])
-            kernel = fits.getdata(fn_kernel)
+            kernel = fits.getdata(fn_kernel, ignore_missing_simple=True)
             kernel /= np.sum(kernel)
 
             if same_file:
@@ -1709,7 +1711,7 @@ def psf_comparison(
                 continue
             else:
                 filename = filename[0]
-            psf = fits.getdata(filename)
+            psf = fits.getdata(filename, ignore_missing_simple=True)
 
             pixscl = pixelscale if type(pixelscale) is float else pixelscale[name]
             fov = psf.shape[0] * pixscl
@@ -1824,7 +1826,9 @@ def rel_cog_comparison(
         len(psf_dir_dict) == len(kernel_dir_dict) == 1
     ), f"Only one PSF and kernel allowed, got {len(psf_dir_dict)} and {len(kernel_dir_dict)}"
     key = list(psf_dir_dict.keys())[0]
-    target_psf = fits.getdata(glob.glob(f"{psf_dir_dict[key]}/*{match_band}*.fits")[0])
+    target_psf = fits.getdata(
+        glob.glob(f"{psf_dir_dict[key]}/*{match_band}*.fits")[0], ignore_missing_simple=True
+    )
     target_psf /= np.sum(target_psf)
 
     for i, band in enumerate(bands[:-1]):
@@ -1862,9 +1866,9 @@ def rel_cog_comparison(
                 except:
                     kernel_filename = kernel_filename[0]
 
-            kernel = fits.getdata(kernel_filename[0])
+            kernel = fits.getdata(kernel_filename[0], ignore_missing_simple=True)
 
-            psf = fits.getdata(filename)
+            psf = fits.getdata(filename, ignore_missing_simple=True)
             psf /= np.sum(psf)
 
             filt_psf_conv = convolve_fft(psf, kernel)
@@ -2193,10 +2197,10 @@ def get_webbpsf(
 
 
 def make_err_from_wht(path):
-    wht = fits.getdata(path)
+    wht = fits.getdata(path, ignore_missing_simple=True)
     outname = path.replace("wht", "rms")
     err = np.where(wht == 0, 0, 1 / np.sqrt(wht))
-    newhdu = fits.PrimaryHDU(err, header=fits.getheader(path))
+    newhdu = fits.PrimaryHDU(err, header=fits.getheader(path, ignore_missing_simple=True))
     newhdu.writeto(outname, overwrite=True)
 
 
@@ -2211,7 +2215,7 @@ def psf_correction_factor(
     psf_path=None,
 ):
     if conv_psfmodel is None and psf_path is not None:
-        conv_psfmodel = fits.getdata(psf_path)
+        conv_psfmodel = fits.getdata(psf_path, ignore_missing_simple=True)
     elif conv_psfmodel is None and match_band is not None and psf_dir is not None:
         conv_psfmodel = fits.open(psf_dir + f"/{match_band}_psf_norm.fits")[
             0
@@ -2267,16 +2271,18 @@ if __name__ == "__main__":
     surveys = ["JOF"]  # ['NEP-1', 'NEP-2', 'NEP-3', 'NEP-4']
     surveys = ["EGS"]
     surveys = ["CEERSP5"]
+    surveys = ["JADES-DR3-GS-East", "JADES-DR3-GS-North", "JADES-DR3-GS-South", "JADES-DR3-GS-West"]
     # surveys = [[f"COSMOS-Web-{i}A", f"COSMOS-Web-{i}B"] for i in range(0, 7)]
     # flatten list
     # surveys = [item for sublist in surveys for item in sublist]
     print(surveys)
-    outdir_name = "+".join(surveys)
+    # outdir_name = "+".join(surveys)
+    outdir_name = "JADES-DR3-GS"
     # outdir_name == "EGS"
     # outdir_name = "COSMOS-Web"
     #
-    version = "v11"
-    instruments = ["NIRCam"]
+    version = "v13"
+    instruments = ["ACS_WFC", "NIRCam"]
     match_band = None  # "F444W"  #'F444W' or None
     outdir = f"/nvme/scratch/work/tharvey/PSFs/{outdir_name}/"
     outdir_webbpsf = f"/nvme/scratch/work/tharvey/PSFs/{outdir_name}/webbpsf/"
@@ -2291,20 +2297,24 @@ if __name__ == "__main__":
     # bands = data.instrument.band_names
 
     bands = [
+        "F070W",
         "F090W",
         "F115W",
         "F150W",
-        "F162M",
-        "F182M",
         "F200W",
-        "F210M",
-        "F250M",
         "F277W",
-        "F300M",
         "F335M",
         "F356W",
         "F410M",
         "F444W",
+        "F162M",
+        "F182M",
+        "F210M",
+        "F250M",
+        "F300M",
+        "F430M",
+        "F460M",
+        "F480M",
     ]
 
     # bands = ["F115W", "F150W", "F277W", "F444W"]
@@ -2319,17 +2329,17 @@ if __name__ == "__main__":
         "F410M",
         "F444W",
     ]
+    """
+
     folders = [
-        f"/raid/scratch/data/jwst/{survey}/mosaic_1084_wisptemp2_whtfix/"
+        f"/raid/scratch/data/jwst/{survey}/NIRCam/mosaic_1293_wispnathan/30mas/"
         for survey in surveys
     ]
 
     outdir_matched_images = [f"{folder}psf_matched/" for folder in folders]
     outdir_matched_images = {
-        band: [f"{folder}psf_matched/" for folder in outdir_matched_images]
-        for band in bands
+        band: [f"{folder}psf_matched/" for folder in outdir_matched_images] for band in bands
     }
-    print(folders)
 
     im_paths = {}
     for band in bands:
@@ -2337,9 +2347,12 @@ if __name__ == "__main__":
         im_paths[band] = []
 
         for folder in folders:
-            path = f"{folder}/*{band.lower()}*.fits"
+            path = f"{folder}/*{band}*.fits"
             print(path)
-            im_paths[band].append(glob.glob(path)[0])
+            try:
+                im_paths[band].append(glob.glob(path)[0])
+            except IndexError:
+                pass
 
     wht_paths = copy(im_paths)  # Placeholder
     err_paths = copy(im_paths)  # Placeholder
@@ -2349,7 +2362,6 @@ if __name__ == "__main__":
     # Reset
     # For Nathan
     # Special case for nathan
-    """
     for name in [
         "L5_NEP-2_HST",
         "L15_NEP-3_HST",
@@ -2364,6 +2376,7 @@ if __name__ == "__main__":
         match_band = None
         im_paths, wht_paths, err_paths, phot_zp = {}, {}, {}, {}
         bands.insert(0, "F606W")
+        '''
         psf_mask = (
             f"/nvme/scratch/work/tharvey/catalogs/regions/{name}PSF_Mask.reg"
         )
@@ -2377,6 +2390,7 @@ if __name__ == "__main__":
         ]
         err_paths["F606W"] = [""]
         band = "F606W"
+        '''
         try:
             hdr = fits.getheader(im_paths[band][0], ext=0)
             if "ZEROPNT" in hdr:
@@ -2397,7 +2411,52 @@ if __name__ == "__main__":
                 + 18.6921
             )
 
-    
+    """
+
+    for band in ["F435W", "F606W", "F775W", "F814W", "F850LP"][::-1]:
+        temp_sci = []
+        temp_err = []
+        temp_wht = []
+        for survey in surveys:
+            path = f"/raid/scratch/data/hst/{survey}/ACS_WFC/mosaic_1293_wispnathan/30mas/hlsp_hlf_hst_acs-30mas_goodss_{band.lower()}_v2.0_scicutoutxy.fits"
+            temp_sci.append(path)
+            temp_wht.append(path.replace("sci", "wht"))
+            err_path = f"/raid/scratch/data/hst/{survey}/ACS_WFC/mosaic_1293_wispnathan/30mas/rms_err/{band}_rms_err.fits"
+            temp_err.append(err_path)
+
+        bands.insert(0, band)
+        im_paths[band] = copy(temp_sci)
+        wht_paths[band] = copy(temp_wht)
+        err_paths[band] = copy(temp_err)
+
+        for i in range(len(im_paths[band])):
+            try:
+                hdr = fits.getheader(im_paths[band][i], ext=0, ignore_missing_simple=True)
+                if "ZEROPNT" in hdr:
+                    phot_zp[band] = hdr["ZEROPNT"]
+                else:
+                    phot_zp[band] = (
+                        -2.5 * np.log10(hdr["PHOTFLAM"])
+                        - 21.10
+                        - 5 * np.log10(hdr["PHOTPLAM"])
+                        + 18.6921
+                    )
+                break
+            except KeyError:
+                hdr = fits.getheader(im_paths[band][0], ext=1, ignore_missing_simple=True)
+                phot_zp[band] = (
+                    -2.5 * np.log10(hdr["PHOTFLAM"])
+                    - 21.10
+                    - 5 * np.log10(hdr["PHOTPLAM"])
+                    + 18.6921
+                )
+                break
+            except FileNotFoundError:
+                continue
+
+    print(bands)
+
+    print(im_paths)
 
     make_psf(
         bands,
@@ -2413,6 +2472,10 @@ if __name__ == "__main__":
         psf_fov=psf_fov,
         pypher_r=1e-4,
     )
+
+    crash
+
+    """
     """
 
     im_paths = {}
@@ -2444,7 +2507,7 @@ if __name__ == "__main__":
         # wht_paths[band] = [f'/raid/scratch/data/hst/{survey}/ACS_WFC/30mas/ACS_WFC_{band}_{survey}_wht.fits' for survey in surveys]
         print("Warning! phot_zp not set up for multiple fields for HST bands because I'm lazy.")
         try:
-            hdr = fits.getheader(im_paths[band][0], ext=0)
+            hdr = fits.getheader(im_paths[band][0], ext=0, ignore_missing_simple=True)
             if "ZEROPNT" in hdr:
                 phot_zp[band] = hdr["ZEROPNT"]
             else:
