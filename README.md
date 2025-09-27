@@ -5,7 +5,7 @@
 
 # EXPANSE - EXtended Pixel-resolved ANalysis of SEDs
 
-Python package to perform resolved SED fitting using publically availabe SED fitting tools (Bagpipes and Dense Basis currently, Prospector, Beagle, etc planned), and display results. 
+EXPANSE is a Python package to perform resolved SED fitting using publically availabe SED fitting tools (Bagpipes, Prospector and Dense Basis currently, more planned), and display results. 
 
 ## Features
 
@@ -39,7 +39,23 @@ This example shows an example of the interactive interface for EAZY SED fitting,
 
 ## Installation
 
-To install, clone the repository and run `pip install .` in the root directory. For best results, also install our fork of Bagpipes from [here](https://github.com/tHarvey303/bagpipes). 
+The easiest way to install is from the PyPI repository. If you have pip installed just run 'pip install astro-expanse' and the code will be downloaded and installed.
+
+If you plan to modify or edit the code, you may prefer a manual install. To manually install, clone the repository:
+```bash
+git clone https://github.com/tHarvey303/EXPANSE.git
+cd EXPANSE
+pip install -e .
+```
+
+If you plan to use Bagpipes best results will be with my fork from [here](https://github.com/tHarvey303/bagpipes). 
+
+```bash
+
+pip install git+https://github.com/aabdurrouf/piXedfit@main
+pip install git+https://github.com/tHarvey303/bagpipes/
+
+```
 
 ## Examples
 
@@ -51,4 +67,29 @@ To lauch the viewer, run `expanse-viewer` in the terminal after installation.
 
 ## Citation
 
-The paper describing EXPANSE is currently in preparation. In the meantime, please cite this repository if you use it in your work.
+If you use EXPANSE in your work please cite ![this paper](https://ui.adsabs.harvard.edu/abs/2025MNRAS.542.2998H/abstract).
+
+## Support
+
+If you have a problem, find a bug or would like some advice please ![open an issue](https://github.com/tHarvey303/EXPANSE/issues/new/choose) or email me!  
+
+```
+@ARTICLE{2025MNRAS.542.2998H,
+       author = {{Harvey}, Thomas and {Conselice}, Christopher J. and {Adams}, Nathan J. and {Austin}, Duncan and {Li}, Qiong and {Rusakov}, Vadim and {Westcott}, Lewi and {Goolsby}, Caio M. and {Lovell}, Christopher C. and {Cochrane}, Rachel K. and {Vijayan}, Aswin P. and {Trussler}, James},
+        title = "{Behind the spotlight: a systematic assessment of outshining using NIRCam medium bands in the JADES Origins Field}",
+      journal = {\mnras},
+     keywords = {galaxies: evolution, galaxies: high-redshift, galaxies: photometry, galaxies: star formation, galaxies: stellar content, Astrophysics of Galaxies},
+         year = 2025,
+        month = oct,
+       volume = {542},
+       number = {4},
+        pages = {2998-3027},
+          doi = {10.1093/mnras/staf1396},
+archivePrefix = {arXiv},
+       eprint = {2504.05244},
+ primaryClass = {astro-ph.GA},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025MNRAS.542.2998H},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+
+```
