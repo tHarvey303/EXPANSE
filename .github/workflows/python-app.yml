@@ -31,7 +31,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e .
         pip install ruff pytest
-        pip install -e git+https://github.com/tHarvey303/bagpipes.git
+        pip install -e git+https://github.com/tHarvey303/bagpipes.git#egg=bagpipes
     
     - name: Test import
       run: |
