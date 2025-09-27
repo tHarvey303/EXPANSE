@@ -8,6 +8,7 @@
 
 # EXPANSE
 <img src="gfx/EXPANSE_LOGO_BLNK.png"  align="right" alt="logo" width="300px"/>
+
 ### EXtended Pixel-resolved ANalysis of SEDs
 
 
