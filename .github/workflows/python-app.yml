@@ -35,7 +35,7 @@ jobs:
     
     - name: Test import
       run: |
-        python -c "import bagpipes"
+        python -c "from bagpipes import config"
         python -c "import EXPANSE" 
     
     - name: Test with pytest
