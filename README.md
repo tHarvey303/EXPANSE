@@ -4,7 +4,7 @@
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 # EXPANSE - EXtended Pixel-resolved ANalysis of SEDs
-<img src="gfx/EXPANSE_LOGO.png"  align="right" alt="logo" width="200px"/>
+<img src="gfx/EXPANSE_LOGO_BLNK.png"  align="right" alt="logo" width="200px"/>
 
 ### Overview
 
@@ -13,11 +13,11 @@ EXPANSE is a Python package to perform resolved SED fitting and display and anal
 ### Features
 
 1. **Multiple SED Fitting Tools**: Interfaces with Bagpipes, Prospector, EAZY-py, Synference and Dense Basis for flexible SED fitting options.
-2. **Portable File Format**: All information about a galaxy and SED fitting results are stored in an HDF5 file, allowing easy transfer and processing on different computers.
+2. **Portable File Format**: Data stored in single HDF5 file for easy sharing and reproducibility.
 3. **Interactive Viewer**: A web-based viewer to display results of SED fitting, including interactive RGB imaging and spatially resolved property maps.
 4. **PSF Modelling and Homogenization**: Tools to model PSFs from stacking stars or directly from WebbPSF, with options for internal homogenization.
-5. **Morphological Fitting**: Supports multi-component models and complex priors using pysersic, with partial support for Pyautogalaxy and pygalfitm.
-6. **Testing with Simulated Galaxies**: Allows comparison of recovered parameters with true values using simulated galaxies from hydro sims or the Synthesizer package.
+5. **Morphological Fitting**: Supports multi-component models and complex priors using ![pysersic](https://pysersic.readthedocs.io/en/latest/).
+6. **Testing with Simulated Galaxies**: Forward modelling of simulated galaxies from hydrodynamical simulations to test fitting and analysis methods.
 7. **Radial/Annular Analysis**: Interfaces with PIXEDFit, Voronoi binning, or single pixel binning to perform spatially resolved analysis.
 8. **Population Analysis**: Tools to analyze populations of galaxies, including spatially resolved main sequence and outshining effects.
 9. **Photometric Inference**: Directly infer Beta slope, MUV, emission line EWs, UV slope, D4000 break, and other photometric properties directly from resolved photometry.
