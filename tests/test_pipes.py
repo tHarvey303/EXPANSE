@@ -30,7 +30,7 @@ bands = [
     "F444W",
 ]
 
-
+@pytest.mark.skip(reason="Bagpipes broken in test environment")
 def test_PipesFitNoLoad():
     fig, ax = plt.subplots()
     for file in os.listdir(f"{current_dir}/posteriors"):
