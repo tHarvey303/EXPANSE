@@ -4,42 +4,62 @@
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 # EXPANSE - EXtended Pixel-resolved ANalysis of SEDs
+<img src="gfx/EXPANSE_LOGO.png"  align="right" alt="logo" width="200px"/>
 
-EXPANSE is a Python package to perform resolved SED fitting using publically availabe SED fitting tools (Bagpipes, Prospector and Dense Basis currently, more planned), and display results. 
+### Overview
 
-## Features
+EXPANSE is a Python package to perform resolved SED fitting and display and analyze the results.
 
-1. Interfaces with PIXEDFit, Voronoi binning, or single pixel binning to perform spatially resolved analysis.
-2. Portable file format - all information about a galaxy and SED fitting results are stored in an HDF5 file, allowing easy transfer, or the ability to run different parts of processing on different computers - e.g. create object on desktop, fit on a remote cluster and then analyse the results on a laptop.
-3. SED fitting using Bagpipes and Dense Basis with full support for all options, including custom priors, custom SFHs, dust laws, etc. Can also fit with a single pixel, or with a single SED for the whole galaxy. Multi-threading fitting is supported. 
-4. Tools to model PSFs, either from stacking stars, or directly from WebbPSF. Can PSF homogenize internally, or accept pre-homogenized imaging.
-5. Interactive web-based viewer to display results of SED fitting, including interactive RGB imaging, segmentation map, binning maps, spatially resolved property maps (stellar mass density, SFR density etc), per bin/pixel SEDs, SFHs and corner plots, as well as interfacing with FITSMAP. Can also measure quantities directly from the photometry, such as Beta slopes, MUV, D4000 break etc and produce spatially resolved maps.
-6. Testing with Simulated galaxies from hydro sims, or generated parametrically, using the Synthesizer package. Allows comparison of recovered parameters like stellar mass, dust, SFH etc with true values. Works with FLARES, SPHINX20 and other sims which can be loaded via the Synthesizer package.
-7. Morphological fitting with pysersic, including multi-component models and complex priors. Pyautogalaxy and pygalfitm are partially supported.
-8. Radial/annular analysis of property maps, including SED fitting, radial profiles of properties, and annular SED fitting.
+### Features
+
+1. **Multiple SED Fitting Tools**: Interfaces with Bagpipes, Prospector, EAZY-py, Synference and Dense Basis for flexible SED fitting options.
+2. **Portable File Format**: All information about a galaxy and SED fitting results are stored in an HDF5 file, allowing easy transfer and processing on different computers.
+3. **Interactive Viewer**: A web-based viewer to display results of SED fitting, including interactive RGB imaging and spatially resolved property maps.
+4. **PSF Modelling and Homogenization**: Tools to model PSFs from stacking stars or directly from WebbPSF, with options for internal homogenization.
+5. **Morphological Fitting**: Supports multi-component models and complex priors using pysersic, with partial support for Pyautogalaxy and pygalfitm.
+6. **Testing with Simulated Galaxies**: Allows comparison of recovered parameters with true values using simulated galaxies from hydro sims or the Synthesizer package.
+7. **Radial/Annular Analysis**: Interfaces with PIXEDFit, Voronoi binning, or single pixel binning to perform spatially resolved analysis.
+8. **Population Analysis**: Tools to analyze populations of galaxies, including spatially resolved main sequence and outshining effects.
+9. **Photometric Inference**: Directly infer Beta slope, MUV, emission line EWs, UV slope, D4000 break, and other photometric properties directly from resolved photometry.
+10. **Interactive Aperture Placement**: Place apertures and regions interactively in the viewer to extract photometry and fit SEDs. Run EAZY and Dense Basis fits directly in the viewer.
 
 ## Planned Features
 
 1. Direct conversion of cutouts with modelled morphology into components for Pandeia - e.g. to plan JWST observations.
-2. More interactivity in the viewer - e.g. to select regions for further analysis - e.g. to measure the SED of a region, or to fit a model to it, based on drawing an aperture, or grouping pixels (implemented for EAZY SED Fitting.)
-3. Additional SED fitting tools, and improvement of pixel-by-pixel case. Prospector is in progress, and Beagle is planned.
-4. Better tools for MetaClass for population analysis - spatially resolved main sequence, outshining etc.
-5. Furhter reionization estimates - maps of fesc, zi_ion etc
-6. More radial/annular tools - annular SED fitting, radial profiles of properties etc.
-7. Bug fixes, documentation and examples.
+2. Better integration with spectroscopic, IFU and slit stepping observations.
+3. Incorporating de-lensing models to work with lensed galaxies. 
+4. Bug fixes, documentation and examples.
 
-## Examples of GUI
+## Quickstart
 
-Here are a couple of examples of some of the GUI features, including an interface to plot and compare the SED fitting results - SED plots, resolved parameter maps, SFH, corner plots.
+```python
+
+from EXPANSE import ResolvedGalaxy
+
+galaxy = ResolvedGalaxy.init('JOF_16.h5')
+
+```
+
+To create a new galaxy file from your own imaging data, see this [notebook](examples/intro.ipynb) for a full example.
+
+## GUI Examples
+
+Here are a couple of examples of the GUI features, including an interface to plot and compare the SED fitting results.
 
 ![GUI 1](https://github.com/tHarvey303/EXPANSE/blob/master/src/EXPANSE/gui/examples/EXPANSE_1.png)
 
-This example shows an example of the interactive interface for EAZY SED fitting, which lets you place manual apertures and regions and fit their photometry. 
+This example shows an example of the interactive interface for EAZY SED fitting, which lets you place manual apertures and regions and fit their photometry with EAZY-py.
 ![GUI 2](https://github.com/tHarvey303/EXPANSE/blob/master/src/EXPANSE/gui/examples/EXPANSE_2.png)
+
+To launch the viewer, run `expanse-viewer` in the terminal after installation.
 
 ## Installation
 
-The easiest way to install is from the PyPI repository. If you have pip installed just run 'pip install astro-expanse' and the code will be downloaded and installed.
+The easiest way to install is from the PyPI repository. If you have pip installed just run:
+
+```bash
+pip install astro-expanse
+```
 
 If you plan to modify or edit the code, you may prefer a manual install. To manually install, clone the repository:
 ```bash
@@ -65,13 +85,14 @@ Please get in touch if you're interested in using the code, I'm happy to chat!
 
 To lauch the viewer, run `expanse-viewer` in the terminal after installation.
 
-## Citation
-
-If you use EXPANSE in your work please cite ![this paper](https://ui.adsabs.harvard.edu/abs/2025MNRAS.542.2998H/abstract).
 
 ## Support
 
 If you have a problem, find a bug or would like some advice please ![open an issue](https://github.com/tHarvey303/EXPANSE/issues/new/choose) or email me!  
+
+## Citation
+
+If you use EXPANSE in your work please cite ![this paper](https://ui.adsabs.harvard.edu/abs/2025MNRAS.542.2998H/abstract).
 
 ```
 @ARTICLE{2025MNRAS.542.2998H,
