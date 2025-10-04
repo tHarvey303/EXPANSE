@@ -21,6 +21,8 @@ from . import synthesizer
 
 from . import prospector
 
+from . import forcepho
+
 from . import vis
 
 from .gui.ResolvedSEDApp import expanse_viewer

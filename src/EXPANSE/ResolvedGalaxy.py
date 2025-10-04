@@ -9792,6 +9792,88 @@ class ResolvedGalaxy:
 
         # TODO - Write a postprocessing function to read in the results and save them to the sed_fitting_table
 
+    def run_forcepho(
+        self,
+        positions=None,
+        bands=None,
+        psf_type="star_stack",
+        psf_matched=True,
+        output_dir=None,
+        save_inputs=True,
+    ):
+        """
+        Prepare forcepho inputs for this galaxy.
+        
+        This method generates the required input files for running forcepho
+        (https://forcepho.readthedocs.io/) on the galaxy cutout.
+        
+        Parameters
+        ----------
+        positions : list of tuples, optional
+            List of (ra, dec) positions in degrees for sources to fit.
+            If None, uses the galaxy center position.
+        bands : list, optional
+            List of band names to include. If None, uses all available bands.
+        psf_type : str, optional
+            Type of PSF to use ('star_stack' or 'webbpsf'). Default is 'star_stack'.
+        psf_matched : bool, optional
+            Whether to use PSF-matched data. Default is True.
+        output_dir : str, optional
+            Directory to save output files. If None, creates directory based on galaxy_id.
+        save_inputs : bool, optional
+            Whether to save input FITS files. Default is True.
+            
+        Returns
+        -------
+        config : dict
+            Configuration dictionary containing all forcepho inputs including:
+            - pixel_data: Image cutouts for each band
+            - error_data: Uncertainty maps for each band
+            - psf_data: PSF models for each band
+            - source_catalog: Source positions and properties
+            - wcs: WCS information for coordinate transformations
+            - properties: Photometric properties (zero points, pixel scales)
+        file_paths : dict or None
+            Dictionary with paths to saved FITS files if save_inputs=True, else None
+            
+        Examples
+        --------
+        >>> # Prepare forcepho inputs for galaxy center
+        >>> config, file_paths = galaxy.run_forcepho()
+        >>> 
+        >>> # Prepare inputs for custom positions
+        >>> positions = [(150.1, 2.3), (150.11, 2.31)]
+        >>> config, file_paths = galaxy.run_forcepho(positions=positions)
+        """
+        from EXPANSE.forcepho import (
+            create_forcepho_config,
+            save_forcepho_inputs,
+            validate_forcepho_inputs,
+        )
+        
+        # Create configuration
+        config = create_forcepho_config(
+            self,
+            bands=bands,
+            psf_type=psf_type,
+            positions=positions,
+            output_dir=output_dir,
+        )
+        
+        # Validate inputs
+        valid, missing = validate_forcepho_inputs(config)
+        if not valid:
+            print(f"Warning: Missing forcepho inputs: {missing}")
+            print("Some forcepho functionality may not work correctly.")
+        
+        # Save to FITS files if requested
+        file_paths = None
+        if save_inputs:
+            file_paths = save_forcepho_inputs(config)
+            print(f"Forcepho input files saved to: {config['output_dir']}")
+        
+        return config, file_paths
+
     def run_bagpipes(
         self,
         bagpipes_config,
