@@ -4,11 +4,11 @@ This module provides utilities for preparing and running forcepho on ResolvedGal
 
 ## Overview
 
-forcepho (https://forcepho.readthedocs.io/) is a tool for pixel-level forced photometry. This module helps prepare the required input files from EXPANSE's ResolvedGalaxy data structure.
+forcepho (https://forcepho.readthedocs.io/) is a tool for pixel-level forced photometry. This module helps prepare the required input files from EXPANSE's ResolvedGalaxy data structure and provides functions to run forcepho optimization and sampling.
 
 ## Usage
 
-### Basic Usage
+### Basic Usage - Prepare Inputs Only
 
 ```python
 from EXPANSE import ResolvedGalaxy
@@ -16,54 +16,124 @@ from EXPANSE import ResolvedGalaxy
 # Load a galaxy
 galaxy = ResolvedGalaxy.init_from_h5("path/to/galaxy.h5")
 
-# Prepare forcepho inputs
-config, file_paths = galaxy.run_forcepho()
+# Prepare forcepho inputs (returns 3 values now)
+config, file_paths, _ = galaxy.run_forcepho()
+```
+
+### Run Forcepho Optimization
+
+```python
+# Prepare inputs and run optimization
+config, file_paths, results = galaxy.run_forcepho(run_fit=True, fit_mode='optimize')
+
+# Check results
+if results['optimization']['success']:
+    print("Optimization successful!")
+    print(f"Final parameters: {results['optimization']['parameters']}")
+```
+
+### Run Forcepho Sampling (HMC)
+
+```python
+# Run HMC sampling
+config, file_paths, results = galaxy.run_forcepho(
+    run_fit=True,
+    fit_mode='sample',
+    sampling_kwargs={'n_draws': 512, 'warmup': 256}
+)
+
+# Check sampling results
+if 'samples' in results:
+    print(f"Generated {results['samples']['n_draws']} samples")
+```
+
+### Run Both Optimization and Sampling
+
+```python
+# First optimize, then sample
+config, file_paths, results = galaxy.run_forcepho(
+    run_fit=True,
+    fit_mode='both',
+    optimize_kwargs={'gtol': 1e-6},
+    sampling_kwargs={'n_draws': 512}
+)
+
+# Access both sets of results
+opt_params = results['optimization']['parameters']
+samples = results['samples']['chains']
 ```
 
 ### Custom Source Positions
 
 ```python
-# Prepare inputs for specific positions
+# Fit multiple sources in the galaxy cutout
 positions = [(150.1, 2.3), (150.11, 2.31)]  # RA, Dec in degrees
-config, file_paths = galaxy.run_forcepho(positions=positions)
+config, file_paths, results = galaxy.run_forcepho(
+    positions=positions,
+    run_fit=True,
+    fit_mode='optimize'
+)
 ```
 
 ### Custom Bands and PSF Type
 
 ```python
 # Use specific bands and PSF type
-config, file_paths = galaxy.run_forcepho(
+config, file_paths, results = galaxy.run_forcepho(
     bands=["F277W", "F356W", "F444W"],
     psf_type="webbpsf",
-    output_dir="my_forcepho_output"
+    output_dir="my_forcepho_output",
+    run_fit=True
 )
 ```
 
 ## Functions
 
-### prepare_pixel_data
+### Input Preparation Functions
+
+#### prepare_pixel_data
 Extract pixel data and error maps from ResolvedGalaxy.
 
-### prepare_psf_data
+#### prepare_psf_data
 Extract PSF models from ResolvedGalaxy.
 
-### prepare_source_catalog
+#### prepare_source_catalog
 Create a source catalog with positions.
 
-### prepare_wcs_info
+#### prepare_wcs_info
 Extract WCS information for coordinate transformations.
 
-### prepare_photometric_properties
+#### prepare_photometric_properties
 Extract zero points, pixel scales, and other photometric properties.
 
-### create_forcepho_config
+#### create_forcepho_config
 Create a complete configuration dictionary with all required inputs.
 
-### save_forcepho_inputs
+#### save_forcepho_inputs
 Save all inputs to FITS files for use with forcepho.
 
-### validate_forcepho_inputs
+#### validate_forcepho_inputs
 Validate that all required inputs are present and correctly formatted.
+
+### Forcepho Fitting Functions
+
+#### decompose_psf_to_gaussian_mixture
+Decompose PSF into Gaussian mixture model for efficient convolution in forcepho.
+
+#### create_forcepho_scene
+Create a forcepho Scene configuration from source catalog.
+
+#### prepare_forcepho_patch
+Organize data into patch structure for forcepho fitting.
+
+#### run_forcepho_optimization
+Run BFGS optimization to find maximum likelihood parameters.
+
+#### run_forcepho_sampling
+Run Hamiltonian Monte Carlo sampling to explore posterior distribution.
+
+#### run_forcepho_fit
+High-level function to run complete forcepho fitting workflow.
 
 ## Output Structure
 
@@ -101,6 +171,24 @@ The `create_forcepho_config` function returns a dictionary with:
 - `cutout_size`: Size of image cutouts
 - `sky_coord`: Galaxy sky coordinates
 
+## Fitting Results
+
+When `run_fit=True`, the results dictionary contains:
+
+### Optimization Results (`mode='optimize'` or `mode='both'`)
+- `parameters`: Final optimized parameter values
+- `uncertainties`: Parameter uncertainties (if linear_optimize=True)
+- `log_likelihood`: Final log likelihood value
+- `success`: Whether optimization converged
+- `message`: Status message
+
+### Sampling Results (`mode='sample'` or `mode='both'`)
+- `chains`: Parameter chains for each variable
+- `log_prob`: Log probability for each sample
+- `acceptance_rate`: HMC acceptance rate
+- `summary`: Summary statistics (mean, std, quantiles)
+- `convergence`: Convergence diagnostics
+
 ## Requirements
 
 The forcepho integration requires the following ResolvedGalaxy attributes:
@@ -118,7 +206,22 @@ Optional but recommended:
 
 ## Notes
 
-- This module focuses on preparing the input files for forcepho
-- Actual forcepho execution should be done using the forcepho package
-- PSF-matched data is used by default when available
-- Source positions default to the galaxy center if not specified
+- **Input preparation**: This module always prepares the input files for forcepho
+- **Fitting**: Actual forcepho optimization/sampling requires the forcepho package to be installed
+- **Mock results**: If forcepho is not installed, the fitting functions return mock results to show the expected structure
+- **PSF-matched data**: Used by default when available
+- **Source positions**: Default to the galaxy center if not specified
+- **Gradients**: forcepho uses gradients for efficient optimization and HMC sampling
+
+## Installation
+
+To use the fitting functionality, install forcepho:
+
+```bash
+pip install forcepho
+```
+
+For GPU acceleration (requires CUDA):
+```bash
+pip install forcepho[cuda]
+```

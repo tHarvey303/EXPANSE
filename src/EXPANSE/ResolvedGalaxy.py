@@ -9800,12 +9800,17 @@ class ResolvedGalaxy:
         psf_matched=True,
         output_dir=None,
         save_inputs=True,
+        run_fit=False,
+        fit_mode='optimize',
+        optimize_kwargs=None,
+        sampling_kwargs=None,
     ):
         """
-        Prepare forcepho inputs for this galaxy.
+        Prepare forcepho inputs and optionally run fitting for this galaxy.
         
         This method generates the required input files for running forcepho
-        (https://forcepho.readthedocs.io/) on the galaxy cutout.
+        (https://forcepho.readthedocs.io/) on the galaxy cutout, and can
+        optionally run the forcepho optimization and/or sampling.
         
         Parameters
         ----------
@@ -9822,6 +9827,14 @@ class ResolvedGalaxy:
             Directory to save output files. If None, creates directory based on galaxy_id.
         save_inputs : bool, optional
             Whether to save input FITS files. Default is True.
+        run_fit : bool, optional
+            Whether to run forcepho fitting after preparing inputs. Default is False.
+        fit_mode : str, optional
+            Fitting mode if run_fit=True: 'optimize', 'sample', or 'both'. Default is 'optimize'.
+        optimize_kwargs : dict, optional
+            Additional arguments for forcepho optimization (if run_fit=True)
+        sampling_kwargs : dict, optional
+            Additional arguments for forcepho sampling (if run_fit=True)
             
         Returns
         -------
@@ -9835,20 +9848,31 @@ class ResolvedGalaxy:
             - properties: Photometric properties (zero points, pixel scales)
         file_paths : dict or None
             Dictionary with paths to saved FITS files if save_inputs=True, else None
+        fit_results : dict or None
+            Fitting results if run_fit=True, else None
             
         Examples
         --------
-        >>> # Prepare forcepho inputs for galaxy center
-        >>> config, file_paths = galaxy.run_forcepho()
+        >>> # Prepare forcepho inputs only
+        >>> config, file_paths, _ = galaxy.run_forcepho()
         >>> 
-        >>> # Prepare inputs for custom positions
-        >>> positions = [(150.1, 2.3), (150.11, 2.31)]
-        >>> config, file_paths = galaxy.run_forcepho(positions=positions)
+        >>> # Prepare inputs and run optimization
+        >>> config, file_paths, results = galaxy.run_forcepho(run_fit=True, fit_mode='optimize')
+        >>> 
+        >>> # Run both optimization and sampling
+        >>> config, paths, results = galaxy.run_forcepho(
+        ...     run_fit=True, 
+        ...     fit_mode='both',
+        ...     positions=[(150.1, 2.3)],
+        ...     optimize_kwargs={'gtol': 1e-6},
+        ...     sampling_kwargs={'n_draws': 512}
+        ... )
         """
         from EXPANSE.forcepho import (
             create_forcepho_config,
             save_forcepho_inputs,
             validate_forcepho_inputs,
+            run_forcepho_fit,
         )
         
         # Create configuration
@@ -9872,7 +9896,23 @@ class ResolvedGalaxy:
             file_paths = save_forcepho_inputs(config)
             print(f"Forcepho input files saved to: {config['output_dir']}")
         
-        return config, file_paths
+        # Run fitting if requested
+        fit_results = None
+        if run_fit:
+            print(f"Running forcepho fitting in mode: {fit_mode}")
+            fit_results = run_forcepho_fit(
+                config,
+                positions=positions,
+                mode=fit_mode,
+                optimize_kwargs=optimize_kwargs,
+                sampling_kwargs=sampling_kwargs,
+            )
+            
+            if not fit_results.get('optimization', {}).get('forcepho_available', True):
+                print("Note: forcepho package not installed. Returning mock results.")
+                print("Install forcepho to run actual fitting: pip install forcepho")
+        
+        return config, file_paths, fit_results
 
     def run_bagpipes(
         self,
