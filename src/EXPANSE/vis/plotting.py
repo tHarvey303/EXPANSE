@@ -18,6 +18,24 @@ from matplotlib.patches import ConnectionPatch, Rectangle
 from matplotlib.patheffects import withStroke
 from tqdm import tqdm
 
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as colors
+from matplotlib.patches import Wedge
+from matplotlib.collections import PatchCollection
+from matplotlib.animation import FuncAnimation, PillowWriter, FFMpegWriter
+import warnings
+import cmasher
+from astropy.cosmology import Planck18 as cosmo
+from astropy import units as u
+from matplotlib.font_manager import FontProperties
+import matplotlib.patheffects as PathEffects
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+from typing import Dict, Any, Tuple, List, Optional
+import matplotlib as mpl
+
+warnings.filterwarnings("ignore")
+
 from ..utils import compass
 
 sys.path.append("/nvme/scratch/software/trilogy/")
@@ -812,6 +830,491 @@ def load_regions_from_reg(reg_path, wcs=None):
         regions_list.append({"xlim": (x_low, x_high), "ylim": (y_low, y_high)})
 
     return regions_list
+
+
+def create_galaxy_pie_visualization(
+    data_dict,
+    cmaps=None,
+    vlims=None,
+    labels=None,
+    galaxy_name="Galaxy",
+    figsize=(12, 12),
+    add_dividers=True,
+    divider_width=2,
+    divider_color="white",
+    center_circle_radius=0.05,
+    rotation_offset=0,
+):
+    """
+    Create a pie-slice visualization of galaxy properties.
+
+    Parameters:
+    -----------
+    data_dict : dict
+        Dictionary with keys as property names and values as 2D arrays
+    cmaps : dict or None
+        Dictionary mapping property names to colormaps
+    vlims : dict or None
+        Dictionary mapping property names to (vmin, vmax) tuples
+    labels : dict or None
+        Dictionary mapping property names to display labels
+    galaxy_name : str
+        Name of the galaxy for the title
+    figsize : tuple
+        Figure size
+    add_dividers : bool
+        Whether to add white divider lines between slices
+    divider_width : float
+        Width of divider lines
+    divider_color : str
+        Color of divider lines
+    center_circle_radius : float
+        Radius of central circle (fraction of image radius)
+    rotation_offset : float
+        Rotation offset in radians for animation
+
+    Returns:
+    --------
+    fig, ax : matplotlib figure and axis objects
+    """
+
+    # Get number of properties
+    n_props = len(data_dict)
+    prop_names = list(data_dict.keys())
+
+    # Set default colormaps if not provided
+    if cmaps is None:
+        default_cmaps = {
+            "stellar_mass": "viridis",
+            "dust_attenuation": "YlOrRd",
+            "sfr": "plasma",
+            "metallicity": "coolwarm",
+            "age": "copper",
+            "velocity": "RdBu_r",
+        }
+        cmaps = {}
+        for prop in prop_names:
+            # Try to match property name with defaults
+            for key in default_cmaps:
+                if key in prop.lower().replace(" ", "_"):
+                    cmaps[prop] = default_cmaps[key]
+                    break
+            else:
+                # Fallback colormap
+                cmaps[prop] = plt.cm.list_cmap_names()[
+                    prop_names.index(prop) % len(plt.cm.list_cmap_names())
+                ]
+
+    # Set default labels if not provided
+    if labels is None:
+        labels = {prop: prop.replace("_", " ").title() for prop in prop_names}
+
+    # Create figure
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    # Get image dimensions (assume all arrays have same shape)
+    first_data = list(data_dict.values())[0]
+    ny, nx = first_data.shape
+
+    # Create coordinate grids
+    x = np.arange(nx) - nx / 2
+    y = np.arange(ny) - ny / 2
+    X, Y = np.meshgrid(x, y)
+
+    # Convert to polar coordinates
+    R = np.sqrt(X**2 + Y**2)
+    Theta = np.arctan2(Y, X)
+
+    # Normalize R for center circle
+    R_max = np.max(R)
+    R_norm = R / R_max
+
+    # Calculate angle ranges for each slice with rotation offset
+    angle_step = 2 * np.pi / n_props
+    angle_ranges = [
+        (
+            (i * angle_step - np.pi + rotation_offset) % (2 * np.pi) - np.pi,
+            ((i + 1) * angle_step - np.pi + rotation_offset) % (2 * np.pi) - np.pi,
+        )
+        for i in range(n_props)
+    ]
+
+    # Plot each property in its slice
+    for i, (prop, data) in enumerate(data_dict.items()):
+        # Create mask for this slice
+        angle_min, angle_max = angle_ranges[i]
+
+        # Handle angle wrapping
+        if angle_min > angle_max:
+            # Slice wraps around -π/π boundary
+            mask = ((Theta >= angle_min) | (Theta <= angle_max)) & (R_norm > center_circle_radius)
+        else:
+            mask = (Theta >= angle_min) & (Theta <= angle_max) & (R_norm > center_circle_radius)
+
+        # Apply mask to data
+        masked_data = np.ma.array(data, mask=~mask)
+
+        # Get colormap and limits
+        cmap = cmaps.get(prop, "viridis")
+        if isinstance(cmap, str):
+            cmap = plt.get_cmap(cmap)
+
+        if vlims and prop in vlims:
+            vmin, vmax = vlims[prop]
+        else:
+            vmin, vmax = np.nanpercentile(data[mask], [2, 98]) if np.any(mask) else (None, None)
+
+        # Plot the masked data
+        im = ax.imshow(
+            masked_data,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            extent=[-nx / 2, nx / 2, -ny / 2, ny / 2],
+            origin="lower",
+            interpolation="nearest",
+        )
+
+        # Add text label for this slice
+        angle_mid = (angle_min + angle_max) / 2
+        if angle_min > angle_max:  # Handle wrapping
+            angle_mid = (angle_min + angle_max + 2 * np.pi) / 2
+            if angle_mid > np.pi:
+                angle_mid -= 2 * np.pi
+
+        label_r = R_max * 0.85  # Position label at 85% of radius
+        label_x = label_r * np.cos(angle_mid)
+        label_y = label_r * np.sin(angle_mid)
+
+        # Determine text rotation
+        rotation = np.degrees(angle_mid)
+        if rotation > 90 or rotation < -90:
+            rotation += 180
+            ha = "right"
+        else:
+            ha = "left"
+
+        ax.text(
+            label_x,
+            label_y,
+            labels.get(prop, prop),
+            rotation=rotation,
+            ha=ha,
+            va="center",
+            fontsize=11,
+            fontweight="bold",
+            color="white",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.5),
+        )
+
+    # Add divider lines if requested
+    if add_dividers:
+        for i in range(n_props):
+            angle = (i * angle_step - np.pi + rotation_offset) % (2 * np.pi) - np.pi
+            x_end = R_max * np.cos(angle)
+            y_end = R_max * np.sin(angle)
+            x_start = center_circle_radius * R_max * np.cos(angle)
+            y_start = center_circle_radius * R_max * np.sin(angle)
+            ax.plot(
+                [x_start, x_end],
+                [y_start, y_end],
+                color=divider_color,
+                linewidth=divider_width,
+                zorder=10,
+            )
+
+    # Add central circle
+    if center_circle_radius > 0:
+        circle = plt.Circle((0, 0), center_circle_radius * R_max, color="black", zorder=11)
+        ax.add_patch(circle)
+
+    # Set axis properties
+    ax.set_xlim(-nx / 2, nx / 2)
+    ax.set_ylim(-ny / 2, ny / 2)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    # Add title
+    ax.set_title(
+        f"{galaxy_name} - Multi-Property Visualization", fontsize=16, fontweight="bold", pad=20
+    )
+
+    plt.tight_layout()
+
+    return fig, ax
+
+
+def create_galaxy_animation(
+    data_dict: Dict[str, np.ndarray],
+    galaxy: Any,  # Pass your actual galaxy object here
+    rgb: Optional[np.ndarray] = None,
+    cmaps: Optional[Dict[str, Any]] = None,
+    vlims: Optional[Dict[str, Tuple[float, float]]] = None,
+    labels: Optional[Dict[str, str]] = None,
+    figsize: Tuple[int, int] = (10, 10),
+    static_rgb_frames: int = 20,
+    transition_frames: int = 60,
+    rotation_frames: int = 120,
+    fps: int = 30,
+    save_path: Optional[str] = None,
+    writer: str = "pillow",
+    show_progress: bool = True,
+    ref_band: str = "F200W",
+) -> FuncAnimation:
+    """
+    Creates a galaxy animation with sleek styling and a smooth transition.
+
+    Features:
+    - Modern, minimalist aesthetic with a clean sans-serif font.
+    - Smooth clockwise wipe transition that leaves dividers behind.
+    - Clockwise rotation of the final map.
+    - Correctly positioned labels and scalebars.
+    - The RGB image remains as a persistent background.
+    """
+    # --- Modern Styling Setup ---
+    plt.style.use("dark_background")
+    # plt.rcParams['font.family'] = 'sans-serif'
+    # plt.rcParams['font.sans-serif'] = ['Helvetica Neue', 'Arial', 'sans-serif']
+
+    ui_color = "#F0F0F0"  # A softer off-white for UI elements
+
+    if vlims is None:
+        vlims = {
+            prop: (np.nanpercentile(data, 2), np.nanpercentile(data, 98))
+            for prop, data in data_dict.items()
+        }
+
+    total_frames = static_rgb_frames + transition_frames + rotation_frames
+    fig, ax = plt.subplots(figsize=figsize)
+
+    first_data = next(iter(data_dict.values()))
+    ny, nx = first_data.shape
+    x, y = np.arange(nx) - nx / 2, np.arange(ny) - ny / 2
+    X, Y = np.meshgrid(x, y)
+    R, Theta = np.sqrt(X**2 + Y**2), np.arctan2(Y, X)
+    R_max = np.max(R) if R.size > 0 else 1.0
+
+    prop_names, n_props = list(data_dict.keys()), len(data_dict)
+    angle_step = 2 * np.pi / n_props
+    rotation_angles = np.linspace(0, -2 * np.pi, rotation_frames, endpoint=False)
+
+    def update(frame: int):
+        if show_progress and frame % 10 == 0:
+            print(f"Rendering frame {frame}/{total_frames}")
+
+        for artist in ax.artists + ax.patches + ax.lines + ax.texts:
+            artist.remove()
+        for image in ax.images:
+            image.remove()
+        for cbar_ax in fig.axes[1:]:
+            cbar_ax.remove()
+        ax.axis("off")
+
+        is_transition = static_rgb_frames <= frame < static_rgb_frames + transition_frames
+        is_rotation = frame >= static_rgb_frames + transition_frames
+
+        drawn_artists = []
+
+        if rgb is not None:
+            drawn_artists.append(
+                ax.imshow(rgb, origin="lower", extent=[-nx / 2, nx / 2, -ny / 2, ny / 2], zorder=0)
+            )
+
+        try:
+            scalebar1 = AnchoredSizeBar(
+                ax.transData,
+                1 / galaxy.im_pixel_scales[ref_band].value,
+                '1"',
+                "lower right",
+                pad=0.5,
+                color=ui_color,
+                frameon=False,
+                size_vertical=0.8,
+                fontproperties=FontProperties(size=18),
+                label_top=True,
+            )
+            drawn_artists.append(ax.add_artist(scalebar1))
+            re = 40.1
+            d_A = cosmo.angular_diameter_distance(galaxy.redshift)
+            pix_scal = u.pixel_scale(galaxy.im_pixel_scales[ref_band].value * u.arcsec / u.pixel)
+            re_as = (re * u.pixel).to(u.arcsec, pix_scal)
+            re_kpc = (re_as * d_A).to(u.kpc, u.dimensionless_angles())
+            scalebar2 = AnchoredSizeBar(
+                ax.transData,
+                re,
+                f"{re_kpc:.0f}",
+                "lower left",
+                pad=0.5,
+                color=ui_color,
+                frameon=False,
+                size_vertical=0.8,
+                fontproperties=FontProperties(size=24),
+                label_top=True,
+            )
+            drawn_artists.append(ax.add_artist(scalebar2))
+        except Exception as e:
+            print(f"Warning: Could not draw scalebars. Error: {e}")
+
+        if is_transition or is_rotation:
+            rotation_offset = (
+                rotation_angles[frame - (static_rgb_frames + transition_frames)]
+                if is_rotation
+                else 0.0
+            )
+
+            wipe_angle, start_angle, end_angle = 0, 0, 0
+            if is_transition:
+                progress = (frame - static_rgb_frames) / transition_frames
+                wipe_angle, start_angle = progress * 2 * np.pi, np.pi / 2
+                end_angle = start_angle - wipe_angle
+
+            for i, prop in enumerate(prop_names):
+                data, cmap = data_dict[prop], cmaps.get(prop, "viridis") if cmaps else "viridis"
+                vmin, vmax = vlims[prop]
+
+                angle_min = (i * angle_step - np.pi + rotation_offset) % (2 * np.pi) - np.pi
+                angle_max = ((i + 1) * angle_step - np.pi + rotation_offset) % (2 * np.pi) - np.pi
+
+                slice_mask = (
+                    (Theta >= angle_min) | (Theta <= angle_max)
+                    if angle_min > angle_max
+                    else (Theta >= angle_min) & (Theta <= angle_max)
+                )
+
+                if is_transition:
+                    reveal_mask = (
+                        (Theta >= (end_angle + 2 * np.pi)) | (Theta <= start_angle)
+                        if end_angle < -np.pi
+                        else (Theta >= end_angle) & (Theta <= start_angle)
+                    )
+                    final_mask = slice_mask & reveal_mask
+                else:
+                    final_mask = slice_mask
+
+                d = ax.imshow(
+                    np.ma.array(data, mask=~final_mask),
+                    cmap=cmap,
+                    vmin=vmin,
+                    vmax=vmax,
+                    extent=[-nx / 2, nx / 2, -ny / 2, ny / 2],
+                    origin="lower",
+                    zorder=1,
+                )
+
+                drawn_artists.append(d)
+
+                x1, y1 = np.cos(angle_min), np.sin(angle_min)
+                x2, y2 = np.cos(angle_max), np.sin(angle_max)
+                angle_mid = np.arctan2(y1 + y2, x1 + x2)
+
+                show_label = True
+                if is_transition:
+                    mid_norm = (angle_mid + 2 * np.pi) % (2 * np.pi)
+                    start_norm = (start_angle + 2 * np.pi) % (2 * np.pi)
+                    end_norm = (end_angle + 2 * np.pi) % (2 * np.pi)
+                    show_label = (
+                        (end_norm <= mid_norm <= start_norm)
+                        if start_norm >= end_norm
+                        else ((mid_norm >= end_norm) or (mid_norm <= start_norm))
+                    )
+
+                if show_label:
+                    label_r = R_max * 0.65
+                    label_x, label_y = label_r * np.cos(angle_mid), label_r * np.sin(angle_mid)
+                    text = ax.text(
+                        label_x,
+                        label_y,
+                        labels.get(prop, prop) if labels else prop,
+                        ha="center",
+                        va="center",
+                        fontsize=22,
+                        color=ui_color,
+                        zorder=20,
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.5),
+                    )
+
+                    drawn_artists.append(text)
+                    """cbar_width, cbar_height = 0.12, 0.012
+                    inv = ax.transData.inverted()
+                    text_bb = text.get_window_extent(renderer=find_renderer(fig))
+                    text_data_bb = inv.transform(text_bb)
+                    cbar_x_center = (text_data_bb[0, 0] + text_data_bb[1, 0]) / 2
+                    cbar_y_center = text_data_bb[0, 1] - (text_data_bb[0,1]-text_data_bb[1,1]) - 5
+                    
+                    cax = fig.add_axes([cbar_x_center, cbar_y_center, cbar_width, cbar_height], 
+                                     transform=ax.transData, anchor='N')
+                    norm = colors.Normalize(vmin=vmin, vmax=vmax)
+                    cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax, orientation='horizontal')
+                    cbar.set_ticks([])
+                    cbar.outline.set_edgecolor(ui_color)
+                    cbar.outline.set_linewidth(0.5)
+                    """
+            if is_rotation:
+                for i in range(n_props):
+                    angle = (i * angle_step - np.pi + rotation_offset) % (2 * np.pi) - np.pi
+                    x_end, y_end = 0.70 * R_max * np.cos(angle), 0.70 * R_max * np.sin(angle)
+                    (d,) = ax.plot([0, x_end], [0, y_end], color=ui_color, linewidth=1.5, zorder=10)
+                    drawn_artists.append(d)
+            elif is_transition:
+                # Always draw the moving sweep line
+                line_angle = start_angle - wipe_angle
+                x_end_sweep, y_end_sweep = (
+                    0.70 * R_max * np.cos(line_angle),
+                    0.70 * R_max * np.sin(line_angle),
+                )
+                (d,) = ax.plot(
+                    [0, x_end_sweep], [0, y_end_sweep], color=ui_color, linewidth=1.5, zorder=10
+                )
+                drawn_artists.append(d)
+
+                # Also draw static dividers that the sweep line has passed
+                for i in range(n_props):
+                    divider_angle = (i * angle_step - np.pi) % (2 * np.pi) - np.pi
+
+                    div_norm = (divider_angle + 2 * np.pi) % (2 * np.pi)
+                    start_norm = (start_angle + 2 * np.pi) % (2 * np.pi)
+                    end_norm = (end_angle + 2 * np.pi) % (2 * np.pi)
+
+                    is_passed = (
+                        (end_norm <= div_norm <= start_norm)
+                        if start_norm >= end_norm
+                        else ((div_norm >= end_norm) or (div_norm <= start_norm))
+                    )
+
+                    if is_passed:
+                        x_end, y_end = (
+                            0.70 * R_max * np.cos(divider_angle),
+                            0.70 * R_max * np.sin(divider_angle),
+                        )
+                        (d,) = ax.plot(
+                            [0, x_end],
+                            [0, y_end],
+                            color=ui_color,
+                            linewidth=1.5,
+                            zorder=10,
+                            alpha=0.8,
+                        )
+                        drawn_artists.append(d)
+
+        ax.set_xlim(-nx / 2, nx / 2)
+        ax.set_ylim(-ny / 2, ny / 2)
+        ax.set_aspect("equal")
+        return drawn_artists
+
+    anim = FuncAnimation(fig, update, frames=total_frames, interval=1000 / fps, blit=True)
+
+    if save_path:
+        print(f"Saving animation to {save_path}...")
+        writer_obj = (
+            PillowWriter(fps=fps)
+            if writer == "pillow" or save_path.endswith(".gif")
+            else FFMpegWriter(fps=fps, bitrate=5600)
+        )
+        anim.save(save_path, writer=writer_obj, dpi=300, savefig_kwargs={"bbox_inches": "tight"})
+        print("Animation saved successfully.")
+
+    plt.rcdefaults()
+    return anim
 
 
 if __name__ == "__main__":

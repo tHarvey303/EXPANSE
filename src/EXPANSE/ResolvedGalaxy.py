@@ -1,3 +1,12 @@
+"""Main class for Resolved Galaxy analysis.
+
+Holds all data for a galaxy, including cutouts, segmentation maps, RMS error maps, photometry, SED fitting results, and resolved properties.
+
+Typically not initialized directly, but rather through class methods like init_from_galfind, init_from_h5, or init_from_basics.
+
+Author: Tom Harvey (thomas.harvey-3@manchester.ac.uk)
+
+"""
 import ast
 import contextlib
 import copy
@@ -40,13 +49,8 @@ from joblib import Parallel, delayed
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import XKCD_COLORS, ListedColormap, LogNorm, Normalize
 
-# import Ellipse
 from matplotlib.patches import Ellipse, FancyArrow
-
-# import ScalarFormatter
 from matplotlib.ticker import NullFormatter, ScalarFormatter
-
-# import make_axis_locatable
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from scipy.interpolate import interp1d
@@ -55,8 +59,6 @@ from tqdm import tqdm
 
 warnings.simplefilter("ignore", category=AstropyWarning)
 import matplotlib.patheffects as PathEffects
-
-# import FontProperties
 from matplotlib.font_manager import FontProperties
 
 # supress RuntimeWarning
@@ -87,12 +89,6 @@ except ImportError:
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 # This class is designed to hold all the data for a galaxy, including the cutouts, segmentation maps, and RMS error maps.
-
-"""TODO:
-        1. Store aperture photometry, auto photometry from catalogue.
-        2. Pixel binning.
-        3. Does ERR map need to be convolved with PSF?
-"""
 
 # What computer is this:
 # Get path of this file
