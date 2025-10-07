@@ -11,12 +11,13 @@
 
 ### EXtended Pixel-resolved ANalysis of SEDs
 
+## Overview
 
-### Overview
+
 
 EXPANSE is a Python package to perform resolved SED fitting and display and analyze the results. It has primarily been used for JWST and HST imaging, but should be transferable other space and ground-based observations. 
 
-### Features
+## Features
 
 1. **Multiple SED Fitting Tools**: Interfaces with Bagpipes, Prospector, EAZY-py, Synference and Dense Basis for flexible SED fitting options.
 2. **Portable File Format**: Data stored in single compressed HDF5 file for portability.
@@ -28,6 +29,14 @@ EXPANSE is a Python package to perform resolved SED fitting and display and anal
 8. **Population Analysis**: Tools to analyze populations of galaxies, including spatially resolved main sequence and outshining effects.
 9. **Photometric Inference**: Directly infer Beta slope, MUV, emission line EWs, UV slope, D4000 break, and other photometric properties directly from resolved photometry.
 10. **Interactive Aperture Placement**: Place apertures and regions interactively in the viewer to extract photometry and fit SEDs. Run EAZY and Dense Basis fits directly in the viewer.
+
+## Galaxy Example
+
+Here is a real $$z=1$$ spiral galaxy in the GOODS-South field, fitting using EXPANSE, showing the inferred property maps. 
+
+
+https://github.com/user-attachments/assets/d64b422b-5ba1-483f-9f93-21d2533d38f0
+
 
 ## Planned Features
 
@@ -85,7 +94,7 @@ pip install git+https://github.com/tHarvey303/bagpipes/
 
 ## Examples
 
-There is a notebook (examples/intro.ipynb) which goes over the basic features of EXPANSE from the beginning of loading in the data. All the plots for the EXPANSE paper are available in scripts/outshining_paper_figure.ipynb, which show more advanced usage. The examples/documentation are a work in progress.
+There is a notebook [here](examples/intro.ipynb) which goes over the basic features of EXPANSE from the beginning of loading in the data. All the plots for the EXPANSE paper are available [here](scripts/outshining_paper_figure.ipynb) which show more advanced usage. The examples/documentation are a work in progress.
 
 Please get in touch if you're interested in using the code, I'm happy to chat!
 
@@ -94,11 +103,11 @@ To lauch the viewer, run `expanse-viewer` in the terminal after installation.
 
 ## Support
 
-If you have a problem, find a bug or would like some advice please ![open an issue](https://github.com/tHarvey303/EXPANSE/issues/new/choose) or email me!  
+If you have a problem, find a bug or would like some advice please [open an issue](https://github.com/tHarvey303/EXPANSE/issues/new/choose) or email me!  
 
 ## Citation
 
-If you use EXPANSE in your work please cite ![this paper](https://ui.adsabs.harvard.edu/abs/2025MNRAS.542.2998H/abstract).
+If you use EXPANSE in your work please cite [this paper](https://ui.adsabs.harvard.edu/abs/2025MNRAS.542.2998H/abstract).
 
 ```
 @ARTICLE{2025MNRAS.542.2998H,
