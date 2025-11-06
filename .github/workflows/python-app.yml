@@ -29,9 +29,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        WITH_OPENMP=1 pip install .
+        pip install -e .
         pip install ruff pytest
-    
+      
     - name: Test import
       run: |
         python -c "import EXPANSE" 

@@ -16,7 +16,6 @@ from matplotlib.ticker import FormatStrFormatter, MaxNLocator, ScalarFormatter
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from numpy.random import choice
 from scipy.special import gamma, gammainc
-from sklearn.neighbors import KernelDensity
 from tqdm import tqdm
 
 try:
@@ -2260,6 +2259,8 @@ class Plotspector(FigureMaker):
         },
         display_type={"total_mass": "log_10"},
     ):
+        from sklearn.neighbors import KernelDensity
+        
         fig = plt.figure(facecolor="w", edgecolor="k", constrained_layout=True)
         gs = fig.add_gridspec(4, 5)
         self.param_name = param_name

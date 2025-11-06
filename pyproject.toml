@@ -1,5 +1,5 @@
 [project]
-name = "EXPANSE"
+name = "astro-expanse"
 
 # Dynamic version numbers from git
 dynamic = ["version"]
@@ -54,10 +54,10 @@ classifiers = [  # Optional
   #   3 - Alpha
   #   4 - Beta
   #   5 - Production/Stable
-  "Development Status :: 3 - Beta",  # 3 Alpha/4 Beta/5 Production/Stable
-  "Intended Audience :: Astronomers",
-  "Topic :: Spatially Resolved Analysis",
-  "License :: GNU GENERAL PUBLIC LICENSE v3.0",
+  "Development Status :: 4 - Beta",  # 3 Alpha/4 Beta/5 Production/Stable
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Astronomy",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
 
   # Supported Python versions
   "Programming Language :: Python :: 3.8",
@@ -94,7 +94,6 @@ dependencies = [
   "pandas",
   "corner",
   "regions",
-  "bagpipes @ git+https://github.com/tHarvey303/bagpipes/",
 ]
 
 # Optional dependencies for specific use cases
@@ -117,7 +116,6 @@ extend = [
     "galfind", # git clone https://github.com/u92876da/galfind.git
     "astroquery", # pip install astroquery
     "opencv-python", # pip install opencv-python
-    "piXedfit @ git+https://github.com/aabdurrouf/piXedfit@main",
     "webbpsf",
     "vorbin",
 ]
@@ -176,6 +174,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 
+local_scheme = "no-local-version"
+fallback_version = "0.0.0"
 # Make a version file at build time
 version_file = "src/EXPANSE/_version.py"
 
