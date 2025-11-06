@@ -212,13 +212,14 @@ def main(
                         band_name=band,
                         survey=survey,
                         image_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
-                        wht_path="im_folder",
-                        err_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/rms_err/",
+                        wht_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/wht/",
+                        err_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
                         seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/ACS_WFC/{version}/{survey}/MAP_RMS/segmentation/",
                         psf_path="/nvme/scratch/work/tharvey/PSFs/JOF/",  # optional
                         psf_type="star_stack",  # optional
                         psf_kernel_path="/nvme/scratch/work/tharvey/PSFs/kernels/JOF/",
                         err_hdu_ext=1,
+                        im_hdu_ext=1,
                     )
                 elif instrument == "NIRCam":
                     band_info = PhotometryBandInfo(

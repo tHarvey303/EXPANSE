@@ -35,6 +35,9 @@ from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from tqdm import tqdm
 
+sys.path.insert(0, "/nvme/scratch/work/tharvey/bagpipes/")
+import run_bagpipes
+
 # Bye warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -763,7 +766,7 @@ class PipesFitNoLoad:
 
         if modify_ax:
             ax.set_xlabel(f"{'Lookback ' if plottype=='lookback' else ''} Time ({timescale})")
-            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)")
+            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)", fontsize=12)
 
         if logify:
             ax.set_yscale("log")
@@ -912,7 +915,7 @@ class PipesFitNoLoad:
 
         if modify_ax:
             ax.set_xlabel(f"{'Lookback ' if plottype=='lookback' else ''} Time ({timescale})")
-            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)")
+            ax.set_ylabel(r"SFR (M$_{\odot}$ yr$^{-1}$)", fontsize=12)
 
         if logify:
             ax.set_yscale("log")
@@ -1116,6 +1119,9 @@ class PipesFit:
         bands=None,
         data_func=None,
         attempt_to_load_direct_h5=False,
+        reload_pipes=True,
+        flux_col_name="FLUX_APER_band_aper_corr",
+        fluxerr_col_name="FLUXERR_APER_band_loc_depth",
     ):
         time.time()
         # Manually loading the .h5 file with deepdish
@@ -1158,6 +1164,7 @@ class PipesFit:
         fit_instructions = data.attrs["fit_instructions"]
         try:
             self.config_used = eval(data.attrs["config"])
+            print("Fitting used ", self.config_used)
             if self.config_used["type"] == "BPASS":
                 os.environ["use_bpass"] = str(int(True))
             elif self.config_used["type"] == "BC03":
@@ -1172,7 +1179,7 @@ class PipesFit:
 
         if not attempt_to_load_direct_h5:
             # Reload the module if it's already been imported
-            if "bagpipes" in sys.modules:
+            if "bagpipes" in sys.modules and reload_pipes:
                 import importlib
 
                 importlib.reload(sys.modules["bagpipes"])
@@ -1235,6 +1242,9 @@ class PipesFit:
                 if self.data_func is None:
                     self.data_func = run_bagpipes.load_fits
                 os.environ["input_unit"] = self.catalogue_flux_unit.to_string()
+                os.environ["flux_col_name"] = flux_col_name
+                os.environ["fluxerr_col_name"] = fluxerr_col_name
+
                 if self.bands is None:
                     self.bands = run_bagpipes.load_fits(galaxy_id, return_bands=True, verbose=False)
                 # Get filter paths
@@ -1341,6 +1351,8 @@ class PipesFit:
         sps = "BC03"
         if "bpass" in self.h5_path:
             sps = "BPASS"
+
+        sps = "BPASS"
         fesc = 0.0
         if "fesc" in self.h5_path:
             try:
@@ -1460,7 +1472,7 @@ class PipesFit:
                     patheffects=[pe.withStroke(linewidth=2, foreground="white")],
                 )
 
-            ax.set_ylabel("$\\mathbf{\\mathrm{SFR\\ (M_\\odot)}$", fontsize="medium")
+            ax.set_ylabel("$\\mathbf{\\mathrm{SFR\\ (M_\\odot)}$", fontsize="small")
 
             # ax.set_ylabel('SFR (M$_\odot$ yr$^{-1}$)', fontsize='medium')
             ax.tick_params(axis="both", which="major", labelsize="medium")
@@ -1777,6 +1789,7 @@ class PipesFit:
             fnu_jy = fnu[:, 0].to(u.Jy)
             fnu_jy_err = fnu[:, 1].to(u.Jy)
             plot_fnu = fnu[:, 0].to(flux_units).value
+
             if rerun_fluxes:
                 fluxes, bands = run_bagpipes.load_fits(
                     self.galaxy_id,
@@ -1797,10 +1810,32 @@ class PipesFit:
                         sigma = self.catalog[f"sigma_{band}"]
                     else:
                         sigma = [[100]]
+                    sigma = np.atleast_2d(sigma)
+
+                    # Add a horizontal line with 0.2 um width showing 5 sigma depth
+                    # for each filter
+                    snr = fnu_jy[pos].to(u.Jy).value / fnu_jy_err[pos].to(u.Jy).value
+
+                    """  
+                    if self.catalog is not None:
+                       
+                        loc_depth = np.atleast_2d(self.catalog[f"loc_depth_{band}"])[0][0]
+
+                        ax.hlines(
+                            loc_depth,
+                            wav[pos].to(wav_units).value-0.1,
+                            wav[pos].to(wav_units).value+0.1,
+                            colors="grey",
+                            linestyles="dashed",
+                            lw=1,
+                            zorder=zorder - 2,
+                        )
+                    """
+
                     if sigma[0][0] < 2:
                         non_detect_mask[pos] = False
-                        loc_depth = self.catalog[f"loc_depth_{band}"][0][0]
-                        three_sig_depth = five_sig_depth_to_n_sig_depth(loc_depth, 3) * u.ABmag
+                        one_sig = fnu_jy_err[pos].to("uJy")
+                        three_sig_depth = 3 * one_sig
                         three_sig_depth = three_sig_depth.to(flux_units).value
                         wav_pos = wav[pos].to(wav_units).value
                         p1 = patches.FancyArrowPatch(
@@ -1817,13 +1852,12 @@ class PipesFit:
                 pass
             # If it fails calculate smaller error
             if flux_units == u.ABmag:
-                inner = fnu_jy / (fnu_jy - fnu_jy_err)
-                err_up = 2.5 * np.log10(inner)
-                err_low = 2.5 * np.log10(1 + (fnu_jy_err / fnu_jy))
+                err_aprox = np.abs((2.5 * fnu_jy_err) / (np.log(10) * fnu_jy))
             else:
-                err_up = fnu_jy_err.to(flux_units).value
-                err_low = fnu_jy_err.to(flux_units).value
+                err_aprox = fnu_jy_err.to(flux_units).value
 
+            print("mag err", err_aprox)
+            print("snrs", fnu_jy.to(u.uJy).value / fnu_jy_err.to(u.uJy).value)
             wav = wav.to(wav_units).value
             # Errors wrong - need assymetric
             # Plot the data
@@ -1831,16 +1865,14 @@ class PipesFit:
 
             wav_lim = wav[non_detect_mask]
             plot_fnu = plot_fnu[non_detect_mask]
-            err_up = err_up[non_detect_mask]
-            err_low = err_low[non_detect_mask]
+            err_aprox = err_aprox[non_detect_mask]
             mask = ~np.isfinite(plot_fnu)
-            err_low[mask] = 0
-            err_up[mask] = 0
+            err_aprox[mask] = 0.0
 
             ax.errorbar(
                 wav_lim,
                 plot_fnu,
-                yerr=[err_low, err_up],
+                yerr=err_aprox,
                 lw=lw,
                 linestyle=" ",
                 capsize=3,
@@ -1863,11 +1895,12 @@ class PipesFit:
             )
 
             if flux_units == u.ABmag:
-                plot_fnu_lim = plot_fnu[(plot_fnu > 15) & (plot_fnu < 32)]
+                plot_fnu_lim = plot_fnu[(plot_fnu > 15) & (plot_fnu < 35)]
                 plot_fnu_lim = np.append(plot_fnu_lim, three_sig_depths)
-                plot_fnu_up = np.nanmax(plot_fnu_lim) + 1
-                plot_fnu_low = np.min(plot_fnu_lim) - 2
+                plot_fnu_up = np.nanmax(plot_fnu_lim) + 0.8
+                plot_fnu_low = np.min(plot_fnu_lim) - 2.4
                 ax.set_ylim(plot_fnu_up, plot_fnu_low)
+                print("ylim", plot_fnu_up, plot_fnu_low)
             ax.set_xlim(wav[0] - 0.2, wav[-1] + 0.65)
 
         if self.fitted_type in ["spec", "both"]:
@@ -1912,8 +1945,8 @@ class PipesFit:
                                 zorder=zorder-1, alpha=0.75, linewidth=0)
             """
             # Sort out x tick locations
-            ax.set_xlim(0.6, 5)
-            ax.set_ylim(31, 26)
+            # ax.set_xlim(0.4, 5.1)
+            # ax.set_ylim(32, 28)
             """if x_ticks is None:
                 auto_x_ticks(ax)
 
@@ -1951,6 +1984,8 @@ class PipesFit:
             "tquench",
             "sfr_10myr",
             "sfr_100myr",
+            "M_UV",
+            "m_UV",
         ]
         names = sfh_names + fit.fitted_model.params
         if parameter not in names:
@@ -2054,6 +2089,7 @@ class PlotPipes:
         prospector_run_name="continuity_flex_dynesty",
         catalogue_flux_unit=u.MJy / u.sr,
         simulated_cat=False,
+        **kwargs,
     ):
         path = Path(pipes_path)
         self.pipes_path = path
@@ -2168,6 +2204,8 @@ class PlotPipes:
                     field_col=self.field_col,
                     ID_col=self.id_col,
                     catalogue_flux_unit=self.catalogue_flux_unit,
+                    reload_pipes=False,
+                    **kwargs,
                 )
                 self.fits.append(fit_obj)
             except ZeroDivisionError as e:
@@ -2321,7 +2359,7 @@ class PlotPipes:
         add_cutouts=True,
         add_sfh=True,
         flux_units=u.ABmag,
-        max_bands=8,
+        max_bands=6,
     ):
         if type(cmap) is str:
             cmap = plt.get_cmap(cmap)
@@ -2430,7 +2468,7 @@ class PlotPipes:
                         try:
                             path_effects = [pe.withStroke(linewidth=4, foreground="black")]
                             cutout_ax.annotate(
-                                rf"{self.row[f'sigma_{band}'][0][0]:.1f}$\sigma$",
+                                rf"{np.atleast_2d(self.row[f'sigma_{band}'])[0][0]:.1f}$\sigma$",
                                 xy=(0.94, 0.82),
                                 ha="right",
                                 xycoords="axes fraction",
@@ -2486,15 +2524,15 @@ class PlotPipes:
                 )
 
                 # print('Adding posterior PDFs')
-                try:
-                    fit.plot_pdf(
-                        ax_z_pdf,
-                        "redshift",
-                        colour=colours[pos],
-                        fill_between=fill_uncertainty,
-                    )
-                except:  # Exclude the zfix ones
-                    pass
+                # try:
+                fit.plot_pdf(
+                    ax_z_pdf,
+                    "M_UV",
+                    colour=colours[pos],
+                    fill_between=fill_uncertainty,
+                )
+                # except:  # Exclude the zfix ones
+                #    pass
                 fit.plot_pdf(
                     ax_mass_pdf,
                     "stellar_mass",
@@ -2502,7 +2540,6 @@ class PlotPipes:
                     fill_between=fill_uncertainty,
                 )
 
-        ax_mass_pdf.set_title("Stellar Mass", fontsize="medium", fontweight="bold")
         # if nothing on ax_z_pdf
         if len(ax_z_pdf.lines) == 0:
             ax_z_pdf.remove()
@@ -2510,10 +2547,16 @@ class PlotPipes:
             ax_z_pdf.set_title("Redshift", fontsize="medium", fontweight="bold")
             ax_z_pdf.set_xlabel(r"Redshift", fontsize="medium", fontweight="bold")
             ax_z_pdf.set_title("")
+            # ax_z_pdf.set_title(r'$ \mathrm{\bf M_{UV}}$', fontsize="medium", fontweight="bold")
+            ax_z_pdf.set_xlabel(
+                r"$ \mathrm{ \bf M_{UV}} \ (\mathrm{mag(AB))}$",
+                fontsize="medium",
+                fontweight="bold",
+            )
 
         ax_mass_pdf.set_xlabel(
             r"$ \mathrm{\bf Stellar \ Mass } \ (\log_{10}\mathrm{M}_{*}/\mathrm{M}_{\odot})$",
-            fontsize="medium",
+            fontsize="small",
             fontweight="bold",
         )
 
@@ -2527,10 +2570,10 @@ class PlotPipes:
 
         ax_sfh.set_xlim(2, ax_sfh.get_xlim()[1])
         if ax_sfh.get_ylim()[1] <= 1e2:
-            ax_sfh.set_ylim(1e-2, 3e2)
-        ax_sfh.set_yticks([1e-2, 1e0, 1e2])
+            ax_sfh.set_ylim(1e-3, 10)
+        ax_sfh.set_yticks([1e-3, 1e0, 1e1])
         ax_sfh.set_yticklabels(
-            [0.01, 1, 100],
+            [0.001, 1, 10],
             path_effects=[pe.withStroke(linewidth=2, foreground="white")],
         )
         ax_sfh.yaxis.set_minor_locator(AutoMinorLocator(10))
@@ -2692,7 +2735,7 @@ class PlotPipes:
                         try:
                             path_effects = [pe.withStroke(linewidth=4, foreground="black")]
                             cutout_ax.annotate(
-                                rf"{self.row[f'sigma_{band}'][0][0]:.1f}$\sigma$",
+                                rf"{np.atleast_2d(self.row[f'sigma_{band}'])[0][0]:.1f}$\sigma$",
                                 xy=(0.94, 0.85),
                                 ha="right",
                                 xycoords="axes fraction",
@@ -2940,12 +2983,21 @@ class PlotPipes:
         for option in options:
             if "NIRCam" in option:
                 options = glob.glob(f"{field_dir}/NIRCam/*")
+                if "30mas" in options:
+                    options = glob.glob(f"{field_dir}/NIRCam/30mas/*")
 
                 break
         priority = 5
         field_dir = None
 
+        print(options)
+
         for option in options:
+            if "mosaic_1364_wispnathan" in option:
+                new_priority = 0
+                if new_priority < priority:
+                    priority = new_priority
+                    field_dir = option
             if "mosaic_1084_wispnathan" in option:
                 new_priority = 1
                 if new_priority < priority:
@@ -2964,19 +3016,30 @@ class PlotPipes:
                     priority = new_priority
                     field_dir = option
                 field_dir = option
+
+        options = glob.glob(f"{field_dir}/*")
+        for option in options:
+            if "30mas" in option:
+                field_dir = option
+                break
         if field_dir is None:
             raise Exception(f"No image directory found for {field}")
         # print(field_dir)
         try:
-            im_path = glob.glob(f"{field_dir}/*{band.lower()}*_i2d*.fits")
+            im_path = glob.glob(f"{field_dir}/*{band.lower()}*_i2d*.fits") + glob.glob(
+                f"{field_dir}/*{band.upper()}*_i2d*.fits"
+            )
             if len(im_path) > 1:
                 raise Exception(f"Multiple images found for {band}, {im_path}")
             im_path = im_path[0]
             im_ext = 1
         except:
-            im_path = (
-                f"/raid/scratch/data/hst/{field}/ACS_WFC/30mas/ACS_WFC_{band}_{field}_drz.fits"
+            folder = f"/raid/scratch/data/hst/{field}/ACS_WFC/mosaic_1293_wispnathan/30mas"
+            print(folder, band)
+            images = glob.glob(f"{folder}/*{band.lower()}*drz*.fits") + glob.glob(
+                f"{folder}/*{band.upper()}*drz*.fits"
             )
+            im_path = images[0]
             im_ext = 0
         return im_path, im_ext
 
@@ -2999,8 +3062,8 @@ class PlotPipes:
         row = self.row
         field = self.field
         try:
-            n_sig_detect = self.row[f"sigma_{band}"][0][0]
-        except KeyError:
+            n_sig_detect = np.atleast_2d(self.row[f"sigma_{band}"])[0][0]
+        except (KeyError, IndexError):
             n_sig_detect = 5
             pass
 

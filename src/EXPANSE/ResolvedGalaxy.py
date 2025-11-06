@@ -1551,6 +1551,8 @@ class ResolvedGalaxy:
                 for map in hfile["photometry_properties"].keys():
                     photometry_properties[map] = {}
                     photometry_meta_properties[map] = {}
+                    if isinstance(hfile["photometry_properties"][map], h5.Dataset):
+                        continue
                     for prop in hfile["photometry_properties"][map].keys():
                         photometry_properties[map][prop] = hfile["photometry_properties"][map][
                             prop
@@ -1722,9 +1724,11 @@ class ResolvedGalaxy:
 
         for band in field_info.band_names:
             im_path = field_info.im_paths[band]
-
-            im_data = fits.getdata(im_path, field_info.im_exts[band])
-            im_header = fits.getheader(im_path, field_info.im_exts[band])
+            print(im_path)
+            im_data = fits.getdata(im_path, field_info.im_exts[band], ignore_missing_simple=True)
+            im_header = fits.getheader(
+                im_path, field_info.im_exts[band], ignore_missing_simple=True
+            )
             wcs = WCS(im_header)
             phot_img_headers[band] = str(im_header)
             if not already_cutout:
@@ -1779,7 +1783,9 @@ class ResolvedGalaxy:
             # Check if we have rms, wht or seg files to cutout
             if field_info.err_paths[band] is not None:
                 rms_err_path = field_info.err_paths[band]
-                rms_err_data = fits.getdata(rms_err_path, field_info.rms_err_exts[band])
+                rms_err_data = fits.getdata(
+                    rms_err_path, field_info.rms_err_exts[band], ignore_missing_simple=True
+                )
                 if not already_cutout:
                     rms_err_cutout = Cutout2D(
                         rms_err_data,
@@ -1801,14 +1807,14 @@ class ResolvedGalaxy:
 
             if field_info.seg_paths[band] is not None:
                 seg_path = field_info.seg_paths[band]
-                seg_data = fits.getdata(seg_path)
+                seg_data = fits.getdata(seg_path, ignore_missing_simple=True)
                 if not already_cutout:
                     seg_cutout = Cutout2D(
                         seg_data,
                         position=sky_coord,
                         size=(cutout_size, cutout_size),
                         wcs=wcs,
-                )
+                    )
                 else:
                     seg_cutout = seg_data
                 seg_imgs[band] = copy.deepcopy(seg_cutout.data)
@@ -1817,7 +1823,7 @@ class ResolvedGalaxy:
             if field_info.psf_matched_image_paths[band] is not None:
                 # Get the PSF matched image
                 psf_matched_path = field_info.psf_matched_image_paths[band]
-                psf_matched_data = fits.getdata(psf_matched_path)
+                psf_matched_data = fits.getdata(psf_matched_path, ignore_missing_simple=True)
                 if not already_cutout:
                     psf_im_cutout = Cutout2D(
                         psf_matched_data,
@@ -1838,8 +1844,10 @@ class ResolvedGalaxy:
             if field_info.psf_matched_err_paths[band] is not None:
                 # Get the PSF matched rms_err
                 psf_matched_rms_err_path = field_info.psf_matched_err_paths[band]
-                psf_matched_rms_err_data = fits.getdata(psf_matched_rms_err_path)
-                if not already_cutout:      
+                psf_matched_rms_err_data = fits.getdata(
+                    psf_matched_rms_err_path, ignore_missing_simple=True
+                )
+                if not already_cutout:
                     psf_rms_err_cutout = Cutout2D(
                         psf_matched_rms_err_data,
                         position=sky_coord,
@@ -2474,6 +2482,8 @@ class ResolvedGalaxy:
         model_type="sersic",
         psf_type="star_stack",
         use_psf_matched_data=True,
+        multi_object_fit=False,
+        multi_band_fit=False,
         output_dir=None,
         overwrite=False,
         band="F444W",
@@ -2511,6 +2521,7 @@ class ResolvedGalaxy:
                 "relative_to_centre": True,
             },
         },
+        sep_overrides={},
     ):
         """Run PySersic to perform Bayesian model fitting on galaxy images.
 
@@ -2528,12 +2539,18 @@ class ResolvedGalaxy:
             - 'sersic_exp': Sérsic + exponential
         psf_type : str
             Type of PSF to use for convolution
+        use_psf_matched_data : bool
+            Whether to use PSF-matched data for fitting
+        multi_object_fit : bool
+            Whether to fit multiple objects simultaneously
+        multi_band_fit : bool
+            Whether to fit multiple bands simultaneously
         output_dir : str
             Directory to save output files. If None, uses resolved_galaxy_dir/autogalaxy/
         overwrite : bool
             Whether to overwrite existing results
         band : str
-            List of bands to fit. If None, fits all bands
+            List of bands to fit. If None, fits self.bands[-1]
         mask_type : str
             Type of mask to apply:
             - Name of mask in galaxy.region (e.g. 'pixedfit', 'detection')
@@ -2567,7 +2584,10 @@ class ResolvedGalaxy:
             Loss function to use. Options are:
             - 'student_t': Student's t-distribution loss function
             - 'cash': Cash statistic loss function
+            - 'gaussian_mixture': Gaussian mixture loss function
             - 'gaussian': Gaussian loss function
+            - 'pseudo_huber': Pseudo-Huber loss function
+            See https://pysersic.readthedocs.io/en/latest/autoapi/pysersic/loss/index.html
         renderer : str
             Type of renderer to use. Options are:
             - 'hybrid': Hybrid renderer
@@ -2588,11 +2608,13 @@ class ResolvedGalaxy:
         save_chains : bool
             Whether to save the chains to the h5 file.
         prior_dict : dict
-            Dictionary of priors to use for the model parameters
+            Dictionary of priors to use for the model parameters. Ignored if multi_object_fit or multi_band_fit is True.
             Available types are uniform, gaussian, truncated_gaussian, custom (any numpyro distribution)
             parameters: uniform - var_name, low, high
                         gaussian - var_name, loc, scale
                         truncated_gaussian - var_name, loc, scale, low, high
+        sep_overrides : dict
+            Dictionary of keyword arguments to pass to sep.extract() if multi_object_fit=True
 
 
         Returns
@@ -2654,11 +2676,11 @@ class ResolvedGalaxy:
         psf_data = psf_data / np.sum(psf_data)
 
         # Create mask
-        if mask_type in self.gal_region:
+        if isinstance(mask_type, str) and mask_type in self.gal_region:
             # Get pixel coordinates where region is True
             region_mask = self.gal_region[mask_type]
             mask = ~region_mask.astype(bool)
-        elif mask_type.startswith("seg_"):
+        elif mask_type is not None and isinstance(mask_type, str) and mask_type.startswith("seg_"):
             # Get segmentation map
             seg_map = copy.deepcopy(self.seg_imgs[mask_type[4:]])
             # Get center value, mask only pixels which aren't background or this value
@@ -2667,8 +2689,7 @@ class ResolvedGalaxy:
             seg_map[seg_map == center_val] = 0
             seg_map[seg_map > 0] = 1
             mask = seg_map.astype(bool)
-
-        elif mask_type in self.bands:
+        elif isinstance(mask_type, str) and mask_type in self.bands:
             # Get segmentation map
             seg_map = copy.deepcopy(self.seg_imgs[mask_type])
             # If multiple objects, set all but the central object to 1. All other pixels are 0.
@@ -2676,6 +2697,11 @@ class ResolvedGalaxy:
                 center = np.array(seg_map.shape) // 2
                 seg_map = np.where(seg_map == seg_map[center[0], center[1]], 1, 0)
             mask = seg_map.astype(bool)
+        elif isinstance(mask_type, np.ndarray):
+            if mask_type.shape != im_data.shape:
+                raise ValueError("Mask shape does not match image shape.")
+            mask = mask_type.astype(bool)
+
         elif mask_type is None:
             mask = None
         else:
@@ -2684,8 +2710,19 @@ class ResolvedGalaxy:
 
         from pysersic import FitMulti, FitSingle, check_input_data
         from pysersic.exceptions import MaskWarning
-        from pysersic.loss import student_t_loss
-        from pysersic.priors import autoprior
+        from pysersic.loss import (
+            student_t_loss,
+            cash_loss,
+            gaussian_mixture,
+            gaussian_loss_w_frac,
+            gaussian_loss_w_sys,
+            pseudo_huber_loss,
+            gaussian_loss,
+            gaussian_mixture_w_frac,
+            gaussian_mixture_w_sys,
+            student_t_loss_free_sys,
+        )
+        from pysersic.priors import autoprior, PySersicMultiPrior
         from pysersic.results import plot_residual
 
         try:
@@ -2693,40 +2730,129 @@ class ResolvedGalaxy:
         except MaskWarning:
             pass
 
-        prior = autoprior(
-            image=im_data,
-            profile_type=model_type,
-            mask=mask,
-            sky_type=sky_type,
-        )
+        if not multi_object_fit and not multi_band_fit:
+            prior = autoprior(
+                image=im_data,
+                profile_type=model_type,
+                mask=mask,
+                sky_type=sky_type,
+            )
 
-        for key in prior_dict:
-            prior_type = prior_dict[key]["type"]
-            prior_dict[key].pop("type")
+            for key in prior_dict:
+                prior_type = prior_dict[key]["type"]
+                prior_dict[key].pop("type")
 
-            if "relative_to_centre" in prior_dict[key]:
-                prior_dict[key].pop("relative_to_centre")
-                size = im_data.shape[0] / 2
-                prior_dict[key]["low"] = center[0] + prior_dict[key]["low"]
-                prior_dict[key]["high"] = center[0] + prior_dict[key]["high"]
+                if "relative_to_centre" in prior_dict[key]:
+                    prior_dict[key].pop("relative_to_centre")
+                    size = im_data.shape[0] / 2
+                    prior_dict[key]["low"] = center[0] + prior_dict[key]["low"]
+                    prior_dict[key]["high"] = center[0] + prior_dict[key]["high"]
 
-            if prior_type == "uniform":
-                prior.set_uniform_prior(**prior_dict[key], var_name=key)
-            elif prior_type == "gaussian":
-                prior.set_gaussian_prior(**prior_dict[key], var_name=key)
-            elif prior_type == "truncated_gaussian":
-                prior.set_truncated_gaussian_prior(**prior_dict[key], var_name=key)
-            elif prior_type == "custom":
-                prior.set_custom_prior(**prior_dict[key], var_name=key)
+                if prior_type == "uniform":
+                    prior.set_uniform_prior(**prior_dict[key], var_name=key)
+                elif prior_type == "gaussian":
+                    prior.set_gaussian_prior(**prior_dict[key], var_name=key)
+                elif prior_type == "truncated_gaussian":
+                    prior.set_truncated_gaussian_prior(**prior_dict[key], var_name=key)
+                elif prior_type == "custom":
+                    prior.set_custom_prior(**prior_dict[key], var_name=key)
+        elif multi_object_fit:
+            # Need a catalog with x, y, flux, r and type
+            import sep_pjw as sep
+
+            defaults = dict(
+                thresh=1.8,
+                minarea=9,
+                deblend_nthresh=32,
+                filter_kernel=None,
+                deblend_cont=0.001,
+                clean=True,
+                clean_param=1.0,
+            )
+
+            defaults.update(sep_overrides)
+
+            detection_objects = sep.extract(
+                im_data, err=noise_data, segmentation_map=False, **defaults
+            )
+
+            inputs = {}
+            inputs["x"] = detection_objects["x"]
+            inputs["y"] = detection_objects["y"]
+            inputs["flux"] = detection_objects["flux"]
+            inputs["r"] = detection_objects["a"]  # Use semi-major axis as size estimate
+            inputs["type"] = ["sersic"] * len(inputs["x"])  # For now, all sersic
+
+            # Remove any objects that are too close to the edge
+            mask_radius = 5  # pixels
+            center = np.array(im_data.shape) // 2
+            to_remove = []
+            for i in range(len(inputs["x"])):
+                if (
+                    inputs["x"][i] < mask_radius
+                    or inputs["x"][i] > im_data.shape[1] - mask_radius
+                    or inputs["y"][i] < mask_radius
+                    or inputs["y"][i] > im_data.shape[0] - mask_radius
+                ):
+                    to_remove.append(i)
+
+            for i in sorted(to_remove, reverse=True):
+                for key in inputs:
+                    inputs[key] = np.delete(inputs[key], i)
+
+            if len(inputs["x"]) == 0:
+                raise ValueError("No objects found for multi-object fitting.")
+
+            prior = PySersicMultiPrior(
+                catalog=inputs,
+                sky_type=sky_type,
+            )
+
+            # Make a debug plot showing the detected objects
+            if make_diagnostic_plots:
+                import matplotlib.pyplot as plt
+
+                fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+                ax.imshow(
+                    im_data,
+                    origin="lower",
+                    cmap="gray",
+                    vmin=np.percentile(im_data, 5),
+                    vmax=np.percentile(im_data, 99),
+                )
+                for i in range(len(inputs["x"])):
+                    circ = plt.Circle(
+                        (inputs["x"][i], inputs["y"][i]),
+                        inputs["r"][i],
+                        color="red",
+                        fill=False,
+                        lw=2,
+                    )
+                    ax.add_patch(circ)
+                plt.show()
+
+        elif multi_band_fit:
+            raise NotImplementedError("Multi-band fitting not implemented yet.")
 
         print(prior)
 
-        if "double" in model_type or "_" in model_type:
+        if "double" in model_type or "_" in model_type or multi_object_fit or multi_band_fit:
             fitter = FitMulti
         else:
             fitter = FitSingle
 
-        loss_funcs = {"student_t": student_t_loss}
+        loss_funcs = {
+            "student_t": student_t_loss,
+            "cash": cash_loss,
+            "gaussian_mixture": gaussian_mixture,
+            "gaussian_loss_w_frac": gaussian_loss_w_frac,
+            "gaussian_loss_w_sys": gaussian_loss_w_sys,
+            "pseudo_huber": pseudo_huber_loss,
+            "gaussian": gaussian_loss,
+            "gaussian_mixture_w_frac": gaussian_mixture_w_frac,
+            "gaussian_mixture_w_sys": gaussian_mixture_w_sys,
+            "student_t_free_sys": student_t_loss_free_sys,
+        }
 
         loss_func = loss_funcs[loss_function]
 
@@ -2748,6 +2874,7 @@ class ResolvedGalaxy:
             map_params = fitter.find_MAP(rkey=PRNGKey(rkey))
             results = map_params
             print(results)
+            self.temp_pysersic_results = results
 
             if make_diagnostic_plots:
                 fig, ax = plot_residual(im_data, map_params["model"], mask=mask)
@@ -2758,7 +2885,11 @@ class ResolvedGalaxy:
                 plt.close(fig)
 
             model = map_params["model"]
-            results_quantiles = {k: float(v) for k, v in results.items() if k != "model"}
+            if multi_object_fit or multi_band_fit:
+                # This will have to change.
+                results_quantiles = results
+            else:
+                results_quantiles = {k: float(v) for k, v in results.items() if k != "model"}
 
         elif fit_type == "posterior":
             fitter.estimate_posterior(rkey=PRNGKey(rkey + 2), method=posterior_method)
@@ -2769,6 +2900,8 @@ class ResolvedGalaxy:
             results = fitter.sampling_results
         else:
             raise ValueError(f"Fit type {fit_type} not recognized.")
+
+        self.temp_pysersic_results = results
 
         if fit_type in ["posterior", "sample"]:
             summary = results.summary()
@@ -7349,7 +7482,7 @@ class ResolvedGalaxy:
                 alpha = 1
                 ec = "black"
 
-                if np.isnan(yerr[0]) or np.isnan(yerr[1]):
+                if np.isnan(yerr[0]) or (len(yerr) > 1 and np.isnan(yerr[1])):
                     dy = 0.20
                     # calculate dy as 5% of the plot range
                     flux = flux.item()
@@ -12444,7 +12577,7 @@ class ResolvedGalaxy:
                 run_name = run_name[0]
         cmaps = [
             "magma",
-            "RdYlBu",
+            "RdYlBu_r",
             "cmr.ember",
             "cmr.cosmic",
             "cmr.lilac",
@@ -12508,7 +12641,10 @@ class ResolvedGalaxy:
             fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
 
         else:
-            axes = np.array([ax])
+            if isinstance(ax, (np.ndarray, list)):
+                axes = ax
+            else:
+                axes = np.array([ax])
         # add gap between rows using get_layout_engine
 
         redshift = self.sed_fitting_table["bagpipes"][run_name]["input_redshift"][0]
@@ -14773,6 +14909,9 @@ class ResolvedGalaxy:
                 depths=(-2.5 * np.log10(flux_Jy_errs.value * 5) + 8.9) * u.ABmag,
                 z=z * u.dimensionless_unscaled,
             )
+            self.galfind_photometry_rest[str(row["ID"])].ext_src_corrs = {
+                filt: 1.0 for filt in filterset.band_names
+            }
         print("Finished building galfind photometry")
 
     def galfind_phot_property_map(
@@ -14781,6 +14920,7 @@ class ResolvedGalaxy:
         iters=100,
         load_in=True,
         density=False,
+        upscale=False,
         logmap=False,
         plot=True,
         ax=None,
@@ -14842,6 +14982,11 @@ class ResolvedGalaxy:
             UV_Beta_Calculator,
             UV_Dust_Attenuation_Calculator,
             mUV_Calculator,
+            Xi_Ion_Calculator,
+            Fesc_From_Beta_Calculator,
+            Optical_Line_Luminosity_Calculator,
+            SFR_Halpha_Calculator,
+            Ndot_Ion_Calculator,
         )
 
         # match property to calculator
@@ -14852,8 +14997,13 @@ class ResolvedGalaxy:
             "mUV": mUV_Calculator,
             "MUV": MUV_Calculator,
             "LUV": LUV_Calculator,
-            "SFR": SFR_UV_Calculator,
+            "SFR_UV": SFR_UV_Calculator,
             "EW": Optical_Line_EW_Calculator,
+            "xi_ion": Xi_Ion_Calculator,
+            "fesc": Fesc_From_Beta_Calculator,
+            "line_lum": Optical_Line_Luminosity_Calculator,
+            "SFR_Ha": SFR_Halpha_Calculator,
+            "Ndot_ion": Ndot_Ion_Calculator,
         }
 
         SED_fit_label = f"{binmap_type}"
@@ -14869,7 +15019,7 @@ class ResolvedGalaxy:
             "mUV": ["rest_UV_wav_lims", "ref_wav", "iters"],
             "MUV": ["rest_UV_wav_lims", "ref_wav", "iters"],
             "LUV": ["rest_UV_wav_lims", "ref_wav", "iters", "frame"],
-            "SFR": [
+            "SFR_UV": [
                 "rest_UV_wav_lims",
                 "ref_wav",
                 "dust_author_year",
@@ -14878,17 +15028,40 @@ class ResolvedGalaxy:
                 "iters",
             ],
             "EW": ["strong_line_names", "frame" "rest_optical_wavs"],
+            "fesc_from_beta_phot": [
+                "rest_UV_wav_lims",
+                "conv_author_year",
+                "iters",
+            ],
+            "EW_rest_optical": ["strong_line_names"],
+            "line_flux_rest_optical": ["strong_line_names", "iters"],
+            "line_lum": ["strong_line_names", "iters", "frame"],
+            "SFR_Ha": [
+                "rest_optical_wavs",
+                "dust_law",
+                "beta_dust_conv",
+                "UV_ref_wav",
+                "UV_wav_lims",
+            ],
+            "xi_ion": [
+                "rest_optical_wavs",
+                "dust_law",
+                "beta_dust_conv",
+                "UV_ref_wav",
+                "UV_wav_lims",
+                "top_hat_width",
+                "resolution",
+                "fesc_conv",
+            ],
+            "Ndot_ion": [
+                "rest_optical_wavs",
+                "dust_law",
+                "beta_dust_conv",
+                "UV_ref_wav",
+                "fesc_conv",
+            ],
         }
-        """
-        "fesc_from_beta_phot": [
-            "rest_UV_wav_lims",
-            "conv_author_year",
-            "iters",
-        ],
-        "EW_rest_optical": ["strong_line_names"],
-        "line_flux_rest_optical": ["strong_line_names", "iters"],
-        "xi_ion": ["iters"],
-        """
+
         if type(binmap_type) is str:
             map = getattr(self, binmap_type, getattr(self, f"{binmap_type}_map"))
 
@@ -14938,6 +15111,8 @@ class ResolvedGalaxy:
 
                         phot._update_properties_from_PDF(prop_name)
                         loaded = True
+                        ppdf = np.atleast_1d(ppdf)
+
                         if len(ppdf) != iters:
                             # print(np.shape(pdf), [iters, len(np.unique(map))])
                             print(
@@ -14968,6 +15143,7 @@ class ResolvedGalaxy:
             if (
                 property_name in phot.property_PDFs
                 and phot.property_PDFs[property_name] is not None
+                and iters > 1
             ):
                 out_kwargs = phot.property_PDFs[property_name].kwargs
                 arr = phot.property_PDFs[property_name].input_arr
@@ -14978,7 +15154,7 @@ class ResolvedGalaxy:
                 arr = list(arr)
 
                 PDFs[gal_id] = arr
-            elif property_name.startswith("beta") and iters == 1:
+            elif iters == 1:
                 PDFs[gal_id] = [value]
             else:
                 print(f"PDF not found for {property_name}")
@@ -14994,11 +15170,17 @@ class ResolvedGalaxy:
                 pass
 
         if density:
+            if property.startswith("SFR") and upscale:
+                weight_band = "1500A"
+            else:
+                weight_band = None
+
             map = self.map_to_density_map(
                 map,
                 redshift=self.redshift,
                 logmap=logmap,
                 binmap_type=binmap_type,
+                weight_by_band=weight_band,
             )
 
             unit = unit / u.kpc**2
@@ -15012,18 +15194,26 @@ class ResolvedGalaxy:
                 unit = unit.unit
             else:
                 unit = u.dimensionless_unscaled
-
             # Get keys
             PDF_keys = list(PDFs.keys())
-            PDFs_arr = [PDFs[key] for key in PDF_keys]
+            PDFs_arr = []
+            for key in PDF_keys:
+                val = PDFs[key]
+                if hasattr(val, "__len__") and len(val) == 1:
+                    val = val[0]
+
+                if isinstance(val, (u.Quantity, u.Magnitude)):
+                    unit = val.unit
+                    val = val.value
+                PDFs_arr.append(val)
 
             try:
                 all_PDFs = u.Quantity(np.array(PDFs_arr), unit=unit)
             except Exception as e:
                 print(PDFs)
+                print(unit)
                 for i in PDFs:
                     print(np.shape(i))
-                print(len(PDFs))
                 raise e
 
             # Check if all nan
@@ -15087,7 +15277,7 @@ class ResolvedGalaxy:
 
             ax_divider = make_axes_locatable(ax)
             cax = ax_divider.append_axes("top", size="5%", pad="2%")
-
+            ax.cax = cax
             i = ax.imshow(map, origin="lower", interpolation="none", cmap=cmap)
             cbar = fig.colorbar(i, cax=cax, orientation="horizontal")
             # Label top of axis
@@ -15153,6 +15343,7 @@ class ResolvedGalaxy:
             cax = make_axes_locatable(axes[pos]).append_axes("top", size="5%", pad="2%")
             map, out_kwargs = to_plot[line]
             i = axes[pos].imshow(map, origin="lower", interpolation="none", cmap="viridis")
+            axes[pos].cax = cax
             cbar = fig.colorbar(i, cax=cax, orientation="horizontal")
             line_band = out_kwargs[f"{line}_emission_band"]
             cont_band = out_kwargs[f"{line}_cont_band"]
