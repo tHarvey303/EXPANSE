@@ -1,3 +1,13 @@
+"""Automated script to create fitsmaps for multiple surveys and versions.
+
+TODO:
+- Fix RGB generation (needs to crop region used for scaling)
+- Rename files to have nicer names
+- Better catalogue information overlaid (more plots?)
+    - Add DJA overlapping catalogues
+
+"""
+
 from EXPANSE.utils import create_fitsmap, PhotometryBandInfo, FieldInfo
 import os
 import traceback
@@ -43,6 +53,11 @@ subfolders = {
     "G165": "PEARLS",
     "G191": "PEARLS",
     "CLIO": "PEARLS",
+    "MACS-1423": "CANUCS",
+    "ABELL370": "CANUCS",
+    "WHL0137": "CANUCS",
+    "MACS-1149": "CANUCS",
+    "MACS-0416": "PEARLS",
     "CEERSP": "CEERS",
     "COSMOS-Web-": "COSMOS-Web",
     "JOF": "JADES",
@@ -63,6 +78,16 @@ subfolders = {
 # Unknown - MACS0416, MACS0417, SMACS0723, GLASS, MACS-1149
 
 survey_properties = [
+    ["CEERSP1", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP2", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP3", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP4", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP5", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP6", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP7", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP8", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP9", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
+    ["CEERSP10", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
     ["NEP-1", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
     ["NEP-2", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
     ["NEP-3", "v14", ["ACS_WFC", "NIRCam"], "austind"],  # done
@@ -79,7 +104,6 @@ survey_properties = [
     ["G165", "v11", ["NIRCam"], "austind"],  # done
     ["G191", "v11", ["NIRCam"], "austind"],  # done
     ["NGDEEP2", "v11", ["NIRCam"], "austind"],  # done
-    ["CLIO", "v9", ["NIRCam"], "austind"],  # done
     ["JOF", "v11", ["ACS_WFC", "NIRCam"], "austind"],  # done
     ["CEERSP1", "v9", ["ACS_WFC", "NIRCam"], "austind"],  # done
     ["CEERSP2", "v9", ["ACS_WFC", "NIRCam"], "austind"],  # done
@@ -91,13 +115,22 @@ survey_properties = [
     ["CEERSP8", "v9", ["ACS_WFC", "NIRCam"], "austind"],  # done
     ["CEERSP9", "v9", ["ACS_WFC", "NIRCam"], "austind"],  # done
     ["CEERSP10", "v9", ["ACS_WFC", "NIRCam"], "austind"],  # done
-    # ["WHL0137", "v12", ["NIRCam"], "austind"],
-    ["MACS1423", "v14", ["NIRCam"], "goolsby"],  # done
-    ["ABELL370", "v14", ["NIRCam"], "goolsby"],  # done
-    ["GRB230207A-FULL", "v12", ["NIRCam"], "tharvey"],  # done
+]
+survey_properties = [
+    ["G165", "v11", ["NIRCam"], "austind"],  # done
+    ["G191", "v11", ["NIRCam"], "austind"],  # done
+    ["WHL0137", "v12", ["NIRCam"], "austind"],
+    # ["MACS1423", "v14", ["NIRCam"], "goolsby"],  # done
+    # ['MACS-0416', "v9", ["ACS_WFC", "NIRCam"], "austind"],
+    # ['MACS-1149', 'v11', ['ACS_WFC', 'NIRCam'], 'austind'],
+    # ["ABELL370", "v14", ["NIRCam"], "goolsby"],  # done
+    # ["GRB230207A-FULL", "v12", ["NIRCam"], "tharvey"],  # done
+    # ["GLIMPSE", "v14_caio_v2", ["ACS_WFC", "NIRCam"], "goolsby"],  # done
+    # ["SMACS-0723", "v9", ['ACS_WFC', "NIRCam"], "austind"],
+    # ["CLIO", "v9", ["NIRCam"], "austind"],  # done
 ]
 
-
+"""
 for row in ["A", "B"]:
     for i in range(17):
         field = f"COSMOS-Web-{i}{row}"
@@ -112,7 +145,7 @@ for row in ["A", "B"]:
                 "jarcidia",
             ]
         )
-
+"""
 forced_phot_band = ["F277W", "F356W", "F444W"]
 fitsmap_dir = "/nvme/scratch/work/tharvey/fitsmap/"
 possible_bands = {
@@ -146,7 +179,7 @@ min_flux_pc_err = 10.0
 filter_field = f"Austin+25_EAZY_fsps_larson_zfree_{aper_diam}as"
 # filter_field = f"EPOCHS_NIRCam_EAZY_fsps_larson_zfree_{aper_diam}as"
 filter_field = None
-overwrite = False
+overwrite = True
 
 morgan_version_to_dir = {
     "v8b": "mosaic_1084_wispfix",
@@ -161,8 +194,12 @@ morgan_version_to_dir = {
     "v14": "mosaic_1364_wispnathan",
     "v12a": "v12",
     "COSMOS-3D_0.32as": "COSMOS-3D_0.32as",
+    "v14_caio_v2": "v14_caio_v2",
 }
 
+override_dir_version = {
+    "WHL0137": "",
+}
 pc_dirs = {"GRB230207A-FULL": "nvme"}
 
 
@@ -198,6 +235,9 @@ def main(
     galaxy_info = []
 
     dir_version = morgan_version_to_dir.get(version)
+
+    if survey in override_dir_version:
+        dir_version = override_dir_version.get(survey)
 
     for instrument in instrument_names:
         if instrument not in possible_bands:
@@ -249,7 +289,7 @@ def main(
     # add detection image
     # /raid/scratch/work/austind/GALFIND_WORK/Stacked_Images/v13/NIRCam/JADES-DR3-GS-West/rms_err/JADES-DR3-GS-West_F277W+F356W+F444W_v13_stack.fits
 
-    detection_image_path = f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/Stacked_Images/{version}/NIRCam/{survey}/rms_err/{survey}_{forced_phot_path}_{version}_stack.fits"
+    detection_image_path = f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/Stacked_Images/{version}/NIRCam/{survey}//{survey}_{forced_phot_path}_{version}_stack.fits"
     if not os.path.exists(detection_image_path):
         raise FileNotFoundError(
             f"Detection image {detection_image_path} does not exist. Please check the path."

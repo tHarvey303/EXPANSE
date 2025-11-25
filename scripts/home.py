@@ -1,14 +1,14 @@
 import os
 import re
 import signal
+import json
 import subprocess
 import atexit
-import json
 from flask import Flask, jsonify, render_template_string
 
 # --- Configuration ---
-PROJECTS_DIRECTORY = "/nvme/scratch/work/tharvey/fitsmap/"
-STARTING_PORT = 4021  # Starting port for serving projects
+PROJECTS_DIRECTORY = "/raid/scratch/work/tharvey/fitsmap/"
+STARTING_PORT = 4321  # Starting port for serving projects
 
 app = Flask(__name__)
 processes = {}
@@ -33,7 +33,10 @@ def scan_projects_recursive(base_path: str, current_path: str) -> list[dict]:
     """
     Recursively scans a directory to build a nested structure of folders and projects.
     """
-    items = []
+    folders = []
+    projects = []
+
+    # Iterate through a sorted list of directory contents
     for item_name in sorted(os.listdir(current_path)):
         full_path = os.path.join(current_path, item_name)
 
@@ -50,32 +53,52 @@ def scan_projects_recursive(base_path: str, current_path: str) -> list[dict]:
         if is_project:
             # It's a project, add it to the list
             relative_path = os.path.relpath(full_path, base_path)
+            has_info = os.path.exists(os.path.join(full_path, "info.json"))
+
             match = re.match(r"^(.*?)_v(\d+)$", item_name)
             if match:
                 base_name, version = match.groups()
-                items.append(
+                projects.append(
                     {
                         "type": "project",
                         "full_name": relative_path,
                         "base_name": base_name.replace("_", " "),
                         "version": f"v{version}",
+                        "has_info": has_info,
                     }
                 )
             else:
-                items.append(
+                projects.append(
                     {
                         "type": "project",
                         "full_name": relative_path,
                         "base_name": item_name.replace("_", " "),
                         "version": None,
+                        "has_info": has_info,
                     }
                 )
         else:
-            # It's a folder, scan its children recursively
+            # This is a sub-directory, scan its children recursively
             children = scan_projects_recursive(base_path, full_path)
             if children:  # Only add folders that contain projects
-                items.append({"type": "folder", "name": item_name, "children": children})
-    return items
+                folders.append({"type": "folder", "name": item_name, "children": children})
+    return folders + projects
+
+
+@app.route("/info/<path:project_name>")
+def get_project_info(project_name: str):
+    """Returns the content of the info.json file for a project."""
+    info_path = os.path.join(PROJECTS_DIRECTORY, project_name, "info.json")
+    print(info_path)
+    if os.path.exists(info_path):
+        with open(info_path, "r") as f:
+            try:
+                info_data = json.load(f)
+
+                return jsonify(info_data)
+            except json.JSONDecodeError:
+                return jsonify({"error": "Invalid JSON format"}), 500
+    return jsonify({"error": "info.json not found"}), 404
 
 
 @app.route("/")
@@ -96,7 +119,7 @@ def launch_project(project_name: str):
         port = processes[project_name]["port"]
         return jsonify({"url": f"http://127.0.0.1:{port}", "restarted": False})
 
-    port = STARTING_PORT + len(processes)
+    port = STARTING_PORT + 1 + len(processes)
     # Project name is now a relative path, join it with the base directory
     project_path = os.path.join(PROJECTS_DIRECTORY, project_name)
 
@@ -110,23 +133,6 @@ def launch_project(project_name: str):
     )
     processes[project_name] = {"process": process, "port": port}
     return jsonify({"url": f"http://127.0.0.1:{port}", "restarted": True})
-
-
-@app.route("/info/<path:project_name>")
-def get_project_info(project_name: str):
-    """Returns the content of the info.json file for a project."""
-    info_path = os.path.join(PROJECTS_DIRECTORY, project_name, "info.json")
-    print(info_path)
-    if os.path.exists(info_path):
-        with open(info_path, "r") as f:
-            try:
-                info_data = json.load(f)
-                print(info_data)
-
-                return jsonify(info_data)
-            except json.JSONDecodeError:
-                return jsonify({"error": "Invalid JSON format"}), 500
-    return jsonify({"error": "info.json not found"}), 404
 
 
 @app.route("/stop/<path:project_name>")
@@ -162,8 +168,8 @@ HOME_PAGE_TEMPLATE = """
         summary { cursor: pointer; padding: 10px 15px; border-radius: 5px; font-weight: 600; list-style: '📂 '; }
         details[open] > summary { list-style: '📁 '; }
         summary:hover { background-color: #495057; }
-        #info-box { position: absolute; bottom: 20px; right: 20px; width: calc(var(--sidebar-width) - 40px); background-color: #212529; border: 1px solid #495057; border-radius: 8px; padding: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: none; z-index: 1000; }
-        #info-box h3 { margin-top: 0; margin-bottom: 10px; color: #00aaff; }
+        #info-box { position: absolute; bottom: 20px; right: 20px; width: calc(var(--sidebar-width) - 40px); background-color: #212529; border: 1px solid #495057; border-radius: 8px; padding: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: none; z-index: 1000; transition: opacity 0.2s; pointer-events: none; }
+        #info-box h3 { margin-top: 0; margin-bottom: 10px; color: #00aaff; font-size: 1.1em; }
         #info-box p { margin: 0 0 5px; font-size: 0.9em; }
         #info-box strong { color: #adb5bd; }
         #content { flex-grow: 1; display: flex; flex-direction: column; }
@@ -178,8 +184,8 @@ HOME_PAGE_TEMPLATE = """
     </style>
 </head>
 <body>
-    <div id="sidebar">
-        <h1>FitsMap Projects</h1>
+    <div id="sidebar" onmouseleave="hideInfo()">
+        <h1>EPOCHS v2</h1>
         <ul id="project-list">
             {% macro render_items(items) %}
                 {% for item in items %}
@@ -293,17 +299,22 @@ HOME_PAGE_TEMPLATE = """
             if (data.error) {
                 infoBox.innerHTML = `<p>Error: ${data.error}</p>`;
             } else {
-                let content = `<h3>${projectName.split('/').pop()} Info</h3>`;
+                let content = `<h3>${projectName.split('/').pop().replace(/_/g, ' ')}</h3>`;
                 for (const [key, value] of Object.entries(data)) {
                     content += `<p><strong>${key}:</strong> ${value}</p>`;
                 }
                 infoBox.innerHTML = content;
             }
             infoBox.style.display = 'block';
+            infoBox.style.opacity = 1;
         }
 
         function hideInfo() {
-            infoBox.style.display = 'none';
+            infoBox.style.opacity = 0;
+            // Use a short delay to allow for smooth transition before hiding
+            setTimeout(() => {
+                infoBox.style.display = 'none';
+            }, 200);
         }
 
         function toggleFullScreen() {
@@ -316,6 +327,7 @@ HOME_PAGE_TEMPLATE = """
 </body>
 </html>
 """
+
 
 if __name__ == "__main__":
     # app.run(debug=True, port=STARTING_PORT, use_reloader=False)

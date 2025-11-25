@@ -716,8 +716,10 @@ class GalaxyTab(param.Parameterized):
     )
     @check_dependencies()
     def plot_bagpipes_results(self, parameters=["stellar_mass", "sfr"], max_on_row=3):
+        print("Plotting Bagpipes Results")
         res = self.update_pixel_map_from_run_name(self.which_run_resolved)
         if not res:
+            print("No resolved run found, cannot plot Bagpipes results.")
             return None
 
         if self.which_sed_fitter == "bagpipes":
@@ -1135,11 +1137,13 @@ class GalaxyTab(param.Parameterized):
         try:
             if self.other_plot_select == "Galaxy Region":
                 available_regions = list(self.resolved_galaxy.gal_region.keys())
-                if 'detection' not in available_regions:
+                if "detection" not in available_regions:
                     region = available_regions[0]
                 else:
-                    region = 'detection'
-                fig = self.resolved_galaxy.plot_gal_region(facecolor=self.facecolor, bin_type=region)
+                    region = "detection"
+                fig = self.resolved_galaxy.plot_gal_region(
+                    facecolor=self.facecolor, bin_type=region
+                )
             elif self.other_plot_select == "Fluxes":
                 fig = self.resolved_galaxy.pixedfit_plot_map_fluxes()
             elif self.other_plot_select == "Segmentation Map":
@@ -1969,6 +1973,9 @@ class GalaxyTab(param.Parameterized):
 
     @notify_on_error
     def update_pixel_map_from_run_name(self, event):
+        if hasattr(self.resolved_galaxy, "maps"):
+            self.which_map_widget.options = self.resolved_galaxy.maps
+
         if self.which_map in ["Nothing selected.", None]:
             return False
         if self.which_run_resolved is None:
@@ -1986,8 +1993,6 @@ class GalaxyTab(param.Parameterized):
             pn.state.notifications.info(
                 f"Pixel map updated to {bin_name} for {self.which_sed_fitter} run {self.which_run_resolved}"
             )
-
-        self.which_map_widget.options = self.resolved_galaxy.maps
         if self.which_map not in self.which_map_widget.options:
             self.which_map = self.which_map_widget.options[0]
             # Send info notification
@@ -2295,13 +2300,13 @@ class GalaxyTab(param.Parameterized):
         # Make ints
         opts = opts[~np.isnan(opts)].astype(int)
         # Update options for the multi-choice widget
-        if bin_type == "pixedfit":
-            new_opts = ["RESOLVED"] + list(opts)
-            update = any([i not in self.multi_choice_bins_widget.options for i in new_opts])
-            if update:
-                print("Updating options")
-                print(new_opts, self.multi_choice_bins_widget.options)
-                self.multi_choice_bins_widget.options = new_opts
+
+        new_opts = ["RESOLVED"] + list(opts)
+        update = any([i not in self.multi_choice_bins_widget.options for i in new_opts])
+        if update:
+            print("Updating options")
+            print(new_opts, self.multi_choice_bins_widget.options)
+            self.multi_choice_bins_widget.options = new_opts
 
         if show_kron:
             center = self.resolved_galaxy.cutout_size / 2

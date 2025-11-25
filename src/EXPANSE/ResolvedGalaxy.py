@@ -7,6 +7,7 @@ Typically not initialized directly, but rather through class methods like init_f
 Author: Tom Harvey (thomas.harvey-3@manchester.ac.uk)
 
 """
+
 import ast
 import contextlib
 import copy
@@ -1720,7 +1721,6 @@ class ResolvedGalaxy:
 
         for band in field_info.band_names:
             im_path = field_info.im_paths[band]
-            print(im_path)
             im_data = fits.getdata(im_path, field_info.im_exts[band], ignore_missing_simple=True)
             im_header = fits.getheader(
                 im_path, field_info.im_exts[band], ignore_missing_simple=True
@@ -3442,7 +3442,7 @@ class ResolvedGalaxy:
         region_area_pix,
         bands="all",
         cutout_size=1000,
-        overwrite=False,
+        overwrite=True,
         plot=False,
         plot_debug=False,
         scatter_size=0.1,
@@ -3487,7 +3487,8 @@ class ResolvedGalaxy:
         min_correction : float
             Minimum correction factor to use for the calculation
         interpolation_kind : str
-            Kind of interpolation to use for the correction factor (in radius). Options are 'linear', 'nearest', 'quadratic', 'cubic'
+            Kind of interpolation to use for the correction factor (in radius).
+            Options are 'linear', 'nearest', 'quadratic', 'cubic'
         min_number_of_values : int
             Minimum number of values to use for the calculation
         sigma_clip_kwargs : dict
@@ -3518,10 +3519,11 @@ class ResolvedGalaxy:
                 and np.all(radii_to_check == self.rms_correction_factors[band][:, 0])
                 and not overwrite
             ):
+                print(f"Skipping {band}")
                 continue
 
             image_path = self.im_paths[band]
-            hdu = fits.open(image_path)
+            hdu = fits.open(image_path, ignore_missing_simple=True)
             ra, dec = self.sky_coord.ra.deg, self.sky_coord.dec.deg
             wcs = WCS(hdu[self.im_exts[band]].header)
             x_cent, y_cent = wcs.all_world2pix(ra, dec, 1)
@@ -3558,7 +3560,7 @@ class ResolvedGalaxy:
             hdu.close()
             # Open seg
             seg_path = self.seg_paths[band]
-            seg_hdu = fits.open(seg_path)
+            seg_hdu = fits.open(seg_path, ignore_missing_simple=True)
             if cutout_size == "full":
                 seg_data = seg_hdu[0].data
             else:
@@ -3569,7 +3571,7 @@ class ResolvedGalaxy:
             seg_hdu.close()
 
             rms = self.rms_err_paths[band]
-            rms_hdu = fits.open(rms)
+            rms_hdu = fits.open(rms, ignore_missing_simple=True)
             if cutout_size == "full":
                 rms_data = rms_hdu[self.rms_err_exts[band]].data
             else:
@@ -3651,6 +3653,8 @@ class ResolvedGalaxy:
                 err_1sigma = depth.to(u.uJy)
                 err_1sigma = err_1sigma.value
 
+                print("err", err_1sigma)
+
                 depths_local[radii] = err_1sigma
 
                 # now calculate error inferred from the RMS image.
@@ -3663,6 +3667,9 @@ class ResolvedGalaxy:
                 apertures = CircularAperture(xy, r=radii)
                 tab = aperture_photometry(data, apertures, error=rms_data)
                 errors = tab["aperture_sum_err"]
+                # Check for NANs
+                num_nans = np.sum(np.isnan(errors))
+                print(f"Number of NANs in errors: {num_nans} out of {len(errors)}")
 
                 if sig_clip:
                     errors = sigma_clip(errors, **sigma_clip_kwargs)
@@ -3734,14 +3741,16 @@ class ResolvedGalaxy:
         equivalent_radii_from_area = np.sqrt(region_area_pix / np.pi)
 
         area_corrections = {}
-        for band in bands:
+        for band in tqdm(bands):
             sigma = self.rms_correction_factors[band][:, 1]
             radii_to_check = self.rms_correction_factors[band][:, 0]
             # Mask NANs
+            print(radii_to_check)
             mask = np.isfinite(sigma)
+            print(sigma)
             sigma = sigma[mask]
+            print(sigma)
             radii_to_check = radii_to_check[mask]
-
             interp = interp1d(
                 radii_to_check,
                 sigma,
@@ -3876,7 +3885,8 @@ class ResolvedGalaxy:
 
         str_dt = h5.string_dtype(encoding="utf-8")
         # Convert most dictionaries to strings
-        # 'meta' - galaxy ID, survey, sky_coord,    version, instruments, excl_bands, cutout_size, zps, pixel_scales, phot_pix_unit
+        # 'meta' - galaxy ID, survey, sky_coord,
+        # version, instruments, excl_bands, cutout_size, zps, pixel_scales, phot_pix_unit
         # 'paths' - im_paths, seg_paths, rms_err_paths
         # 'raw_data' - phot_imgs, rms_err_imgs, seg_imgs
         # 'headers' - phot_img_headers
@@ -5018,7 +5028,8 @@ class ResolvedGalaxy:
                 clip = int((og_fov - fov) / 2 / nircam.pixelscale)
 
                 print(
-                    f"Clipping {clip} pixels from each side. Original shape: {np.shape(psf_data)}, New shape: {np.shape(psf_data[clip:-clip, clip:-clip])}"
+                    f"Clipping {clip} pixels from each side. Original shape:"
+                    f"{np.shape(psf_data)}, New shape: {np.shape(psf_data[clip:-clip, clip:-clip])}"
                 )
                 psf_data = psf_data[clip:-clip, clip:-clip]
 
@@ -5302,7 +5313,7 @@ class ResolvedGalaxy:
         if ax is None:
             ax = fig.add_subplot(111)
 
-        ax.imshow(rgb, origin="lower")
+        ax.imshow(rgb, origin="lower", interpolation="antialiased")
 
         # disable x and y ticks
         ax.set_xticks([])
@@ -5372,7 +5383,8 @@ class ResolvedGalaxy:
                 ],
             )
 
-        # ra, dec, wcs, axis, scale=0.10, x_ax ='ra', y_ax='dex',ang_text=False, arrow_width=200, arrow_color="black", text_color="black", fontsize="large", return_ang=False):
+        # ra, dec, wcs, axis, scale=0.10, x_ax ='ra', y_ax='dex',
+        # ang_text=False, arrow_width=200, arrow_color="black", text_color="black", fontsize="large", return_ang=False):
 
         if add_compass:
             wcs = WCS(self.phot_img_headers["F444W"])
@@ -5748,7 +5760,17 @@ class ResolvedGalaxy:
             snr_map = (
                 self.psf_matched_data[psf_type][band] / self.psf_matched_rms_err[psf_type][band]
             )
-            mappable = axes[i].imshow(snr_map, origin="lower", interpolation="none")
+            snr_map = np.nan_to_num(snr_map, nan=1e-10, neginf=1e-10)
+            mappable = axes[i].imshow(
+                snr_map,
+                origin="lower",
+                interpolation="none",
+                vmin=0.01,
+                vmax=np.nanpercentile(snr_map, 99.5),
+                norm="log",
+            )
+            # set invalid color
+
             cax = make_axes_locatable(axes[i]).append_axes("right", size="5%", pad=0.05)
             fig.colorbar(mappable, ax=axes[i], cax=cax)
             axes[i].set_title(f"{band} SNR Map")
@@ -6387,8 +6409,14 @@ class ResolvedGalaxy:
             print(f"Detection data already loaded for {self.galaxy_id}.")
             return
 
-        im_path = f"{galfind_work_dir}/Stacked_Images/{self.galfind_version}/{detection_instrument}/{self.survey}/{self.survey}_{self.detection_band}_{self.galfind_version}_stack_new.fits"
-        seg_path = f"{galfind_work_dir}/SExtractor/{detection_instrument}/{self.galfind_version}/{self.survey}/{self.survey}_{self.detection_band}_{self.detection_band}_sel_cat_{self.galfind_version}_seg.fits"
+        im_path = (
+            f"{galfind_work_dir}/Stacked_Images/{self.galfind_version}/{detection_instrument}"
+            + f"/{self.survey}/{self.survey}_{self.detection_band}_{self.galfind_version}_stack_new.fits"
+        )
+        seg_path = (
+            f"{galfind_work_dir}/SExtractor/{detection_instrument}/{self.galfind_version}"
+            + f"/{self.survey}/{self.survey}_{self.detection_band}_{self.detection_band}_sel_cat_{self.galfind_version}_seg.fits"
+        )
         hdu_data = fits.open(im_path)
         hdu_seg = fits.open(seg_path)
         det_data = {}
@@ -7078,9 +7106,9 @@ class ResolvedGalaxy:
                 else:
                     factor = 1
 
-                flux = np.sum(self.psf_matched_data[psf_type][band][mask])
+                flux = np.nansum(self.psf_matched_data[psf_type][band][mask])
                 flux_err = (
-                    np.sqrt(np.sum(self.psf_matched_rms_err[psf_type][band][mask] ** 2)) * factor
+                    np.sqrt(np.nansum(self.psf_matched_rms_err[psf_type][band][mask] ** 2)) * factor
                 )
                 if type(flux) in [u.Quantity, u.Magnitude, Masked(u.Quantity)]:
                     assert flux.unit == self.phot_pix_unit[band]
@@ -7102,11 +7130,12 @@ class ResolvedGalaxy:
         print(table)
         mask = binmap != 0
         assert np.isclose(
-            np.sum(self.psf_matched_data[psf_type][band][mask]),
-            np.sum(table[band]).value,
+            np.nansum(self.psf_matched_data[psf_type][band][mask]),
+            np.nansum(table[band]).value,
             atol=0,
             rtol=0.01,
-        ), f"Fluxes not summed correctly, {np.sum(self.psf_matched_data[psf_type][band][mask])} != {np.sum(table[band])}"
+        ), f"Fluxes not summed correctly, {np.nansum(self.psf_matched_data[psf_type][band][mask])}"
+        f"!= {np.nansum(table[band])}"
 
         assert len(table) == int(np.max(binmap)), "Table length not correct"
 
@@ -7123,16 +7152,16 @@ class ResolvedGalaxy:
         row = ["TOTAL_BIN", "TOTAL_BIN"]
         for pos, band in enumerate(self.bands):
             mask = binmap != 0
-            flux = np.sum(self.psf_matched_data[psf_type][band][mask])
+            flux = np.nansum(self.psf_matched_data[psf_type][band][mask])
 
             if correct_errors_for_correlated_noise:
                 factor = self.derive_rms_correction_factor(
-                    np.sum(mask), bands=band, overwrite=overwrite_corr
+                    np.nansum(mask), bands=band, overwrite=overwrite_corr
                 )
             else:
                 factor = 1
 
-            flux_err = np.sqrt(np.sum(self.psf_matched_rms_err[psf_type][band][mask] ** 2))
+            flux_err = np.sqrt(np.nansum(self.psf_matched_rms_err[psf_type][band][mask] ** 2))
             flux_err *= factor
 
             if type(flux) in [u.Quantity, u.Magnitude, Masked(u.Quantity)]:
@@ -10361,7 +10390,9 @@ class ResolvedGalaxy:
             append=True,
         )
 
-    def convert_table_to_map(self, table, id_col, value_col, map, remove_log10=False):
+    def convert_table_to_map(
+        self, table, id_col, value_col, map, remove_log10=False, mask_bins=None
+    ):
         """Convert a table of values to a 2D map based on bin IDs.
 
         Parameters
@@ -10376,6 +10407,8 @@ class ResolvedGalaxy:
             2D map containing bin IDs
         remove_log10 : bool
             Whether to convert values from log10
+        mask_bins : list or ndarray, optional
+            List of bin IDs to mask (set to NaN)
 
         Returns
         -------
@@ -10424,6 +10457,10 @@ class ResolvedGalaxy:
             mask = map == gal_id
             if not np.any(mask):
                 continue
+
+            if mask_bins is not None:
+                if gal_id in mask_bins:
+                    continue
 
             # Assign value
             return_map[mask] = value
@@ -12550,6 +12587,7 @@ class ResolvedGalaxy:
         return_map=False,
         rgb_bands={"red": ["F444W"], "green": ["F356W"], "blue": ["F200W"]},
         rgb_combine_func="median",
+        mask_bins=None,
         override_param_names={
             "sfr": "SFR",
             "sfr_density": r"SFR\ density",
@@ -12581,6 +12619,11 @@ class ResolvedGalaxy:
             "cmr.sapphire",
             "cmr.dusk",
             "cmr.emerald",
+            "cmr.guppy",
+            "plasma",
+            "cmr.forest",
+            "cmr.sandstone",
+            "viridis",
         ]
         if (
             not hasattr(self, "sed_fitting_table")
@@ -12624,7 +12667,7 @@ class ResolvedGalaxy:
                 sharey=match_axis_size,
                 dpi=200,
             )
-            fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.1)
+            fig.get_layout_engine().set(h_pad=4 / 72, hspace=0.3)
 
             axes = axes.flatten()
             # Remove empty axes
@@ -12700,6 +12743,7 @@ class ResolvedGalaxy:
                     "#ID",
                     param_name,
                     binmap,
+                    mask_bins=mask_bins,
                     remove_log10=param.startswith("stellar_mass"),
                 )
                 log = ""
@@ -17021,6 +17065,10 @@ class MockResolvedGalaxy(ResolvedGalaxy):
             "cmr.sapphire",
             "cmr.dusk",
             "cmr.emerald",
+            "cmr.forest",
+            "cmr.ocean",
+            "cmr.ice",
+            "cmr.royal",
         ]
 
         fig, axes = plt.subplots(

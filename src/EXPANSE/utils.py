@@ -2433,10 +2433,20 @@ def create_fitsmap(
     os.makedirs(out_path, exist_ok=True)
 
     bands = field_info.band_names
-    paths = [field_info.im_paths[band] for band in bands]
+    # paths = [field_info.im_paths[band] for band in bands]
+    # Symlink images to local folder with useful names eg. band.fits
+    paths = []
+    for band in bands:
+        im_path = field_info.im_paths[band]
+        local_path = out_path + f"{band.upper()}.fits"
+        try:
+            os.symlink(im_path, local_path)
+        except FileExistsError:
+            pass
+        paths.append(local_path)
 
     # Catalogue path
-    if catalogue_path is not None:
+    if catalogue_path is not None and os.path.isfile(catalogue_path):
         nhdu = len(fits.open(catalogue_path))
         table = Table.read(catalogue_path)
 
@@ -2584,12 +2594,19 @@ def create_fitsmap(
     # Add detection image
     if field_info.detection_band != None:
         detection_phot = field_info.detection_band
-        paths.append(detection_phot.im_path)
+        # Symlink detection image
+        local_path = out_path + f"{detection_phot.band_name.upper().replace('+', '_')}.fits"
+        try:
+            os.symlink(detection_phot.image_path, local_path)
+        except FileExistsError:
+            pass
+
+        paths.append(local_path)
 
     # Make RGB images
 
     # Write trilogy.in
-    if not os.path.exists(f"{out_path}/{survey}_RGB.png"):
+    if not os.path.exists(f"{out_path}/RGB.png"):
         print("Creating Trilogy RGB...")
         red_bands = rgb_bands["red"]
         green_bands = rgb_bands["green"]
@@ -2609,23 +2626,26 @@ def create_fitsmap(
                 if band in bands:
                     f.write(f"{field_info.im_paths[band]}[{field_info.im_exts[band]}]\n")
             f.write(f"""\nindir  /
-    outname  {survey}_RGB
+    outname  RGB
     outdir  {out_path}
-    samplesize 2000
+    samplesize 700
     stampsize  2000
     showstamps  0
-    satpercent  0.001
-    noiselum    0.10
-    colorsatfac  1
+    satpercent  0.002
+    noiselum    0.07
+    colorsatfac  1.5
     correctbias  1
     deletetests  1
-    testfirst   0
-    sampledx  3000
-    sampledy  3000""")
+    testfirst   1
+    sampledx   1500
+    sampledy   1500
+
+    """)
         # Run trilogy
         # subprocess.run(['python', '/nvme/scratch/software/trilogy/trilogy3.py', out_path + 'trilogy.in'])
         Trilogy(out_path + "trilogy.in", images=None).run()
-    paths.append(out_path + f"{survey}_RGB.png")
+
+    paths.insert(0, out_path + f"RGB.png")
 
     for band in tqdm(bands, desc="Creating seg maps..."):
         seg_path = field_info.seg_paths[band]
@@ -2646,8 +2666,8 @@ def create_fitsmap(
             image = cmap(norm(img))
 
             # save the image
-            plt.imsave(f'{out_path}/{seg_name.replace(".fits", ".png")}', image)
-        paths.append(f'{out_path}/{seg_name.replace(".fits", ".png")}')
+            plt.imsave(f"{out_path}/{band}_segmap.png", image)
+        paths.append(f"{out_path}/{band}_segmap.png")
 
         # Need a cmap which changes color for every 1 increase -
 
