@@ -9950,6 +9950,128 @@ class ResolvedGalaxy:
 
         # TODO - Write a postprocessing function to read in the results and save them to the sed_fitting_table
 
+    def run_forcepho(
+        self,
+        positions=None,
+        bands=None,
+        psf_type="star_stack",
+        psf_matched=True,
+        output_dir=None,
+        save_inputs=True,
+        run_fit=False,
+        fit_mode='optimize',
+        optimize_kwargs=None,
+        sampling_kwargs=None,
+    ):
+        """
+        Prepare forcepho inputs and optionally run fitting for this galaxy.
+        
+        This method generates the required input files for running forcepho
+        (https://forcepho.readthedocs.io/) on the galaxy cutout, and can
+        optionally run the forcepho optimization and/or sampling.
+        
+        Parameters
+        ----------
+        positions : list of tuples, optional
+            List of (ra, dec) positions in degrees for sources to fit.
+            If None, uses the galaxy center position.
+        bands : list, optional
+            List of band names to include. If None, uses all available bands.
+        psf_type : str, optional
+            Type of PSF to use ('star_stack' or 'webbpsf'). Default is 'star_stack'.
+        psf_matched : bool, optional
+            Whether to use PSF-matched data. Default is True.
+        output_dir : str, optional
+            Directory to save output files. If None, creates directory based on galaxy_id.
+        save_inputs : bool, optional
+            Whether to save input FITS files. Default is True.
+        run_fit : bool, optional
+            Whether to run forcepho fitting after preparing inputs. Default is False.
+        fit_mode : str, optional
+            Fitting mode if run_fit=True: 'optimize', 'sample', or 'both'. Default is 'optimize'.
+        optimize_kwargs : dict, optional
+            Additional arguments for forcepho optimization (if run_fit=True)
+        sampling_kwargs : dict, optional
+            Additional arguments for forcepho sampling (if run_fit=True)
+            
+        Returns
+        -------
+        config : dict
+            Configuration dictionary containing all forcepho inputs including:
+            - pixel_data: Image cutouts for each band
+            - error_data: Uncertainty maps for each band
+            - psf_data: PSF models for each band
+            - source_catalog: Source positions and properties
+            - wcs: WCS information for coordinate transformations
+            - properties: Photometric properties (zero points, pixel scales)
+        file_paths : dict or None
+            Dictionary with paths to saved FITS files if save_inputs=True, else None
+        fit_results : dict or None
+            Fitting results if run_fit=True, else None
+            
+        Examples
+        --------
+        >>> # Prepare forcepho inputs only
+        >>> config, file_paths, _ = galaxy.run_forcepho()
+        >>> 
+        >>> # Prepare inputs and run optimization
+        >>> config, file_paths, results = galaxy.run_forcepho(run_fit=True, fit_mode='optimize')
+        >>> 
+        >>> # Run both optimization and sampling
+        >>> config, paths, results = galaxy.run_forcepho(
+        ...     run_fit=True, 
+        ...     fit_mode='both',
+        ...     positions=[(150.1, 2.3)],
+        ...     optimize_kwargs={'gtol': 1e-6},
+        ...     sampling_kwargs={'n_draws': 512}
+        ... )
+        """
+        from EXPANSE.forcepho import (
+            create_forcepho_config,
+            save_forcepho_inputs,
+            validate_forcepho_inputs,
+            run_forcepho_fit,
+        )
+        
+        # Create configuration
+        config = create_forcepho_config(
+            self,
+            bands=bands,
+            psf_type=psf_type,
+            positions=positions,
+            output_dir=output_dir,
+        )
+        
+        # Validate inputs
+        valid, missing = validate_forcepho_inputs(config)
+        if not valid:
+            print(f"Warning: Missing forcepho inputs: {missing}")
+            print("Some forcepho functionality may not work correctly.")
+        
+        # Save to FITS files if requested
+        file_paths = None
+        if save_inputs:
+            file_paths = save_forcepho_inputs(config)
+            print(f"Forcepho input files saved to: {config['output_dir']}")
+        
+        # Run fitting if requested
+        fit_results = None
+        if run_fit:
+            print(f"Running forcepho fitting in mode: {fit_mode}")
+            fit_results = run_forcepho_fit(
+                config,
+                positions=positions,
+                mode=fit_mode,
+                optimize_kwargs=optimize_kwargs,
+                sampling_kwargs=sampling_kwargs,
+            )
+            
+            if not fit_results.get('optimization', {}).get('forcepho_available', True):
+                print("Note: forcepho package not installed. Returning mock results.")
+                print("Install forcepho to run actual fitting: pip install forcepho")
+        
+        return config, file_paths, fit_results
+
     def run_bagpipes(
         self,
         bagpipes_config,
