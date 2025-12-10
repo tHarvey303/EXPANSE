@@ -117,9 +117,11 @@ survey_properties = [
     ["CEERSP10", "v9", ["ACS_WFC", "NIRCam"], "austind"],  # done
 ]
 survey_properties = [
-    ["G165", "v11", ["NIRCam"], "austind"],  # done
-    ["G191", "v11", ["NIRCam"], "austind"],  # done
-    ["WHL0137", "v12", ["NIRCam"], "austind"],
+    ["PRIMER-COSMOS", "v12", ["ACS_WFC", "NIRCam"], "austind"],
+    ["PRIMER-UDS", "v12", ["ACS_WFC", "NIRCam"], "austind"],
+    # ["G165", "v11", ["NIRCam"], "austind"],  # done
+    # ["G191", "v11", ["NIRCam"], "austind"],  # done
+    # ["WHL0137", "v12", ["NIRCam"], "austind"], #done
     # ["MACS1423", "v14", ["NIRCam"], "goolsby"],  # done
     # ['MACS-0416', "v9", ["ACS_WFC", "NIRCam"], "austind"],
     # ['MACS-1149', 'v11', ['ACS_WFC', 'NIRCam'], 'austind'],
@@ -198,7 +200,7 @@ morgan_version_to_dir = {
 }
 
 override_dir_version = {
-    "WHL0137": "",
+    "WHL0137": "v12",
 }
 pc_dirs = {"GRB230207A-FULL": "nvme"}
 
@@ -252,8 +254,8 @@ def main(
                         band_name=band,
                         survey=survey,
                         image_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
-                        wht_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/wht/",
-                        err_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
+                        # wht_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/wht/",
+                        # err_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
                         seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/ACS_WFC/{version}/{survey}/MAP_RMS/segmentation/",
                         psf_path="/nvme/scratch/work/tharvey/PSFs/JOF/",  # optional
                         psf_type="star_stack",  # optional
@@ -265,8 +267,8 @@ def main(
                     band_info = PhotometryBandInfo(
                         band_name=band,
                         survey=survey,
-                        wht_path="im",
-                        err_path="im",
+                        # wht_path="im",
+                        # err_path="im",
                         image_path=f"/raid/scratch/data/jwst/{survey}/NIRCam/{dir_version}/30mas/",
                         seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/NIRCam/{version}/{survey}/MAP_RMS/segmentation/",
                         psf_path="/nvme/scratch/work/tharvey/PSFs/JOF/",  # optional
@@ -274,6 +276,7 @@ def main(
                         if band != "F444W"
                         else None,
                         psf_type="star_stack",  # optional
+                        im_hdu_ext=1,  # if 'PRIMER' not in survey else 0,
                     )
                 else:
                     raise Exception(
@@ -291,9 +294,9 @@ def main(
 
     detection_image_path = f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/Stacked_Images/{version}/NIRCam/{survey}//{survey}_{forced_phot_path}_{version}_stack.fits"
     if not os.path.exists(detection_image_path):
-        raise FileNotFoundError(
-            f"Detection image {detection_image_path} does not exist. Please check the path."
-        )
+        detection_image_path = f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/Stacked_Images/{version}/NIRCam/{survey}/rms_err/{survey}_{forced_phot_path}_{version}_stack.fits"
+        if not os.path.exists(detection_image_path):
+            raise FileNotFoundError(f"Detection image not found at {detection_image_path}")
 
     detection_band_info = PhotometryBandInfo(
         band_name=forced_phot_path,

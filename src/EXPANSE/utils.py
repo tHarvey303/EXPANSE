@@ -1040,6 +1040,7 @@ class PhotometryBandInfo:
                     "i2d.fits",
                     "i2dnobgnobg.fits",
                     "i2dnobgxy.fits",
+                    "scicutout.fits",
                 ]
                 # See if any one of the files has a common ending
                 good_endings = []

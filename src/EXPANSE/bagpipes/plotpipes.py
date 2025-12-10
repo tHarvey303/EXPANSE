@@ -35,8 +35,6 @@ from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from tqdm import tqdm
 
-sys.path.insert(0, "/nvme/scratch/work/tharvey/bagpipes/")
-import run_bagpipes
 
 # Bye warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
