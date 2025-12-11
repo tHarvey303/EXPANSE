@@ -1912,7 +1912,6 @@ class ResolvedGalaxy:
             psf_matched_data = {psf_type: {}}
             psf_matched_rms_err = {psf_type: {}}
             for band in field_info.band_names:
-                print(field_info[band].psf_matched)
                 if field_info[band].psf_matched:
                     psf_matched_data[psf_type][band] = copy.deepcopy(phot_imgs[band])
                     psf_matched_rms_err[psf_type][band] = copy.deepcopy(rms_err_imgs[band])
