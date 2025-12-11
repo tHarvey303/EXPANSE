@@ -1477,8 +1477,10 @@ class FieldInfo:
 
         if self.any_psf_matched:
             # Check if all PSFs are in the same folder
-            psf_folders = set([os.path.dirname(path) for path in self.psf_paths.values()])
-            if len(psf_folders) == 1:
+            psf_folders = set(
+                [os.path.dirname(path) for path in self.psf_paths.values() if path is not None]
+            )
+            if len(psf_folders) == 1 and None not in psf_folders:
                 self.psf_folder = psf_folders.pop()
 
         if self.any_psf_kernel:
@@ -1681,6 +1683,13 @@ class FieldInfo:
         return len(self.band_info_list)
 
     def __getitem__(self, key):
+        if isinstance(key, str):
+            # get by band name
+            for band in self.band_info_list:
+                if band.band_name == key:
+                    return band
+            raise KeyError(f"Band name {key} not found in band_info_list.")
+
         return self.band_info_list[key]
 
     def __next__(self):

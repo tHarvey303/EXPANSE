@@ -1901,13 +1901,21 @@ class ResolvedGalaxy:
         unmatched_rms_err = {}
         unmatched_seg = {}
 
+        psf_type = field_info.psf_type
+        assert psf_type is not None, (
+            "PSF type must be specified for each band. Either all bands are PSF matched, "
+            "then just set a string like 'default', or specify the PSF type you want the code "
+            "to use e.g. webbpsf, empirical etc."
+        )
+
         if any_psf_matched:
-            psf_matched_data = {}
-            psf_matched_rms_err = {}
+            psf_matched_data = {psf_type: {}}
+            psf_matched_rms_err = {psf_type: {}}
             for band in field_info.band_names:
+                print(field_info[band].psf_matched)
                 if field_info[band].psf_matched:
-                    psf_matched_data[band] = copy.deepcopy(phot_imgs[band])
-                    psf_matched_rms_err[band] = copy.deepcopy(rms_err_imgs[band])
+                    psf_matched_data[psf_type][band] = copy.deepcopy(phot_imgs[band])
+                    psf_matched_rms_err[psf_type][band] = copy.deepcopy(rms_err_imgs[band])
                 else:
                     unmatched_data[band] = copy.deepcopy(phot_imgs[band])
                     unmatched_rms_err[band] = copy.deepcopy(rms_err_imgs[band])
@@ -1920,8 +1928,8 @@ class ResolvedGalaxy:
             assert any_psf_matched is False
             for band in field_info.band_names:
                 if band in psf_rms_err_data.keys():
-                    psf_matched_data[band] = copy.deepcopy(psf_im_data[band])
-                    psf_matched_rms_err[band] = copy.deepcopy(psf_rms_err_data[band])
+                    psf_matched_data[psf_type][band] = copy.deepcopy(psf_im_data[band])
+                    psf_matched_rms_err[psf_type][band] = copy.deepcopy(psf_rms_err_data[band])
             unmatched_data = copy.deepcopy(phot_imgs)
             unmatched_rms_err = copy.deepcopy(rms_err_imgs)
             if seg_imgs is not None:
