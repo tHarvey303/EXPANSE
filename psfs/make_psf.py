@@ -2283,7 +2283,7 @@ if __name__ == "__main__":
     #
     version = "v13"
     instruments = ["ACS_WFC", "NIRCam"]
-    match_band = None  # "F444W"  #'F444W' or None
+    match_band = "F444W"  # "F444W"  #'F444W' or None
     outdir = f"/nvme/scratch/work/tharvey/PSFs/{outdir_name}/"
     outdir_webbpsf = f"/nvme/scratch/work/tharvey/PSFs/{outdir_name}/webbpsf/"
     kernel_dir = f"/nvme/scratch/work/tharvey/PSFs/kernels/{outdir_name}/"

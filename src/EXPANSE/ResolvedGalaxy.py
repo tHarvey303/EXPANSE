@@ -15,6 +15,7 @@ import datetime
 import glob
 import json
 import os
+import io
 import shutil
 import subprocess
 import sys
@@ -497,7 +498,7 @@ class ResolvedGalaxy:
             # print(f'Assuming {self.bands[-1]} is the band with the largest PSF, and convolving all bands with this PSF kernel.')
             # print(self.galaxy_id)
             # print("Convolving images with PSF")
-            self.convolve_with_psf(psf_type=psf_type, init_run=False)
+            self.convolve_with_psf(psf_type=psf_type, init_run=False, match_error=True)
 
         # if self.rms_background is None:
         #    self.estimate_rms_from_background()
@@ -668,6 +669,7 @@ class ResolvedGalaxy:
         forced_phot_band=["F277W", "F356W", "F444W"],
         aper_diams=[0.32] * u.arcsec,
         output_flux_unit=u.uJy,
+        min_flux_pc_err=10.0,
         h5_folder=resolved_galaxy_dir,
         templates_arr=["fsps_larson"],
         lowz_zmax_arr=[[4.0, 6.0, None]],
@@ -677,35 +679,34 @@ class ResolvedGalaxy:
     ):
         # Imports here so only used if needed
         # from galfind import Data
-        from galfind import EAZY, Catalogue
-        from galfind.Catalogue_Creator import GALFIND_Catalogue_Creator
+        from galfind import EAZY, Catalogue, Catalogue_Creator, Data
+        from galfind.Data import morgan_version_to_dir
+        from galfind.Selector import ID_Selector
+
+        data = Data.pipeline(
+            survey,
+            version,
+            instrument_names=instruments,
+            version_to_dir_dict=morgan_version_to_dir,
+            aper_diams=aper_diams,
+            forced_phot_band=forced_phot_band,
+            min_flux_pc_err=min_flux_pc_err,
+        )
 
         if type(galaxy_id) in [list, np.ndarray, Column]:
             load_multiple = True
-            crop_by = {"ID": galaxy_id}
         else:
             load_multiple = False
-            crop_by = f"ID:{int(galaxy_id)}"
             galaxy_id = [galaxy_id]
+
+        selector = ID_Selector(IDs=galaxy_id)
+
+        cat_creator = Catalogue_Creator.from_data(data)  # crops=selector)
+        cat = cat_creator()
 
         SED_code_arr = [EAZY()]
         SED_fit_params_arr = make_EAZY_SED_fit_params_arr(
             SED_code_arr, templates_arr, lowz_zmax_arr
-        )
-        # Make cat creator
-        cat_creator = GALFIND_Catalogue_Creator("loc_depth", aper_diams[0], 10)
-        # Load catalogue and populate galaxies
-        cat = Catalogue.from_pipeline(
-            survey=survey,
-            version=version,
-            instruments=instruments,
-            aper_diams=aper_diams,
-            cat_creator=cat_creator,
-            SED_fit_params_arr=SED_fit_params_arr,
-            forced_phot_band=forced_phot_band,
-            excl_bands=excl_bands,
-            loc_depth_min_flux_pc_errs=[10],
-            crop_by=crop_by,
         )
 
         if load_multiple:
@@ -1698,7 +1699,8 @@ class ResolvedGalaxy:
         overwrite : bool
             If True, will overwrite any existing galaxy with the same ID/survey
         already_cutout : bool
-            If True, the input images are already cutouts. Skips all cutout making steps. Set cutout_size to the size of the input images.
+            If True, the input images are already cutouts. Skips all cutout making steps.
+            Set cutout_size to the size of the input images.
 
         """
 
@@ -1719,6 +1721,8 @@ class ResolvedGalaxy:
         psf_metas = None
         psf_kernels = None
 
+        band_names = copy.deepcopy(field_info.band_names)
+
         for band in field_info.band_names:
             im_path = field_info.im_paths[band]
             im_data = fits.getdata(im_path, field_info.im_exts[band], ignore_missing_simple=True)
@@ -1728,12 +1732,17 @@ class ResolvedGalaxy:
             wcs = WCS(im_header)
             phot_img_headers[band] = str(im_header)
             if not already_cutout:
-                cutout = Cutout2D(
-                    im_data,
-                    position=sky_coord,
-                    size=(cutout_size, cutout_size),
-                    wcs=wcs,
-                )
+                try:
+                    cutout = Cutout2D(
+                        im_data,
+                        position=sky_coord,
+                        size=(cutout_size, cutout_size),
+                        wcs=wcs,
+                    )
+                except Exception as e:
+                    print(f"Skipping {band}, error making cutout for {galaxy_id}: {e}")
+                    band_names.remove(band)
+                    continue
 
                 data = cutout.data
             else:
@@ -1745,7 +1754,10 @@ class ResolvedGalaxy:
 
             # Check if data is all O or NaN
             if np.all(data == 0) or np.all(np.isnan(data)):
-                raise Exception(f"All data is 0 or NaN for {band}")
+                print(f"All data is 0 or NaN for {band}, skipping...")
+                # Delete band?
+                band_names.remove(band)
+                continue
 
             # Work out the unit or zero point (prefer zero point)
             if field_info.im_zps[band] is not None:
@@ -2027,7 +2039,7 @@ class ResolvedGalaxy:
             galaxy_id=galaxy_id,
             sky_coord=sky_coord,
             survey=survey,
-            bands=field_info.band_names,
+            bands=band_names,
             im_paths=field_info.im_paths,
             im_exts=field_info.im_exts,
             im_zps=field_info.im_zps,
@@ -4517,10 +4529,14 @@ class ResolvedGalaxy:
             os.remove(self.h5_path)
             os.rename(self.h5_path.replace(".h5", f"{append}.h5"), self.h5_path)
 
-    def convolve_with_psf(self, psf_type="webbpsf", init_run=False, use_unmatched_data=False):
+    def convolve_with_psf(
+        self, psf_type="webbpsf", init_run=False, use_unmatched_data=False, match_error=True
+    ):
         """Convolve the images with the PSF
         psf_type: str - the type of PSF to use
-        init_run: bool - if this is the inital run, don't load from .h5 or create .h5 file"""
+        init_run: bool - if this is the inital run, don't load from .h5 or create .h5 file,
+        use_unmatched_data: bool - whether to use the unmatched data for convolution,
+        match_error: bool - whether to convolve the error images as well"""
 
         if (
             getattr(self, "psf_matched_data", None) in [None, {}]
@@ -4579,7 +4595,7 @@ class ResolvedGalaxy:
                 err_to_convolve = self.rms_err_imgs
 
             if run:
-                # Do the convolution\
+                # Do the convolution
                 if getattr(self, "psf_matched_data", None) is None:
                     self.psf_matched_data = {psf_type: {}}
                 else:
@@ -4608,23 +4624,24 @@ class ResolvedGalaxy:
                             kernel,
                             normalize_kernel=True,
                         )
-                        psf_matched_rms_err = convolve_fft(
-                            err_to_convolve[band],
-                            kernel,
-                            normalize_kernel=True,
-                        )
+                        if match_error:
+                            psf_matched_rms_err = convolve_fft(
+                                err_to_convolve[band],
+                                kernel,
+                                normalize_kernel=True,
+                            )
+                        else:
+                            psf_matched_rms_err = err_to_convolve[band]
 
                     try:
-                        from piXedfit.piXedfit_images.images_utils import (
-                            remove_naninfzeroneg_image_2dinterpolation,
-                        )
+                        from .utils import remove_naninfzeroneg_image_2dinterpolation
 
                         psf_matched_rms_err = remove_naninfzeroneg_image_2dinterpolation(
                             psf_matched_rms_err
                         )
                     except Exception as e:
                         print(e)
-                        print("Didnt work")
+                        print("Error removing NaN/inf/zero/neg from rms err image.")
                         pass
 
                     # Save to psf_matched_data
@@ -5236,6 +5253,78 @@ class ResolvedGalaxy:
             )
 
             return det_gal_mask
+
+    def plot_trilogy_rgb(
+        self,
+        red=[],
+        green=[],
+        blue=[],
+        fig=None,
+        ax=None,
+        noiselum=0.12,
+        satpercent=0.0005,
+        colorsatfac=1.3,
+        samplesize=1000,
+        combine="average",
+        use_psf_matched=False,
+    ):
+        """Plot the galaxy using Trilogy RGB"""
+
+        from trilogy import Trilogy, TrilogyConfig
+
+        config = TrilogyConfig(
+            noiselum=noiselum,
+            satpercent=satpercent,
+            colorsatfac=colorsatfac,
+            samplesize=samplesize,
+            combine=combine,
+        )
+
+        all_imgs = []
+
+        for band_list, color in zip([red, green, blue], ["R", "G", "B"]):
+            if type(band_list) is str:
+                band_list = [band_list]
+            img_list = []
+            if len(band_list) == 0:
+                img = np.zeros((self.cutout_size, self.cutout_size))
+                img_list.append(img)
+            else:
+                for band in band_list:
+                    if use_psf_matched:
+                        img = self.psf_matched_data[self.use_psf_type][band]
+                    else:
+                        img = self.phot_imgs[band]
+                    img_list.append(img)
+            all_imgs.append(img_list)
+
+        names = {}
+        # Need to write to temporary .fits files for Trilogy to read
+        for i in range(3):
+            color = ["R", "G", "B"][i]
+            names[color] = []
+            for j in range(len(all_imgs[i])):
+                hdu = fits.PrimaryHDU(all_imgs[i][j])
+                import tempfile
+
+                temp_fits = tempfile.NamedTemporaryFile(
+                    prefix=f"trilogy_{color}_{j}_",
+                    suffix=".fits",
+                    delete=False,
+                )
+                hdu.writeto(temp_fits.name, overwrite=True)
+                names[color].append(temp_fits.name)
+
+        images = {
+            "R": names["R"],
+            "G": names["G"],
+            "B": names["B"],
+        }
+
+        t = Trilogy(images, config=config, legend=True)
+        images = t.run()
+
+        return t
 
     def plot_lupton_rgb(
         self,
@@ -7570,27 +7659,28 @@ class ResolvedGalaxy:
         if legend:
             ax.legend(loc="lower right", frameon=False)
 
-    def run_sbifitter(
+    def run_synference(
         self,
-        sbifitter_model_path,
+        synference_model_path,
         fit_photometry="all",
         binmap_type=None,
         overwrite=False,
         extra_features=None,
         verbose=True,
-        grid_path=None,
+        library_path=None,
         model_name=None,
         override_noise_models=None,
         return_feature_array=False,
         num_samples=1000,
         extra_append="",
+        n_jobs=1,
     ):
         """Runs a SBI Fitter model on the galaxy
 
         Parameters
         ----------
 
-        sbifitter_model_path : str - path to the saved SBI Fitter model
+        synference_model_path : str - path to the saved SBI Fitter model
         fit_photometry : str - which photometry to use for fitting, default is "all"
         binmap_type : str - which binmap to use for fitting, default is None,
                             which uses the one set in self.use_binmap_type
@@ -7599,13 +7689,15 @@ class ResolvedGalaxy:
                         key should be feature name, e.g. redshift, and value
                         should be the value, or a reference to 'self', 'bagpipes', etc.
         verbose : bool - whether to print progress, default is True
-        grid_path : str - path to the grid to use for fitting, default is None
+        library_path : str - path to the grid to use for fitting, default is None
         model_name : str - name of the model to use for fitting, default is None
         override_noise_models : dict - dictionary of noise models to override, default is None
             If None, the noise models from the SBI Fitter model will be used.
         return_feature_array : bool - whether to return the feature array, default is False.
             Only for debugging purposes.
         num_samples : int - number of samples to draw for each photometry bin. Default is 1000.
+        extra_append : str - string to append to the name of the fitting run, default is ""
+        n_jobs : int - number of parallel jobs to run, default is 1
         """
 
         if not hasattr(self, "photometry_table"):
@@ -7626,16 +7718,19 @@ class ResolvedGalaxy:
 
         flux_table = self._get_flux_table(fit_photometry, psf_type, binmap_type).copy()
 
-        from sbifitter import SBI_Fitter
+        from synference import SBI_Fitter
 
         self.sbi_fitter = SBI_Fitter.load_saved_model(
-            sbifitter_model_path, grid_path=grid_path, model_name=model_name, load_arrays=False
+            synference_model_path,
+            library_path=library_path,
+            model_name=model_name,
+            load_arrays=False,
         )
 
         if override_noise_models is not None:
             self.sbi_fitter.feature_array_flags["empirical_noise_models"] = override_noise_models
 
-        print(f"Loaded SBI Fitter model from {sbifitter_model_path}")
+        print(f"Loaded SBI Fitter model from {synference_model_path}")
 
         feature_names = self.sbi_fitter.feature_names
         columns_to_feature_names = {}
@@ -7678,21 +7773,21 @@ class ResolvedGalaxy:
         additional_name = f"{psf_type}_{binmap_type}"
 
         if verbose:
-            print(f"Running sbifitter for {name}")
+            print(f"Running synference for {name}")
             print(f"Using atlas {name}")
 
         if hasattr(self, "sed_fitting_table"):
-            if "sbifitter" in self.sed_fitting_table.keys():
-                if f"{name}_{additional_name}" in self.sed_fitting_table["sbifitter"].keys():
+            if "synference" in self.sed_fitting_table.keys():
+                if f"{name}_{additional_name}" in self.sed_fitting_table["synference"].keys():
                     if not overwrite:
                         print(f"Run {name}_{additional_name} already exists")
                         return
 
         print(f"Fitting {len(flux_table)} rows with {name}")
 
-        """
         required_flux_unit = self.sbi_fitter.feature_array_flags["normed_flux_units"]
         import unyt
+
         if isinstance(required_flux_unit, unyt.Unit):
             unit = required_flux_unit.to_astropy()
         else:
@@ -7702,22 +7797,40 @@ class ResolvedGalaxy:
 
         self.get_filter_wavs()
 
-        if unit == 'AB':
+        if unit == "AB":
             # Convert fluxes to AB units
+            print("Converting fluxes to AB magnitudes.")
             for band in self.bands:
                 if band in flux_table.colnames:
-                    flux_table[f"{band}_err"] = 2.5 * flux_table[band]/(np.log(10) * flux_table[f"{band}_err"]).value
-                    flux_table[band] = flux_table[band].to(u.ABmag, equivalencies=u.spectral_density(self.filter_wavs[band])).value
-        elif isinstance(unit, u.Unit):
+                    flux_table[f"{band}_err"] = (
+                        2.5 * flux_table[band] / (np.log(10) * flux_table[f"{band}_err"]).value
+                    )
+                    flux_table[band] = (
+                        flux_table[band]
+                        .to(u.ABmag, equivalencies=u.spectral_density(self.filter_wavs[band]))
+                        .value
+                    )
+        elif isinstance(unit, u.Unit) or unit == "asinh":
+            if unit == "asinh":
+                unit = u.Jy
+            print(f"Converting fluxes to {unit}.")
             # Convert fluxes to the required unit
             for band in self.bands:
                 if band in flux_table.colnames:
-                    flux_table[band] = flux_table[band].to(unit, equivalencies=u.spectral_density(self.filter_wavs[band])).value
-                    flux_table[f"{band}_err"] = flux_table[f"{band}_err"].to(unit, equivalencies=u.spectral_density(self.filter_wavs[band])).value
+                    flux_table[band] = (
+                        flux_table[band]
+                        .to(unit, equivalencies=u.spectral_density(self.filter_wavs[band]))
+                        .value
+                    )
+                    flux_table[f"{band}_err"] = (
+                        flux_table[f"{band}_err"]
+                        .to(unit, equivalencies=u.spectral_density(self.filter_wavs[band]))
+                        .value
+                    )
         else:
             raise ValueError(f"Unknown flux unit {required_flux_unit} in SBI Fitter model.")
-        """
-        print("Running sbifitter.")
+
+        print("Running synference.")
         import unyt
 
         output = self.sbi_fitter.fit_catalogue(
@@ -7728,6 +7841,7 @@ class ResolvedGalaxy:
             return_feature_array=return_feature_array,
             check_out_of_distribution=False,
             num_samples=num_samples,
+            n_jobs=n_jobs,
         )
 
         if return_feature_array:
@@ -7735,26 +7849,26 @@ class ResolvedGalaxy:
 
         out_name = f"{name}_{additional_name}"
 
-        if "sbifitter" not in self.sed_fitting_table.keys():
-            self.sed_fitting_table["sbifitter"] = {}
+        if "synference" not in self.sed_fitting_table.keys():
+            self.sed_fitting_table["synference"] = {}
 
         meta = {
             "name": out_name,
             "psf_type": psf_type,
             "binmap_type": binmap_type,
             "fitter_name": name,
-            "fitter_path": sbifitter_model_path,
+            "fitter_path": synference_model_path,
             "fit_photometry": fit_photometry,
             "extra_features": extra_features,
         }
 
         output.meta = meta
-        self.sed_fitting_table["sbifitter"][out_name] = output
+        self.sed_fitting_table["synference"][out_name] = output
 
         write_table_hdf5(
-            self.sed_fitting_table["sbifitter"][out_name],
+            self.sed_fitting_table["synference"][out_name],
             self.h5_path,
-            f"sed_fitting_table/sbifitter/{out_name}",
+            f"sed_fitting_table/synference/{out_name}",
             serialize_meta=True,
             overwrite=True,
             append=True,
@@ -8039,7 +8153,7 @@ class ResolvedGalaxy:
         Parameters
         ----------
         property_name : str - name of the property to plot, e.g. 'mstar', 'sfr', 'dust', 'met', 'zval'
-        sed_fitting_tool    : str - name of the sed fitting tool, e.g. 'dense_basis', 'sbifitter'
+        sed_fitting_tool    : str - name of the sed fitting tool, e.g. 'dense_basis', 'synference'
         binmap_type : str - which binmap to use for plotting, default is None,
                             which uses the one set in self.use_binmap_type
         run_name : str - name of the run to plot, e.g. 'run1', 'run2'
@@ -8115,6 +8229,8 @@ class ResolvedGalaxy:
             cmap.set_bad(color=fill_nan_color)
 
         property_map *= scale_factor  # Apply scale factor to the property map
+
+        print(np.nanmin(property_map), np.nanmax(property_map))
 
         im = ax.imshow(
             property_map,
@@ -18079,6 +18195,55 @@ class ResolvedGalaxies(np.ndarray):
                 [min(xlim[0], ylim[0]), max(xlim[1], ylim[1])],
                 [min(xlim[0], ylim[0]), max(xlim[1], ylim[1])],
                 "k--",
+            )
+
+        return fig
+
+    def plot_trilogy_rgbs(
+        self,
+        red=[],
+        green=[],
+        blue=[],
+        figsize=(15, 5),
+        max_on_row=5,
+        **kwargs,
+    ):
+        n_galaxies = len(self.galaxies)
+        n_rows = int(np.ceil(n_galaxies / max_on_row))
+        fig, axes = plt.subplots(
+            n_rows,
+            max_on_row,
+            figsize=figsize,
+            facecolor="white",
+            dpi=200,
+        )
+        axes = axes.flatten()
+        # hide axis ticks and labels
+        for i, ax in enumerate(axes):
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if i >= n_galaxies:
+                # delete unused axes
+                fig.delaxes(ax)
+
+        for i, galaxy in enumerate(self.galaxies):
+            with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+                im = galaxy.plot_trilogy_rgb(red=red, green=green, blue=blue, **kwargs)
+                data = np.array(im.make_image())
+
+            axes[i].imshow(data, origin="lower")
+
+            # label with galaxy id and redshift
+
+            axes[i].text(
+                s=f"ID: {galaxy.galaxy_id}\n$z$: {galaxy.redshift:.2f}",
+                x=0.05,
+                y=0.95,
+                transform=axes[i].transAxes,
+                color="white",
+                fontsize=10,
+                verticalalignment="top",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.5),
             )
 
         return fig

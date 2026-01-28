@@ -254,12 +254,12 @@ def main(
                         band_name=band,
                         survey=survey,
                         image_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
-                        # wht_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/wht/",
-                        # err_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
+                        wht_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
+                        err_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/rms_err/",
                         seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/ACS_WFC/{version}/{survey}/MAP_RMS/segmentation/",
-                        psf_path="/nvme/scratch/work/tharvey/PSFs/JOF/",  # optional
+                        psf_path="/nvme/scratch/work/tharvey/PSFs/JADES-DR3-GS/",  # optional
                         psf_type="star_stack",  # optional
-                        psf_kernel_path="/nvme/scratch/work/tharvey/PSFs/kernels/JOF/",
+                        psf_kernel_path="/nvme/scratch/work/tharvey/PSFs/kernels/JADES-DR3-GS/",
                         err_hdu_ext=1,
                         im_hdu_ext=1,
                     )
@@ -267,12 +267,12 @@ def main(
                     band_info = PhotometryBandInfo(
                         band_name=band,
                         survey=survey,
-                        # wht_path="im",
-                        # err_path="im",
+                        wht_path="im",
+                        err_path="im",
                         image_path=f"/raid/scratch/data/jwst/{survey}/NIRCam/{dir_version}/30mas/",
                         seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/NIRCam/{version}/{survey}/MAP_RMS/segmentation/",
-                        psf_path="/nvme/scratch/work/tharvey/PSFs/JOF/",  # optional
-                        psf_kernel_path="/nvme/scratch/work/tharvey/PSFs/kernels/JOF/"
+                        psf_path="/nvme/scratch/work/tharvey/PSFs/JADES-DR3-GS/",  # optional
+                        psf_kernel_path="/nvme/scratch/work/tharvey/PSFs/kernels/JADES-DR3-GS/"
                         if band != "F444W"
                         else None,
                         psf_type="star_stack",  # optional

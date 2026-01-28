@@ -265,6 +265,8 @@ class PipesFitNoLoad:
         self.has_advanced_quantities = True
 
         self._get_fit_instructions()
+        if self.bands is None:
+            self._get_filt_list()
         if "noise" in self.fit_instructions.keys() or "veldisp" in self.fit_instructions.keys():
             self.fitted_type = "spec"
         else:
@@ -410,6 +412,12 @@ class PipesFitNoLoad:
                 self.fit_instructions = ast.literal_eval(data.attrs["fit_instructions"])
             else:
                 raise KeyError("fit_instructions not found in h5 file.")
+
+    def _get_filt_list(self):
+        with h5py.File(self.h5_path, "r") as data:
+            if "filt_list" in data.attrs.keys():
+                filt_list = data.attrs["filt_list"]
+                self.bands = [i.split("/")[-1].split(".")[0] for i in filt_list]
 
     def _recalculate_bagpipes_wavelength_array(
         self,

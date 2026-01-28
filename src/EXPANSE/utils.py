@@ -1397,7 +1397,7 @@ class FieldInfo:
         self.instruments = [band.instrument for band in self.band_info_list]
 
         self.im_pixel_scales = {band.band_name: band.im_pixel_scale for band in self.band_info_list}
-        self.im_zps = {band.band_name: band.image_zp for band in self.band_info_list}
+        self.im_zps = {band.band_name: float(band.image_zp) for band in self.band_info_list}
         self.im_units = {band.band_name: band.image_unit for band in self.band_info_list}
         self.im_exts = {band.band_name: band.im_hdu_ext for band in self.band_info_list}
         self.wht_exts = {band.band_name: band.wht_hdu_ext for band in self.band_info_list}
@@ -3249,3 +3249,39 @@ def calculate_radial_correlation(
         avg_correlations_final[0] = 1.0
 
     return distances_to_report, avg_correlations_final
+
+
+def remove_naninfzeroneg_image_2dinterpolation(data_image):
+    """Borrowed from piXedfit.images_utils"""
+    from scipy.interpolate import griddata
+
+    rows_nan, cols_nan = np.where(
+        (np.isnan(data_image) == True) | (np.isinf(data_image) == True) | (data_image <= 0)
+    )
+    if len(rows_nan) > 0:
+        y = np.arange(0, data_image.shape[0])
+        x = np.arange(0, data_image.shape[1])
+        xx, yy = np.meshgrid(x, y)
+
+        rows, cols = np.where(
+            (np.isnan(data_image) == False) & (np.isinf(data_image) == False) & (data_image > 0)
+        )
+        data_image_new = griddata((rows, cols), data_image[rows, cols], (yy, xx), method="cubic")
+
+        rows_nan, cols_nan = np.where(
+            (np.isnan(data_image_new) == True)
+            | (np.isinf(data_image_new) == True)
+            | (data_image_new <= 0)
+        )
+        if len(rows_nan) > 0:
+            rows, cols = np.where(
+                (np.isnan(data_image_new) == False)
+                & (np.isinf(data_image_new) == False)
+                & (data_image_new > 0)
+            )
+            # data_image_new = griddata((rows,cols), data_image_new[rows,cols], (yy, xx), method='cubic')
+            data_image_new[rows_nan, cols_nan] = np.percentile(data_image_new[rows, cols], 50)
+
+        return data_image_new
+    else:
+        return data_image
