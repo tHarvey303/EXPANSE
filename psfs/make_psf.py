@@ -2263,7 +2263,57 @@ corr_2 = psf_correction_factor(psf_path=f'/nvme/scratch/work/tharvey/PSFs/JOF/we
 print(f'WebbPSF Jitter Aper Corr {band1}: {corr_1:.3f} mag, {band2}: {corr_2:.3f} mag, Diff: {corr_1-corr_2:.3f} mag')
 
 
+
+
 crash"""
+
+
+outdir_webbpsf = f"/nvme/scratch/work/tharvey/PSFs/webbpsf/"
+# Generate WebbPSF model for bands - only for comparison!
+bands = ["F090W", "F115W", "F150W", "F200W", "F277W", "F356W", "F410M", "F444W"]
+for band in bands:
+    # strip things which aren't numbers
+    band_wav = int("".join([i for i in band if i.isdigit()]))
+    if band_wav > 240:
+        jitter_sigma = 0.034
+    else:
+        jitter_sigma = 0.022
+    # print(band, jitter_sigma)
+    if band in [
+        "F480M",
+        "F460M",
+        "F444W",
+        "F430M",
+        "F410M",
+        "F380M",
+        "F360M",
+        "F356W",
+        "F335M",
+        "F300M",
+        "F277W",
+        "F250M",
+        "F210M",
+        "F200W",
+        "F182M",
+        "F162M",
+        "F150W",
+        "F115W",
+        "F090W",
+    ]:
+        get_webbpsf(
+            band,
+            field="default",
+            angle=0,
+            fov=50,
+            og_fov=100,
+            pixscl=0.03,
+            date=None,
+            output=f"{outdir_webbpsf}/morishita_jitter",
+            jitter_kernel="gaussian",
+            jitter_sigma=jitter_sigma,
+        )
+
+crash
 
 if __name__ == "__main__":
     surveys = ["NEP-1", "NEP-2", "NEP-3", "NEP-4"]
@@ -2568,7 +2618,7 @@ if __name__ == "__main__":
     crash
 
     # Generate WebbPSF model for bands - only for comparison!
-    bands = ["F444W"]
+    bands = ["F090W", "F115W", "F150W", "F200W", "F277W", "F356W", "F410M", "F444W"]
     for band in bands:
         # strip things which aren't numbers
         band_wav = int("".join([i for i in band if i.isdigit()]))

@@ -81,6 +81,7 @@ def calculate_bins(
     num_bins=6,
     first_bin=10 * u.Myr,
     second_bin=None,
+    compute_sfr_ratios=False,
     cosmo=FlatLambdaCDM(H0=70, Om0=0.3, Tcmb0=2.725),
 ):
     time_observed = cosmo.lookback_time(redshift)
@@ -130,6 +131,25 @@ def calculate_bins(
 
     for i in range(1, len(diff)):
         bins.append([diff[i - 1], diff[i]])
+
+    if compute_sfr_ratios:
+        # from Turner+2025
+        # mean SFR per bin = e^(-4/5*(z-z_obs)) * (1+z)^(5/2)
+        # for the mean redshift of each bin.
+        sfrs = []
+        for bin in bins:
+            if log_time:
+                mean_time = 10 ** ((bin[0] + bin[1]) / 2) * u.yr
+            else:
+                mean_time = ((bin[0] + bin[1]) / 2) * u.yr
+
+            mean_redshift = cosmo.lookback_time(mean_time).value
+            sfr = np.exp(-4 / 5 * (mean_redshift - redshift)) * (1 + mean_redshift) ** (5 / 2)
+
+            sfrs.append(sfr)
+        # compute ratios between adjacent bins
+        sfr_ratios = [sfrs[i] / sfrs[i - 1] for i in range(1, len(sfrs))]
+        return bins, sfr_ratios
 
     return bins
 
@@ -568,11 +588,19 @@ class PipesFitNoLoad:
                 rasterized=True,
             )
 
+    @property
+    def fixed_redshift(self):
+        if "redshift" in self._list_items():
+            return False
+        return True
+
     def _get_redshift(self):
         if "redshift" in self._list_items():
             return np.median(self._load_item_from_h5("redshift"))
         elif "redshift" in self.fit_instructions.keys():
             return self.fit_instructions["redshift"]
+        else:
+            raise Exception("Can't find redshift.")
 
     def plot_best_fit(
         self,
@@ -1048,6 +1076,7 @@ class PipesFitNoLoad:
         linelabel="",
         norm_height=False,
         filter_neg=False,
+        label=True,
     ):
         """Plot posterior PDF for a parameter.
 
@@ -1066,7 +1095,7 @@ class PipesFitNoLoad:
 
         from bagpipes.plotting import fix_param_names
 
-        label = fix_param_names(parameter)
+        labeltxt = fix_param_names(parameter)
 
         if filter_neg:
             samples = samples[samples > 0]
@@ -1074,7 +1103,7 @@ class PipesFitNoLoad:
         # Special handling for some parameters
         if parameter == "sfr" or parameter == "formed_mass":
             samples = np.log10(samples)
-            label = rf"$\log_{{10}}({label})$"
+            labeltxt = rf"$\log_{{10}}({labeltxt})$"
 
         if return_samples:
             return samples
@@ -1095,7 +1124,8 @@ class PipesFitNoLoad:
         if fill_between:
             ax.fill_between(x_plot, y, color=colour, alpha=0.3)
 
-        ax.set_xlabel(label, fontsize="small", fontweight="bold")
+        if label:
+            ax.set_xlabel(labeltxt, fontsize="small", fontweight="bold")
 
         # Remove y ticks since PDF height is arbitrary
         ax.set_yticks([])

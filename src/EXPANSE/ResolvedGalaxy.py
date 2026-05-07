@@ -1724,6 +1724,7 @@ class ResolvedGalaxy:
         band_names = copy.deepcopy(field_info.band_names)
 
         for band in field_info.band_names:
+            print(f"Loading data for band {band}...")
             im_path = field_info.im_paths[band]
             im_data = fits.getdata(im_path, field_info.im_exts[band], ignore_missing_simple=True)
             im_header = fits.getheader(
@@ -2077,7 +2078,10 @@ class ResolvedGalaxy:
         )
 
     def get_filter_wavs(self, facilities={"JWST": ["NIRCam"], "HST": ["ACS", "WFC3_IR"]}):
-        if getattr(self, "filter_wavs", None) is not None:
+        print(facilities)
+        if getattr(self, "filter_wavs", None) is not None and len(self.filter_wavs.keys()) == len(
+            self.bands
+        ):
             return self.filter_wavs
 
         from astroquery.svo_fps import SvoFps
@@ -2090,13 +2094,16 @@ class ResolvedGalaxy:
         done_band = False
         for facility in facilities:
             if done_band:
+                print("I broke")
                 break
             for instrument in facilities[facility]:
                 try:
                     svo_table = SvoFps.get_filter_list(facility=facility, instrument=instrument)
-                except:
+                except Exception as e:
+                    print(e)
                     continue
                 bands_in_table = [i.split(".")[-1] for i in svo_table["filterID"]]
+                # print(bands_in_table)
                 for band in self.bands:
                     if band in bands_in_table:
                         if band in filter_wavs.keys():
@@ -4885,7 +4892,7 @@ class ResolvedGalaxy:
                 ax.transData,
                 re,
                 f"{re_kpc:.1f}",
-                "upper left",
+                "lower left",
                 pad=0.3,
                 color="white",
                 frameon=False,
@@ -5772,7 +5779,7 @@ class ResolvedGalaxy:
             np.shape(self.gal_region[gal_region_use]) == (self.cutout_size, self.cutout_size)
         ), f"Galaxy region shape {np.shape(self.gal_region[gal_region_use])} not same as cutout size {self.cutout_size}"
         mmap = copy.copy(self.gal_region[gal_region_use])
-        assert len(np.unique(mmap)) > 1, f"Galaxy region is not binary {np.unique(mmap)}"
+        # assert len(np.unique(mmap)) > 1, f"Galaxy region is not binary {np.unique(mmap)}"
 
         img_process.flux_map(
             mmap,
@@ -5940,7 +5947,7 @@ class ResolvedGalaxy:
         else:
             psf_type = override_psf_type
 
-        if hasattr(self, "voronoi_map") and not overwrite:
+        if hasattr(self, f"{name_out}_map") and not overwrite:
             print("Voronoi map already exists. Set overwrite=True to re-run")
             return
 
@@ -6401,7 +6408,7 @@ class ResolvedGalaxy:
             ax.transData,
             re,
             f"{re_kpc:.1f}",
-            "upper left",
+            "lower left",
             pad=0.3,
             color="black",
             frameon=False,
@@ -6988,8 +6995,8 @@ class ResolvedGalaxy:
         band_req : which band to use for SNR calculation.
                 If "all", use all bands. If list, use all bands in list.
                 If "auto", use all bands except those in no_use_bands.
-                If _wide, use all wide bands.
-                If _nobreak, use all bands except those in no_use_bands.
+                If all_wide, use all wide bands.
+                If all_nobreak, use all bands except those in no_use_bands.
         region_name : str - name of galaxy region. If "auto", use SNR_<snr_req>_<band_req>
         overwrite : bool - overwrite existing galaxy region
         override_psf_type : str - which PSF type to use. If None, use self.use_psf_type
@@ -9190,6 +9197,8 @@ class ResolvedGalaxy:
                 fontsize=30,
                 rotation=45,
             )
+        if dummy_fig is None:
+            dummy_fig = plt.figure(figsize=(1, 1), dpi=200)
 
         dummy_fig.set_facecolor("white")
         dummy_fig.set_edgecolor("white")
@@ -9275,10 +9284,210 @@ class ResolvedGalaxy:
 
         return figure
 
+    def rosa_plot_bagpipes_overview(
+        self,
+        figsize=(12, 10),
+        bands_to_show=["F814W", "F115W", "F200W", "F410M", "F444W"],
+        photometry_to_show=["TOTAL_BIN", "MAG_APER_TOTAL", "1"],
+        bagpipes_runs={"CNST_SFH_RESOLVED": ["RESOLVED", "1"]},
+        PDFs_to_plot=["stellar_mass", "sfr", "dust:Av"],
+        property_maps=["stellar_mass", "sfr", "dust:Av", "mass_weighted_age"],
+        show=True,
+        flux_unit=u.ABmag,
+        save=False,
+        rgb_stretch=1e-3,
+        rgb_q=10,
+        rgb_combine_func=np.median,
+        binmap_type="pixedfit",
+        legend=True,
+        min_sed_flux=31 * u.ABmag,
+        max_sed_flux=25 * u.ABmag,
+        coloring_cmap="tab20",
+        pipes_run_dir="pipes",
+        log_sfh=False,
+        rgb_stretch_obj="asinh",
+        rgb_bands={
+            "blue": ["F115W", "F150W"],
+            "green": ["F200W", "F277W"],
+            "red": ["F356W", "F444W"],
+        },
+    ):
+        cmap = plt.get_cmap()
+
+        params = copy.copy(photometry_to_show)
+        for run in bagpipes_runs:
+            for param in bagpipes_runs[run]:
+                if param not in params:
+                    params.append(param)
+
+        norm = plt.Normalize(vmin=0, vmax=len(params))
+        colors = {param: cmap(norm(i)) for i, param in enumerate(params)}
+        colors_runs = {
+            run: [colors[param] for param in bagpipes_runs[run]] for run in bagpipes_runs
+        }
+
+        # Taller figure to accommodate full-width bottom section
+        # Scale height to accommodate SFH row without shrinking others
+        height_scale = (1.5 + 1 + 0.8) / (1.5 + 1)
+
+        figure = plt.figure(
+            figsize=(figsize[0], figsize[1] * height_scale),
+            dpi=200,
+            facecolor="white",
+            constrained_layout=True,
+        )
+
+        subfig_rows = figure.subfigures(
+            3,
+            1,
+            height_ratios=[1.5, 1, 0.8],  # top unchanged, new SFH row added
+            hspace=0,
+        ).flatten()
+        top_row = subfig_rows[0].subfigures(1, 2, width_ratios=[2.8, 1]).flatten()
+        bottom_row = (
+            subfig_rows[1].subfigures(1, 2, width_ratios=[1.25, 1], wspace=0, hspace=0).flatten()
+        )
+
+        # --- Top row: overview + PDFs ---
+
+        overview_subfig, ax_sed = self.plot_overview(
+            figsize=(1, 1),
+            bands_to_show=bands_to_show,
+            bins_to_show=photometry_to_show,
+            show=False,
+            flux_unit=flux_unit,
+            save=False,
+            rgb_stretch=rgb_stretch,
+            rgb_q=rgb_q,
+            rgb_combine_func=rgb_combine_func,
+            binmap_type=binmap_type,
+            legend=legend,
+            min_sed_flux=min_sed_flux,
+            max_sed_flux=max_sed_flux,
+            fig=top_row[0],
+            return_ax=True,
+            colors=colors,
+            rgb_stretch_obj=rgb_stretch_obj,
+            rgb_bands=rgb_bands,
+            box_fontsize=12,
+        )
+
+        ax_sed.set_xlim(ax_sed.get_xlim())
+
+        for run in bagpipes_runs:
+            self.plot_bagpipes_fit(
+                axes=ax_sed,
+                run_name=run,
+                flux_units=flux_unit,
+                save=False,
+                fig=top_row[0],
+                bins_to_show=bagpipes_runs[run],
+                run_dir=pipes_run_dir,
+                marker_colors=colors_runs[run],
+                resolved_color=colors["RESOLVED"],
+                label_type="run",
+            )
+
+        ax_sed.legend(fontsize=13, frameon=False)
+
+        # --- PDFs ---
+        pdf_subfig = top_row[1]
+        pdf_axes = pdf_subfig.subplots(len(PDFs_to_plot), 1)
+
+        for ax, pdf in zip(pdf_axes, PDFs_to_plot):
+            for bagpipes_run in bagpipes_runs:
+                params = copy.deepcopy(bagpipes_runs[bagpipes_run])
+                if "RESOLVED" in params:
+                    index = params.index("RESOLVED")
+                    params[index] = "all"
+                colors["all"] = colors["RESOLVED"]
+
+                self.plot_bagpipes_component_comparison(
+                    parameter=pdf,
+                    run_name=bagpipes_run,
+                    bins_to_show=params,
+                    binmap_type=binmap_type,
+                    fig=pdf_subfig,
+                    save=False,
+                    fill_between=True,
+                    run_dir=pipes_run_dir,
+                    colors=colors,
+                    axes=ax,
+                    legend=False,
+                    colors_from_full_dist=False,
+                    fontsize=15,
+                )
+
+        # --- Full-width property maps row ---
+        prop_map_subfig = subfig_rows[1]
+
+        for run_name in bagpipes_runs:
+            if (
+                run_name in self.sed_fitting_table["bagpipes"].keys()
+                and len(self.sed_fitting_table["bagpipes"][run_name]) > 1
+            ):
+                self.plot_bagpipes_results(
+                    run_name=run_name,
+                    binmap_type=binmap_type,
+                    parameters=property_maps,
+                    reload_from_cat=False,
+                    save=False,
+                    facecolor="white",
+                    max_on_row=5,
+                    weight_mass_sfr=True,
+                    norm="linear",
+                    total_params=[],
+                    scale_border=0.2,
+                    add_scalebar=True,
+                    text_fontsize=14,  # increased from 10
+                    area_norm=True,
+                    show_info=False,
+                    origin=None,
+                    extent=None,
+                    fig=prop_map_subfig,
+                    ax=None,
+                    show_half_radius=True,
+                    add_cbar=True,
+                    return_map=False,
+                )
+
+        # --- Full-width SFH row ---
+        sfh_subfig = subfig_rows[2]
+        sfh_ax = sfh_subfig.subplots(1, 1)
+
+        for run_name in bagpipes_runs:
+            fig, _ = self.plot_bagpipes_sfh(
+                run_name=run_name,
+                bins_to_show=bagpipes_runs[run_name],
+                fig=subfig_rows[2],
+                axes=sfh_ax,
+                save=False,
+                run_dir=pipes_run_dir,
+                facecolor="white",
+                time_unit="Myr",
+                marker_colors=colors_runs[run_name],
+                resolved_color=colors["RESOLVED"],
+            )
+
+        from .utils import optimize_sfh_xlimit
+
+        max = optimize_sfh_xlimit(sfh_ax)
+        sfh_ax.legend().set_visible(False)
+        if log_sfh:
+            sfh_ax.set_yscale("log")
+            sfh_ax.set_ylim(3e-2, None)
+        else:
+            sfh_ax.set_xlim(0, max)
+
+        sfh_ax.set_xlabel("Lookback Time (Myr)", fontsize=20)
+        sfh_ax.set_ylabel(r"SFR (M$_\odot$ yr$^{-1}$)", fontsize=20)
+
+        return figure
+
     def plot_overview(
         self,
         figsize=(12, 8),
-        bands_to_show=["F814W", "F115W", "F200W", "F335M", "F444W"],
+        bands_to_show=["F814W", "F115W", "F200W", "F410M", "F444W"],
         bins_to_show=["TOTAL_BIN", "MAG_APER_TOTAL", "1"],
         show=True,
         flux_unit=u.ABmag,
@@ -10950,7 +11159,7 @@ class ResolvedGalaxy:
             or "bagpipes" not in self.sed_fitting_table.keys()
             or run_name not in self.sed_fitting_table["bagpipes"].keys()
         ):
-            self.load_bagpipes_results(run_name)
+            self.load_bagpipes_results(run_name, run_dir=run_dir)
         table = self.sed_fitting_table["bagpipes"][run_name]
 
         if axes is None:
@@ -11250,7 +11459,7 @@ class ResolvedGalaxy:
             or "bagpipes" not in self.sed_fitting_table.keys()
             or run_name not in self.sed_fitting_table["bagpipes"].keys()
         ):
-            self.load_bagpipes_results(run_name)
+            self.load_bagpipes_results(run_name, run_dir=run_dir)
         table = self.sed_fitting_table["bagpipes"][run_name]
         if fig is None and plot:
             fig = plt.figure(
@@ -11434,7 +11643,7 @@ class ResolvedGalaxy:
                         **kwargs,
                     )
         if plot and legend:
-            axes.legend(fontsize=8)
+            axes.legend(fontsize=14)
 
         redshifts = np.array(redshifts)
         redshift = np.min(redshifts)
@@ -11451,9 +11660,8 @@ class ResolvedGalaxy:
                 )
                 a = "Age of Universe"
 
-            axes.set_xlabel(f"{a} ({time_unit})")
-            axes.set_ylabel(r"SFR (M$_\odot$ yr$^{-1}$)")
-
+            axes.set_xlabel(f"{a} ({time_unit})", fontsize=20)
+            axes.set_ylabel(r"SFR (M$_\odot$ yr$^{-1}$)", fontsize=20)
         # cbar.set_label('Age (Gyr)', labelpad=10)
         # cbar.ax.xaxis.set_ticks_position('top')
         # cbar.ax.xaxis.set_label_position('top')
@@ -11581,6 +11789,8 @@ class ResolvedGalaxy:
         path="temp",
         cmap="magma",
         binmap_type="pixedfit",
+        run_dir="pipes/",
+        c_range=None,
     ):
         if (
             not hasattr(self, "sed_fitting_table")
@@ -11606,7 +11816,12 @@ class ResolvedGalaxy:
         map_3d = np.zeros((n_samples, map.shape[0], map.shape[1]))
 
         objects = self.load_pipes_object(
-            run_name, values, cache=cache, get_advanced_quantities=False
+            run_name,
+            values,
+            cache=cache,
+            get_advanced_quantities=False,
+            run_dir=run_dir,
+            binmap_type=binmap_type,
         )
         if not lazy:
             for pos, rbin in enumerate(values):
@@ -11666,6 +11881,7 @@ class ResolvedGalaxy:
             weight_by_band=weight_by_band,
             cmap=cmap,
             binmap_type=binmap_type,
+            c_range=c_range,
         )
 
         if path == "temp":
@@ -11871,7 +12087,14 @@ class ResolvedGalaxy:
 
                     if os.path.exists(tempfilt_path):
                         with open(tempfilt_path, "rb") as f:
-                            tempfilt = pickle.load(f)
+                            try:
+                                tempfilt = pickle.load(f)
+                            except ModuleNotFoundError:
+                                print(
+                                    "Error loading tempfilt, file may be corrupted. Recomputing tempfilt."
+                                )
+                                tempfilt = None
+
                         print("Loading tempfilt from file:", tempfilt_path)
                     print(tempfilt_path)
                 else:
@@ -12113,6 +12336,10 @@ class ResolvedGalaxy:
         if ax_pz is not None:
             p_z = 10 ** ez.lnp[idx]
             z = ez.zgrid
+
+            if color is None or color == "":
+                color = "black"
+
             ax_pz.plot(z, p_z / np.max(p_z), color=color, lw=lw, zorder=zorder)
 
             if ax_pz.get_xlim()[0] < 0.1 and ax_pz.get_xlim()[1] > 18:
@@ -13848,6 +14075,7 @@ class ResolvedGalaxy:
         binmap_type="pixedfit",
         path="temp",
         cmap="magma",
+        c_range=None,
     ):
         map_3d = copy.copy(map_3d)
 
@@ -13912,10 +14140,16 @@ class ResolvedGalaxy:
         new_map[new_map == 0] = np.nan
         new_map[new_map == 0.0] = np.nan
 
+        if c_range is not None:
+            min_r, max_r = c_range
+        else:
+            min_r = np.nanmin(new_map)
+            max_r = np.nanmax(new_map)
+
         if scale == "log":
-            scale = LogNorm(vmin=np.nanmin(new_map), vmax=np.nanmax(new_map))
+            scale = LogNorm(vmin=min_r, vmax=max_r)
         elif scale == "linear":
-            scale = Normalize(vmin=np.nanmin(new_map), vmax=np.nanmax(new_map))
+            scale = Normalize(vmin=min_r, vmax=max_r)
         else:
             raise Exception("Scale must be log or linear")
 
@@ -14186,7 +14420,13 @@ class ResolvedGalaxy:
 
                 with h5.File(h5_path, "r") as f:
                     """ Fun bodging of SED into correct form"""
-                    use_bpass = ast.literal_eval(f.attrs["config"])["type"] == "BPASS"
+                    if (
+                        "config" not in f.attrs.keys()
+                        or "type" not in ast.literal_eval(f.attrs["config"]).keys()
+                    ):
+                        use_bpass = False
+                    else:
+                        use_bpass = ast.literal_eval(f.attrs["config"])["type"] == "BPASS"
                     if "spectrum_full" in f["advanced_quantities"].keys():
                         try:
                             data = f["advanced_quantities"]["spectrum_full"][:]
@@ -18606,7 +18846,7 @@ class ResolvedGalaxies(np.ndarray):
                 y2 - 0.01 * y_range,
                 f"Zoom: {zoom_factor}x",
                 color="white",
-                path_effects=[PathEffects.withStroke(linewidth=3, foreground="black")],
+                path_effects=[PathEffects.withStrokeprospector(linewidth=3, foreground="black")],
                 verticalalignment="top",
                 horizontalalignment="right",
             )
@@ -18647,7 +18887,7 @@ class ResolvedGalaxies(np.ndarray):
         fit_photometry="all",
         run_dir="pipes/",
         n_jobs=8,
-        out_subdir_name="parallel_temp",
+        out_subdir_name="parallel_temp_1",
         load_only=False,  # If set to true, will force reloading of properties and skip running
         properties_to_load=["stellar_mass", "sfr", "sfr_10myr"],
         alert=True,  # If crash, email me!

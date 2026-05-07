@@ -277,6 +277,7 @@ def create_plot_with_insets(
     add_compass=False,
     compass_params={},
     fix_single_color_blocks=True,
+    crop_edge_pixels=0,
 ):
     """
     Create an astronomical image plot with multiple inset plots positioned intelligently.
@@ -331,6 +332,8 @@ def create_plot_with_insets(
         Dictionary of parameters for the compass
     fix_single_color_blocks : bool
         Whether to fix single color blocks in the RGB image
+    crop_edge_pixels : int
+        Number of edge pixels to crop from the image
 
     Returns:
     --------
@@ -803,6 +806,10 @@ def create_plot_with_insets(
             pix_scale=0.03 * u.arcsec,
             compass_text_scale_factor=1.15,
         )
+
+    if crop_edge_pixels > 0:
+        ax.set_xlim(crop_edge_pixels, image_data.shape[1] - crop_edge_pixels)
+        ax.set_ylim(crop_edge_pixels, image_data.shape[0] - crop_edge_pixels)
 
     return fig, ax, inset_axes
 

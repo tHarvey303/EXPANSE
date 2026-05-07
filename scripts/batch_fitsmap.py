@@ -213,6 +213,7 @@ def main(
     forced_phot_band=["F277W", "F356W", "F444W"],
     return_info=False,
     overwrite=False,
+    load_segmentation=True,
 ):
     print(f"Processing {survey} with version {version} and instruments {instrument_names}")
 
@@ -256,7 +257,9 @@ def main(
                         image_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
                         wht_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/",
                         err_path=f"/raid/scratch/data/hst/{survey}/ACS_WFC/{dir_version}/30mas/rms_err/",
-                        seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/ACS_WFC/{version}/{survey}/MAP_RMS/segmentation/",
+                        seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/ACS_WFC/{version}/{survey}/MAP_RMS/segmentation/"
+                        if load_segmentation
+                        else None,
                         psf_path="/nvme/scratch/work/tharvey/PSFs/JADES-DR3-GS/",  # optional
                         psf_type="star_stack",  # optional
                         psf_kernel_path="/nvme/scratch/work/tharvey/PSFs/kernels/JADES-DR3-GS/",
@@ -270,7 +273,9 @@ def main(
                         wht_path="im",
                         err_path="im",
                         image_path=f"/raid/scratch/data/jwst/{survey}/NIRCam/{dir_version}/30mas/",
-                        seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/NIRCam/{version}/{survey}/MAP_RMS/segmentation/",
+                        seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/NIRCam/{version}/{survey}/MAP_RMS/segmentation/"
+                        if load_segmentation
+                        else None,
                         psf_path="/nvme/scratch/work/tharvey/PSFs/JADES-DR3-GS/",  # optional
                         psf_kernel_path="/nvme/scratch/work/tharvey/PSFs/kernels/JADES-DR3-GS/"
                         if band != "F444W"
@@ -304,7 +309,9 @@ def main(
         image_path=detection_image_path,
         wht_path="im",
         err_path="im",
-        seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/NIRCam/{version}/{survey}/MAP_RMS/segmentation/",
+        seg_path=f"/{pc_dir}/scratch/work/{reducer}/GALFIND_WORK/SExtractor/NIRCam/{version}/{survey}/MAP_RMS/segmentation/"
+        if load_segmentation
+        else None,
         detection_image=True,
     )
     galaxy_info.append(detection_band_info)

@@ -45,6 +45,8 @@ galaxies_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname((os.path.dirname(os.path.abspath(__file__)))))),
     "galaxies",
 )
+# commented out
+# galaxies_dir = '/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/EXPANSE/galaxies/'
 
 
 MAXIMIZE_CSS = """
@@ -254,7 +256,7 @@ class GalaxyTab(param.Parameterized):
     )
 
     # Parameters for interactive tab
-    interactive_band = param.Selector(default="F410M")
+    interactive_band = param.Selector(default="F444W")
     drawn_shapes = param.Dict(default={})
     which_interactive_sed_fitter = param.Selector(
         default="EAZY-py", objects=["EAZY-py", "Dense Basis"]
@@ -3329,6 +3331,10 @@ def expanse_viewer(port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", te
 
     if gal_dir != "internal":
         galaxies_dir = gal_dir
+
+    galaxies_dir = (
+        "/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/EXPANSE/galaxies/"
+    )
 
     pn.serve(
         resolved_sed_interface,
