@@ -5,6 +5,7 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![PyPI version](https://img.shields.io/pypi/v/astro-expanse.svg)](https://pypi.org/project/astro-expanse/)
+[![DOI](https://zenodo.org/badge/784812957.svg)](https://doi.org/10.5281/zenodo.18404341)
 
 # EXPANSE
 <img src="gfx/EXPANSE_LOGO_BLNK.png"  align="right" alt="logo" width="300px"/>
