@@ -46,7 +46,9 @@ galaxies_dir = os.path.join(
     "galaxies",
 )
 # commented out
-# galaxies_dir = '/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/EXPANSE/galaxies/'
+galaxies_dir = (
+    "/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/EXPANSE/galaxies/"
+)
 
 
 MAXIMIZE_CSS = """
@@ -3309,10 +3311,14 @@ def resolved_sed_interface():
     "--tab", default="Cutouts", help="Tab to load. Options: Cutouts, SED Results, 'Fitsmap'."
 )
 @click.option("--test_mode", default=False, help="Run in test mode.")
-def expanse_viewer(port=5004, gal_dir="internal", galaxy=None, tab="Cutouts", test_mode=False):
+def expanse_viewer(port=5006, gal_dir="internal", galaxy=None, tab="Cutouts", test_mode=False):
     global initial_galaxy
     global galaxies_dir
     global initial_tab
+
+    # allow the port
+    print(f"Allowing websocket origin for localhost:{port}")
+    os.environ["BOKEH_ALLOW_WS_ORIGIN"] = f"localhost:{port}"
 
     hv.extension("bokeh", logo=False)
     pn.extension("mathjax")

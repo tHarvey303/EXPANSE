@@ -90,6 +90,26 @@ def maggies_to_mag(maggies):
 # self.calax for calibration
 
 
+def recursive_convert_bytes_to_str(data):
+    if isinstance(data, (bytes, bytearray)):
+        try:
+            out = data.decode("utf-8")
+        except UnicodeDecodeError:
+            out = data
+            pass
+
+        return out
+    if isinstance(data, dict):
+        return {
+            recursive_convert_bytes_to_str(k): recursive_convert_bytes_to_str(v)
+            for k, v in data.items()
+        }
+    if isinstance(data, (list, tuple, set)):
+        return type(data)(recursive_convert_bytes_to_str(item) for item in data)
+
+    return data
+
+
 # nice labels for things
 pretty = {
     "logzsol": r"$\log (Z_{\star}/Z_{\odot})$",
@@ -135,6 +155,9 @@ class Plotspector(FigureMaker):
         self.agebins = np.array(self.model.params["agebins"])"""
 
         self.parchain = self.convert(self.chain)
+
+        # fix items in self.result which are bytes instead of strings
+        self.result = recursive_convert_bytes_to_str(self.result)
 
     def save_updated_h5(self, data_to_add, name_to_add):
         import tables
@@ -474,7 +497,7 @@ class Plotspector(FigureMaker):
         color="slateblue",
         **kwargs,
     ):
-        # This methoduses the best fit parameters to plot the best fit SED when fitted to photometry.
+        # This method uses the best fit parameters to plot the best fit SED when fitted to photometry.
 
         if ax is None:
             ax = self.sedax
@@ -652,7 +675,6 @@ class Plotspector(FigureMaker):
         # legend
         axi.legend(prop={"size": 4.5}, loc="upper left")
 
-    '''
     def plot_sed_new(
         self,
         sedax=None,
@@ -668,14 +690,12 @@ class Plotspector(FigureMaker):
         label_spec="auto",
         color="black",
     ):
-
         # This is model config.
         # print(model.init_config)
         """A very basic plot of the observed photometry and the best fit
         photometry and spectrum.
         """
         # --- Data ---
-
 
         # models
 
@@ -687,6 +707,7 @@ class Plotspector(FigureMaker):
         blob = self.model.predict(xbest, obs=self.obs, sps=self.sps)
         self.spec_best, self.phot_best, self.mfrac_best = blob
 
+        pmask = self.obs.get("phot_mask", np.ones_like(self.obs["maggies"], dtype=bool))
         pwave, phot_best = self.obs["phot_wave"][pmask], self.phot_best[pmask]
 
         spec_best = self.spec_best
@@ -743,7 +764,6 @@ class Plotspector(FigureMaker):
         else:
             ax = sedax
 
-
         # marker='s', markersize=10, alpha=0.8, ls='', lw=3, markerfacecolor='none', markeredgecolor='slateblue', markeredgewidth=3
         """
         if output != None or result != None:
@@ -779,7 +799,6 @@ class Plotspector(FigureMaker):
         # secax.set_ylabel('AB Mag')
         # fig.canvas.draw()
         # secax.yaxis.set_major_formatter(ScalarFormatter())
-    '''
 
     def nonpar_recent_sfr_flex(
         self,
@@ -2260,7 +2279,7 @@ class Plotspector(FigureMaker):
         display_type={"total_mass": "log_10"},
     ):
         from sklearn.neighbors import KernelDensity
-        
+
         fig = plt.figure(facecolor="w", edgecolor="k", constrained_layout=True)
         gs = fig.add_gridspec(4, 5)
         self.param_name = param_name

@@ -70,13 +70,19 @@ if __name__ == "__main__":
                 run_dicts[id]["filters"] = filters
 
                 phot = copy.deepcopy(input_dict[galaxy]["phot"])
-                phot = phot[pos] if type(phot) is list else phot
+
+                # phot = phot[pos] if type(phot) is list and len(phot) > 1 else phot
                 phot = np.array(phot)
-                assert len(phot.shape) == 2, "Photometry must be a 2D array."
-                assert phot.shape[1] == 2, "Photometry must have two columns."
-                assert len(phot) == len(
-                    filters
-                ), "Photometry must have the same number of rows as filters."
+                assert (
+                    len(phot.shape) == 2
+                ), f"Photometry must be a 2D array, got shape {phot.shape}"
+                assert (
+                    phot.shape[1] == 2
+                ), f"Photometry must have two columns, got shape {phot.shape}"
+                print(filters)
+                assert (
+                    len(phot) == len(filters)
+                ), f"Photometry must have the same number of rows as filters, got {phot.shape[0]} rows and {len(filters)} filters."
 
                 run_dicts[id]["flux"] = phot[:, 0]
                 run_dicts[id]["flux_err"] = phot[:, 1]

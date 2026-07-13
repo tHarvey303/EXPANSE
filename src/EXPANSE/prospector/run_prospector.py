@@ -30,8 +30,9 @@ try:
     from prospect.utils.obsutils import fix_obs
     from sedpy import observate
 
-    assert prospect.__version__ == "1.4.0"
-except ImportError:
+    assert prospect.__version__.startswith("1.4")
+except ImportError as e:
+    print(f"Error importing required modules: {e}")
     pass
 
 import copy
@@ -165,7 +166,7 @@ def build_sps(run_params, obs=None, **extras):
         "dirichlet",
         "alpha",
         "beta",
-    ]:
+    ] or run_params["model_with_defaults"]["use_builtin"] in ["alpha", "beta"]:
         sps = FastStepBasis(zcontinuous=1, compute_vega_mags=False)
     elif run_params["model_with_defaults"]["sfh"]["model"] in [
         "rising",
@@ -987,6 +988,11 @@ def build_obs(run_params):
             type(flux_err) is u.Quantity or "flux_unit" in run_params
         ), "Flux error must be astropy quantity"
 
+        # Convert flux unit back to a unit if it was passed as a string
+        if run_params.get("flux_unit", None) is not None:
+            if isinstance(run_params["flux_unit"], str):
+                run_params["flux_unit"] = u.Unit(run_params["flux_unit"])
+
         if "flux_unit" in run_params:
             flux = flux * run_params["flux_unit"]
             flux_err = flux_err * run_params["flux_unit"]
@@ -1089,6 +1095,12 @@ def build_obs(run_params):
 
     fixed_obs = fix_obs(obs_dict)
 
+    if "wavelength" not in fixed_obs:
+        fixed_obs["wavelength"] = None
+
+    print("fixed")
+    print(fixed_obs)
+
     return fixed_obs
 
 
@@ -1100,16 +1112,19 @@ def build_all(run_params):
     sps = build_sps(run_params, obs=obs)
     if rank == 0:
         print("Built SPS model.")
+
+    print(type(sps))
+
+    # sps.get_galaxy_spectrum()
     noise = build_noise(run_params)
     return obs, model, sps, noise
 
 
 def sanity_check_run_params(run_params):
     required = ["OBJID", "input_model", "sampler"]
-
     for r in required:
         if r not in run_params:
-            raise ValueError(f"{r} not found in run_params.")
+            raise ValueError(f"{r} not found in run_params, got {list(run_params.keys())}")
 
 
 def fix_params(params):
@@ -1124,6 +1139,8 @@ def fix_params(params):
             params[key] = str(key)
         elif isinstance(value, tuple):
             params[key] = list(value)
+        elif isinstance(value, u.Unit):
+            params[key] = str(value)
 
         if callable(value):
             params[key] = str(value.__name__)
@@ -1141,6 +1158,8 @@ def fix_params(params):
                 elif isinstance(v, tuple):
                     value[i] = list(v)
                 elif callable(v):
+                    value[i] = str(v)
+                elif isinstance(v, u.Unit):
                     value[i] = str(v)
 
         if type(params[key]) not in [int, float, str, list, dict, bool, type(None), tuple]:
@@ -1276,15 +1295,26 @@ def main(config):
                 return False
             else:
                 print("Found .h5")
+        else:
+            hfile = path
 
         res, obs, model = reader.results_from(hfile)
+        print("Readed in.")
         fig_obj = Plotspector(results_file=hfile)
+        print("Made Plotspector")
 
         # Trace plots
         run_params = res["run_params"]
         id = run_params["OBJID"]
-        field = run_params["field"]
-        sfh_model = run_params["sfh"]["model"]
+        field = run_params.get("field", "unknown_field")
+        print(run_params.keys())
+        print(run_params["input_model"])
+        print("next")
+        print(run_params["model_with_defaults"])
+        if run_params["input_model"].get("use_builtin", False):
+            sfh_model = run_params["input_model"]["use_builtin"]
+        else:
+            sfh_model = run_params["input_model"]["sfh"]["model"]
         sampler = run_params["sampler"]
         plot = True
         custom = run_params.get("custom", "")
@@ -1302,15 +1332,18 @@ def main(config):
             print(f"Am I plotting? {plot}")
             if plot:
                 tfig = reader.traceplot(res)
+                if not os.path.exists(f"{path}/plots/"):
+                    os.makedirs(f"{path}/plots/")
+
                 tfig.savefig(f"{path}/plots/{id}_{name_path}_trace.png")
                 print("Saved trace plot.")
                 tfig.clf()
                 # Corner figure of posterior PDFs
                 # cfig = reader.sub(res)
-                cfig = res
-                cfig.savefig(f"{path}/plots/{id}_{name_path}__phot.png", dpi=300)
-                cfig.clf()
-                print("Saved  plot.")
+                # cfig = reader.corner(res)
+                # cfig.savefig(f"{path}/plots/{id}_{name_path}__phot.png", dpi=300)
+                # cfig.clf()
+                # print("Saved corner plot.")
 
                 fig = fig_obj.pretty_plot()
                 if fig:
@@ -1331,7 +1364,7 @@ def main(config):
             sed_path = f"{path}/seds/{name_path}_sed"
             print(f"{path}/seds/{name_path}_sed.ecsv")
             fig_obj.save_sed(sed_path, save=True)
-            print("Saved best-fitting SED.")
+            print(f"Saved best-fitting SED to {sed_path}")
 
         except FileNotFoundError as e:  # IndexError normally
             print(
