@@ -281,6 +281,21 @@ class GalaxyTab(param.Parameterized):
 
     interactive_eazy_z_range = param.List(default=[0.01, 20], bounds=(0, 25))
 
+    # Parameters for region editor tab
+    region_band = param.Selector(default="F444W")
+    region_image_type = param.Selector(default="Original", objects=["Original", "PSF Matched"])
+    region_show_snr = param.Boolean(default=False, doc="Show SNR map instead of flux image")
+    region_edit_mode = param.Selector(
+        default="Draw shapes", objects=["Draw shapes", "Click pixels"]
+    )
+    region_shape_type = param.Selector(default="Rectangle", objects=["Rectangle", "Ellipse"])
+    region_snr_threshold = param.Number(default=3.0)
+    region_apply_snr_filter = param.Boolean(
+        default=False, doc="Only include pixels above the SNR threshold when applying shapes"
+    )
+    region_name = param.String(default="")
+    region_version = param.Integer(default=0, doc="Bumped to force a full region plot redraw")
+
     @notify_on_error
     @param.depends()
     def __init__(self, resolved_galaxy, facecolor="#f7f7f7", **params):
@@ -296,7 +311,13 @@ class GalaxyTab(param.Parameterized):
         self.resolved_galaxy = resolved_galaxy
 
         self.facecolor = facecolor
+
+        # Boolean pixel mask edited in the Region Editor tab
+        cutout_size = int(self.resolved_galaxy.cutout_size)
+        self.region_mask = np.zeros((cutout_size, cutout_size), dtype=bool)
+
         self.setup_widgets()
+        self.setup_region_widgets()
         self.setup_streams()
         self.setup_tabs()
 
@@ -691,6 +712,107 @@ class GalaxyTab(param.Parameterized):
         self.interactive_eazy_templates_widget.link(self, value="interactive_eazy_templates")
 
     @notify_on_error
+    @param.depends()
+    def setup_region_widgets(self):
+        bands = self.resolved_galaxy.bands
+
+        if self.region_band not in bands:
+            self.region_band = bands[-1]
+
+        self.region_band_widget = pn.widgets.Select(
+            name="Band",
+            options=bands,
+            value=self.region_band,
+        )
+        self.region_band_widget.link(self, value="region_band")
+
+        psf_matched = getattr(self.resolved_galaxy, "psf_matched_data", None)
+        has_psf_matched = bool(psf_matched) and bool(
+            psf_matched.get(getattr(self.resolved_galaxy, "use_psf_type", None))
+        )
+        image_type_options = ["Original"] + (["PSF Matched"] if has_psf_matched else [])
+        if has_psf_matched:
+            self.region_image_type = "PSF Matched"
+
+        self.region_image_type_widget = pn.widgets.Select(
+            name="Image Type",
+            options=image_type_options,
+            value=self.region_image_type,
+        )
+        self.region_image_type_widget.link(self, value="region_image_type")
+
+        self.region_show_snr_widget = pn.widgets.Checkbox(
+            name="Show SNR map", value=self.region_show_snr
+        )
+        self.region_show_snr_widget.link(self, value="region_show_snr")
+
+        self.region_edit_mode_widget = pn.widgets.RadioButtonGroup(
+            name="Edit Mode",
+            options=["Draw shapes", "Click pixels"],
+            value=self.region_edit_mode,
+            button_type="primary",
+        )
+        self.region_edit_mode_widget.link(self, value="region_edit_mode")
+
+        self.region_shape_type_widget = pn.widgets.RadioButtonGroup(
+            name="Box Interpretation",
+            options=["Rectangle", "Ellipse"],
+            value=self.region_shape_type,
+        )
+        self.region_shape_type_widget.link(self, value="region_shape_type")
+
+        self.region_snr_threshold_widget = pn.widgets.FloatInput(
+            name="SNR Threshold", value=self.region_snr_threshold, step=0.5, width=140
+        )
+        self.region_snr_threshold_widget.link(self, value="region_snr_threshold")
+
+        self.region_apply_snr_filter_widget = pn.widgets.Checkbox(
+            name="Restrict shapes to pixels above SNR threshold",
+            value=self.region_apply_snr_filter,
+        )
+        self.region_apply_snr_filter_widget.link(self, value="region_apply_snr_filter")
+
+        self.region_add_shapes_button = pn.widgets.Button(
+            name="Add shapes to region", button_type="primary"
+        )
+        self.region_subtract_shapes_button = pn.widgets.Button(
+            name="Subtract shapes from region", button_type="warning"
+        )
+        self.region_clear_shapes_button = pn.widgets.Button(name="Discard drawn shapes")
+
+        self.region_select_snr_button = pn.widgets.Button(
+            name="Add all pixels ≥ SNR threshold", button_type="primary"
+        )
+        self.region_trim_snr_button = pn.widgets.Button(
+            name="Remove pixels < SNR threshold", button_type="warning"
+        )
+        self.region_clear_mask_button = pn.widgets.Button(name="Clear region", button_type="danger")
+
+        self.region_name_widget = pn.widgets.TextInput(
+            name="Region Name", placeholder="e.g. clump_A", value=self.region_name
+        )
+        self.region_name_widget.link(self, value="region_name")
+
+        self.region_save_button = pn.widgets.Button(
+            name="Save region to .h5", button_type="success"
+        )
+
+        existing_regions = list((self.resolved_galaxy.gal_region or {}).keys())
+        self.region_load_widget = pn.widgets.Select(
+            name="Existing Regions",
+            options=existing_regions,
+            value=existing_regions[0] if existing_regions else None,
+        )
+        self.region_load_button = pn.widgets.Button(name="Load region")
+
+        self.region_status = pn.pane.Markdown(self._region_status_text(), width=400)
+
+    def _region_status_text(self):
+        n_sel = int(np.sum(self.region_mask))
+        n_tot = self.region_mask.size
+        return f"**Selected pixels:** {n_sel} ({100 * n_sel / n_tot:.1f}% of cutout)"
+
+    @notify_on_error
     @param.depends("point_selector.point")
     def update_selected_bins(self):
         if self.point_selector.point:
@@ -959,6 +1081,9 @@ class GalaxyTab(param.Parameterized):
             self.create_interactive_tab, loading_indicator=True, lazy=True
         )
         self.info_tabs.append(("Interactive", self.interactive_tab))
+
+        self.region_tab = pn.panel(self.create_region_tab, loading_indicator=True, lazy=True)
+        self.info_tabs.append(("Region Editor", self.region_tab))
 
         if subprocess.getstatusoutput("which fitsmap")[0] == 0 and not isinstance(
             self.resolved_galaxy, MockResolvedGalaxy
@@ -1463,6 +1588,329 @@ class GalaxyTab(param.Parameterized):
         self.interactive_plot = pn.pane.HoloViews(plot, height=500, width=500)
 
         return self.interactive_plot
+
+    # ------------------------------------------------------------------
+    # Region Editor tab
+    # ------------------------------------------------------------------
+
+    def _get_region_image(self):
+        band = self.region_band
+        if self.region_image_type == "PSF Matched":
+            psf_type = getattr(self.resolved_galaxy, "use_psf_type", None)
+            img = self.resolved_galaxy.psf_matched_data[psf_type][band]
+        else:
+            img = self.resolved_galaxy.phot_imgs[band]
+        return np.asarray(img, dtype=float)
+
+    def _get_region_snr(self):
+        band = self.region_band
+        if self.region_image_type == "PSF Matched":
+            psf_type = getattr(self.resolved_galaxy, "use_psf_type", None)
+            img = self.resolved_galaxy.psf_matched_data[psf_type][band]
+            err = self.resolved_galaxy.psf_matched_rms_err[psf_type][band]
+        else:
+            img = self.resolved_galaxy.phot_imgs[band]
+            err = self.resolved_galaxy.rms_err_imgs[band]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            snr = np.asarray(img, dtype=float) / np.asarray(err, dtype=float)
+        return np.nan_to_num(snr, nan=0.0, posinf=0.0, neginf=0.0)
+
+    def _region_mask_rgb(self, data=None):
+        mask = data if data is not None else self.region_mask
+        h, w = mask.shape
+        rgba = np.zeros((h, w, 4), dtype=float)
+        rgba[..., 0] = 1.0
+        rgba[..., 1] = 0.2
+        rgba[..., 3] = np.where(mask, 0.5, 0.0)
+        # flipud to match the flipped background image orientation
+        return hv.RGB(np.flipud(rgba), bounds=(0, 0, w, h))
+
+    def _update_region_overlay(self):
+        if hasattr(self, "region_mask_pipe"):
+            self.region_mask_pipe.send(self.region_mask)
+        if hasattr(self, "region_status"):
+            self.region_status.object = self._region_status_text()
+
+    @notify_on_error
+    def _on_region_tap(self, x=None, y=None):
+        if self.region_edit_mode != "Click pixels":
+            return
+        if x is None or y is None:
+            return
+        ix, iy = int(np.floor(x)), int(np.floor(y))
+        h, w = self.region_mask.shape
+        if 0 <= ix < w and 0 <= iy < h:
+            self.region_mask[iy, ix] = ~self.region_mask[iy, ix]
+            self._update_region_overlay()
+
+    def _shapes_to_mask(self):
+        """Rasterize the currently drawn boxes/ellipses/polygons to a boolean pixel mask."""
+        from matplotlib.path import Path
+
+        h, w = self.region_mask.shape
+        yy, xx = np.mgrid[0:h, 0:w]
+        # pixel centres in data coordinates
+        cx = xx + 0.5
+        cy = yy + 0.5
+        shape_mask = np.zeros((h, w), dtype=bool)
+
+        box_data = getattr(self, "region_box_stream", None)
+        box_data = box_data.data if box_data is not None else None
+        if box_data and len(box_data.get("x0", [])) > 0:
+            for x0, y0, x1, y1 in zip(
+                box_data["x0"], box_data["y0"], box_data["x1"], box_data["y1"]
+            ):
+                xlo, xhi = sorted((x0, x1))
+                ylo, yhi = sorted((y0, y1))
+                if self.region_shape_type == "Ellipse":
+                    a = (xhi - xlo) / 2
+                    b = (yhi - ylo) / 2
+                    if a <= 0 or b <= 0:
+                        continue
+                    x_c = (xlo + xhi) / 2
+                    y_c = (ylo + yhi) / 2
+                    shape_mask |= ((cx - x_c) / a) ** 2 + ((cy - y_c) / b) ** 2 <= 1
+                else:
+                    shape_mask |= (cx >= xlo) & (cx <= xhi) & (cy >= ylo) & (cy <= yhi)
+
+        poly_data = getattr(self, "region_poly_stream", None)
+        poly_data = poly_data.data if poly_data is not None else None
+        if poly_data and len(poly_data.get("xs", [])) > 0:
+            centers = np.column_stack([cx.ravel(), cy.ravel()])
+            for xs, ys in zip(poly_data["xs"], poly_data["ys"]):
+                if xs is None or len(xs) < 3:
+                    continue
+                path = Path(np.column_stack([xs, ys]))
+                shape_mask |= path.contains_points(centers).reshape(h, w)
+
+        return shape_mask
+
+    @notify_on_error
+    def apply_region_shapes(self, event, subtract=False):
+        shape_mask = self._shapes_to_mask()
+        if not shape_mask.any():
+            pn.state.notifications.warning(
+                "No shapes drawn (or shapes cover no pixel centres).", duration=4000
+            )
+            return
+        if subtract:
+            self.region_mask &= ~shape_mask
+        else:
+            if self.region_apply_snr_filter:
+                shape_mask &= self._get_region_snr() >= self.region_snr_threshold
+            self.region_mask |= shape_mask
+        # Full redraw to clear the drawn shapes from the plot
+        self.region_version += 1
+        if hasattr(self, "region_status"):
+            self.region_status.object = self._region_status_text()
+
+    @notify_on_error
+    def discard_region_shapes(self, event):
+        self.region_version += 1
+
+    @notify_on_error
+    def select_region_snr_pixels(self, event):
+        self.region_mask |= self._get_region_snr() >= self.region_snr_threshold
+        self._update_region_overlay()
+
+    @notify_on_error
+    def trim_region_snr_pixels(self, event):
+        self.region_mask &= self._get_region_snr() >= self.region_snr_threshold
+        self._update_region_overlay()
+
+    @notify_on_error
+    def clear_region_mask(self, event):
+        self.region_mask[:] = False
+        self._update_region_overlay()
+
+    @notify_on_error
+    def save_region(self, event):
+        name = (self.region_name or "").strip()
+        if not name:
+            pn.state.notifications.error("Please enter a region name before saving.", duration=4000)
+            return
+        if not self.region_mask.any():
+            pn.state.notifications.warning("Region is empty - nothing to save.", duration=4000)
+            return
+
+        if self.resolved_galaxy.gal_region is None:
+            self.resolved_galaxy.gal_region = {}
+
+        mask = self.region_mask.astype(np.uint8)
+        self.resolved_galaxy.gal_region[name] = mask
+        self.resolved_galaxy.add_to_h5(
+            mask,
+            "galaxy_region",
+            name,
+            overwrite=True,
+            force=True,
+            meta={
+                "origin": "manual (Region Editor)",
+                "band": self.region_band,
+                "image_type": self.region_image_type,
+            },
+        )
+
+        options = list(self.resolved_galaxy.gal_region.keys())
+        self.region_load_widget.options = options
+        self.region_load_widget.value = name
+        pn.state.notifications.success(
+            f"Saved region '{name}' ({int(mask.sum())} pixels) to "
+            f"{os.path.basename(self.resolved_galaxy.h5_path)}",
+            duration=5000,
+        )
+
+    @notify_on_error
+    def load_region(self, event):
+        key = self.region_load_widget.value
+        gal_region = self.resolved_galaxy.gal_region or {}
+        if not key or key not in gal_region:
+            pn.state.notifications.warning("No existing region selected.", duration=4000)
+            return
+        arr = np.asarray(gal_region[key])
+        if arr.shape != self.region_mask.shape:
+            pn.state.notifications.error(
+                f"Region '{key}' has shape {arr.shape}, expected {self.region_mask.shape}.",
+                duration=5000,
+            )
+            return
+        self.region_mask = arr > 0
+        self.region_name_widget.value = key
+        self._update_region_overlay()
+
+    @notify_on_error
+    @param.depends(
+        "region_band",
+        "region_image_type",
+        "region_show_snr",
+        "region_version",
+    )
+    def create_region_plot(self):
+        if self.region_show_snr:
+            image_data = self._get_region_snr()
+        else:
+            image_data = self._get_region_image()
+
+        h, w = image_data.shape
+        image = hv.Image(np.flipud(image_data), bounds=(0, 0, w, h))
+
+        lower, upper = np.nanpercentile(image_data, [5, 99.5])
+        if lower <= 0:
+            lower = upper / 1e4 if upper > 0 else 1e-10
+
+        image.opts(
+            aspect="equal",
+            xaxis=None,
+            yaxis=None,
+            width=550,
+            height=500,
+            cnorm="log",
+            clim=(lower, upper),
+            cmap="viridis" if self.region_show_snr else "gray",
+            colorbar=self.region_show_snr,
+        )
+
+        boxes = hv.Rectangles([])
+        polys = hv.Polygons([])
+
+        self.region_box_stream = streams.BoxEdit(source=boxes, num_objects=30)
+        self.region_poly_stream = streams.PolyDraw(
+            source=polys, drag=True, num_objects=30, show_vertices=True
+        )
+
+        self.region_tap_stream = streams.Tap(source=image, transient=True)
+        self.region_tap_stream.add_subscriber(self._on_region_tap)
+
+        self.region_mask_pipe = hv.streams.Pipe(data=self.region_mask)
+        mask_dmap = hv.DynamicMap(self._region_mask_rgb, streams=[self.region_mask_pipe])
+
+        plot = (image * mask_dmap * boxes * polys).opts(
+            opts.Rectangles(
+                fill_alpha=0.25,
+                fill_color="lime",
+                line_color="lime",
+                active_tools=["box_edit"],
+            ),
+            opts.Polygons(
+                fill_alpha=0.25,
+                fill_color="deepskyblue",
+                line_color="deepskyblue",
+            ),
+        )
+
+        self.region_plot = pn.pane.HoloViews(plot, height=500, width=600)
+        return self.region_plot
+
+    @notify_on_error
+    @param.depends()
+    def create_region_tab(self):
+        if not getattr(self, "_region_buttons_wired", False):
+            self.region_add_shapes_button.on_click(
+                functools.partial(self.apply_region_shapes, subtract=False)
+            )
+            self.region_subtract_shapes_button.on_click(
+                functools.partial(self.apply_region_shapes, subtract=True)
+            )
+            self.region_clear_shapes_button.on_click(self.discard_region_shapes)
+            self.region_select_snr_button.on_click(self.select_region_snr_pixels)
+            self.region_trim_snr_button.on_click(self.trim_region_snr_pixels)
+            self.region_clear_mask_button.on_click(self.clear_region_mask)
+            self.region_save_button.on_click(self.save_region)
+            self.region_load_button.on_click(self.load_region)
+            self._region_buttons_wired = True
+
+        plot_pane = pn.param.ParamMethod(self.create_region_plot, loading_indicator=True)
+
+        help_md = pn.pane.Markdown(
+            """
+            ### How to use
+
+            - The red overlay shows the current region mask.
+            - **Draw shapes** mode: use the *Box Edit* tool (double-click, drag,
+              double-click) or the *Poly Draw* tool (double-click to start,
+              click vertices, double-click to finish). Select a shape and hit
+              `Backspace` to delete it. Boxes are interpreted as rectangles or
+              inscribed ellipses depending on the *Box Interpretation* setting.
+              Click *Add/Subtract shapes* to apply them to the mask (this
+              clears the drawn shapes and resets the zoom).
+            - **Click pixels** mode: click directly on the image to toggle
+              individual pixels (deselect the draw tools in the toolbar first).
+            - Enable *Show SNR map* to display the per-pixel SNR of the current
+              band, which helps choosing an SNR threshold. The SNR buttons
+              add/remove pixels based on the threshold for the current band.
+            - Name the region and click *Save region to .h5* to store it in the
+              galaxy's `galaxy_region` HDF5 group, making it available
+              elsewhere (e.g. binning, photometry).
+            """,
+            width=420,
+        )
+
+        controls = pn.Column(
+            "### Region Editor",
+            pn.Row(self.region_band_widget, self.region_image_type_widget),
+            self.region_show_snr_widget,
+            pn.layout.Divider(),
+            "#### Editing",
+            self.region_edit_mode_widget,
+            self.region_shape_type_widget,
+            pn.Row(self.region_add_shapes_button, self.region_subtract_shapes_button),
+            self.region_clear_shapes_button,
+            pn.layout.Divider(),
+            "#### SNR Filtering",
+            pn.Row(self.region_snr_threshold_widget, self.region_apply_snr_filter_widget),
+            pn.Row(self.region_select_snr_button, self.region_trim_snr_button),
+            pn.layout.Divider(),
+            "#### Save / Load",
+            pn.Row(self.region_name_widget, self.region_save_button),
+            pn.Row(self.region_load_widget, self.region_load_button),
+            self.region_clear_mask_button,
+            width=460,
+        )
+
+        return pn.Row(
+            pn.Column(plot_pane, self.region_status, help_md),
+            controls,
+        )
 
     @notify_on_error
     @param.depends("which_interactive_sed_fitter")
