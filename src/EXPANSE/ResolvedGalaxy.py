@@ -120,6 +120,10 @@ else:
         print("Can't find resolved galaxy directory, using default")
         print(resolved_galaxy_dir)
 
+resolved_galaxy_dir = (
+    "/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/EXPANSE/galaxies/"
+)
+
 
 class ResolvedGalaxy:
     # Why is this attribute shared between all instances?
@@ -7105,6 +7109,16 @@ class ResolvedGalaxy:
 
         if smooth:
             galaxy_region = self._smooth_map(galaxy_region, connectivity=4)
+
+        # check if region_name already exists in self.gal_region, if so, overwrite if overwrite=True, else raise error
+        if hasattr(self, "gal_region") and region_name in self.gal_region.keys():
+            if overwrite:
+                print(f"Overwriting galaxy region {region_name}")
+            else:
+                print(
+                    f"Skipping galaxy region {region_name} as it already exists and overwrite is False"
+                )
+                return None
 
         self.add_to_h5(galaxy_region, "galaxy_region", region_name, overwrite=overwrite)
 

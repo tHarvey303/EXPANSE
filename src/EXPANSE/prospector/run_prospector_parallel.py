@@ -89,6 +89,18 @@ if __name__ == "__main__":
                 run_dicts[id]["min_percentage_err"] = 0  # already applied
                 run_dicts[id]["flux_unit"] = u.Jy
 
+                # Optional photometry mask (True = fit band). A flat list
+                # applies to all ids; a list-of-lists is per-id like filters.
+                phot_mask = copy.deepcopy(input_dict[galaxy].get("phot_mask", None))
+                if phot_mask is not None:
+                    if len(phot_mask) and isinstance(phot_mask[0], (list, tuple)):
+                        phot_mask = phot_mask[pos]
+                    assert len(phot_mask) == len(
+                        filters
+                    ), f"phot_mask length {len(phot_mask)} != {len(filters)} filters"
+                    # plain bools: run_params are JSON-serialised into the h5
+                    run_dicts[id]["phot_mask"] = [bool(m) for m in phot_mask]
+
                 out_dir = f'{input_dict[galaxy]["out_dir"]}/{id}.h5'
                 run_dicts[id]["run_path"] = out_dir
                 run_dicts[id]["load"] = os.path.exists(out_dir)

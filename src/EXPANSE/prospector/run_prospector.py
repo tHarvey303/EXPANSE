@@ -300,11 +300,15 @@ def setup_parameter(param_name, param_value, model_params, prior_conv=None, mini
                             assert (
                                 "maxi" not in param_value
                             ), "Cannot specify both prior_range and mini/maxi"
-                            param_value["mini"] = prior_range[0]
-                            param_value["maxi"] = prior_range[1]
-
-                        mini = param_value.get("mini", -1 * mini_sigma * sigma)
-                        maxi = param_value.get("maxi", mini_sigma * sigma)
+                            # NB: don't write these back into param_value -
+                            # the dict is part of run_params and gets
+                            # serialised into the output file; mutating it
+                            # here trips the assertion above when the model
+                            # is rebuilt from the saved run_params on load.
+                            mini, maxi = prior_range[0], prior_range[1]
+                        else:
+                            mini = param_value.get("mini", -1 * mini_sigma * sigma)
+                            maxi = param_value.get("maxi", mini_sigma * sigma)
 
                         model_params[param_name]["prior"] = prior_conv[prior_type](
                             mean=mean, sigma=sigma, mini=mini, maxi=maxi
@@ -824,7 +828,26 @@ def build_model(run_params):
 
     fit_type = run_params["fit_type"]
     if fit_type == "phot":
-        model = SedModel
+        # SedModel predicts photometry from the FSPS spectrum with emission
+        # lines baked in (nebemlineinspec=True), so individual lines cannot
+        # be removed. If the nebular config lists 'elines_to_ignore' (e.g.
+        # Ly-alpha at z>6, resonantly scattered by the neutral IGM), switch
+        # to SpecModel: with nebemlineinspec=False it adds the cloudy lines
+        # itself and excludes the ignored ones from spectra and photometry.
+        # Names must match $SPS_HOME/data/emlines_info.dat.
+        elines_to_ignore = model_run_params.get("nebular", {}).get("elines_to_ignore", None)
+        if elines_to_ignore and "nebemlineinspec" in model_params:
+            if rank == 0:
+                print(f"Using SpecModel; ignoring emission lines: {elines_to_ignore}")
+            model = SpecModel
+            model_params["nebemlineinspec"]["init"] = False
+            model_params["elines_to_ignore"] = {
+                "N": 1,
+                "isfree": False,
+                "init": list(elines_to_ignore),
+            }
+        else:
+            model = SedModel
     elif fit_type == "spec" or fit_type == "both":
         # smooth_type - options are 'vel', 'R', 'lambda', 'lsf'
         #   vel - velocity smoothing - resolution in km/s

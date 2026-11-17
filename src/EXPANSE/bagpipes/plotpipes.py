@@ -300,10 +300,19 @@ class PipesFitNoLoad:
             if "advanced_quantities" not in data.keys():
                 self.has_advanced_quantities = False
 
-    def _load_item_from_h5(self, items, percentiles=False, perc=(16, 50, 84), transpose=False):
+    def _load_item_from_h5(
+        self,
+        items,
+        percentiles=False,
+        perc=(16, 50, 84),
+        transpose=False,
+        broad_factor=None,
+        broad_seed=42,
+    ):
         if type(items) == str:
             items = [items]
         return_items = []
+        return_keys = []
         with h5py.File(self.h5_path, "r") as data:
             for item in items:
                 if item in data.keys():
@@ -317,6 +326,41 @@ class PipesFitNoLoad:
                     return_items.append(data["advanced_quantities"][item][()])
                 else:
                     raise KeyError(f"{item} not found in h5 file.")
+                return_keys.append(item)
+
+        if broad_factor is not None and broad_factor > 0:
+            # Storage space inferred from plot_pdf's np.log10 handling in THIS codebase:
+            #   stellar_mass -> already log10  ;  sfr, formed_mass -> linear.
+            broaden_space = {
+                "stellar_mass": "log",
+                "formed_mass": "linear",
+                "sfr": "linear",
+                "sfr_10myr": "linear",
+                "M_UV": "mag",
+            }
+            rng = np.random.default_rng(broad_seed)
+            for i, key in enumerate(return_keys):
+                space = broaden_space.get(key)
+                if space is None:
+                    import warnings
+
+                    warnings.warn(
+                        f"broad_factor ignored for '{key}': not a recognised "
+                        f"extensive quantity (add it to broaden_space if it "
+                        f"should scale with the magnification)."
+                    )
+                    continue
+                arr = np.asarray(return_items[i], dtype=float)
+                good = np.isfinite(arr)
+                noise = broad_factor * rng.standard_normal(int(good.sum()))
+                if space == "log":
+                    arr[good] += noise
+                elif space == "mag":
+                    arr[good] += noise * 2.5
+                else:
+                    arr[good] *= 10.0**noise
+
+                return_items[i] = arr
 
         if percentiles:
             return_items = [np.percentile(item, perc, axis=0) for item in return_items]
@@ -1077,6 +1121,8 @@ class PipesFitNoLoad:
         norm_height=False,
         filter_neg=False,
         label=True,
+        broad_factor=None,
+        broad_seed=0,
     ):
         """Plot posterior PDF for a parameter.
 
@@ -1089,9 +1135,18 @@ class PipesFitNoLoad:
             return_samples: Return raw samples instead of plotting
             linelabel: Legend label
             norm_height: Normalize peak height to 1
+            filter_neg: Drop non-positive samples before processing
+            label: Draw the x-axis label
+            broad_factor: If not None, broaden the posterior by convolving it with a
+                Gaussian of this width (samples -> samples + N(0, broad_factor)).
+                Units are those of the *plotted* quantity: for log parameters
+                (stellar_mass, sfr, formed_mass) this is dex — e.g. pass
+                sig_log10_mu (~0.07) to fold in the achromatic magnification
+                systematic. Only meaningful for extensive/log quantities; do NOT use
+                on Av, age, redshift or colours (mu does not scale them).
+            broad_seed: RNG seed, for reproducible broadening.
         """
-        # Load parameter samples
-        samples = self._load_item_from_h5(parameter)[:]
+        samples = np.asarray(self._load_item_from_h5(parameter)[:], dtype=float)
 
         from bagpipes.plotting import fix_param_names
 
@@ -1100,37 +1155,42 @@ class PipesFitNoLoad:
         if filter_neg:
             samples = samples[samples > 0]
 
-        # Special handling for some parameters
+        # Convert to log where samples are stored linearly, so a dex broadening is valid.
         if parameter == "sfr" or parameter == "formed_mass":
             samples = np.log10(samples)
             labeltxt = rf"$\log_{{10}}({labeltxt})$"
 
+        # --- Broaden the posterior (e.g. achromatic mu systematic) --------------
+        # Convolving a distribution with N(0, s) == adding independent Gaussian
+        # noise of width s to each sample. Done BEFORE return_samples / KDE so the
+        # returned and plotted distributions are the same object.
+        if broad_factor is not None and broad_factor > 0:
+            rng = np.random.default_rng(broad_seed)
+            good = np.isfinite(samples)
+            samples[good] += broad_factor * rng.standard_normal(good.sum())
+        # ------------------------------------------------------------------------
+
         if return_samples:
             return samples
 
-        # Calculate smoothed histogram
         from scipy.stats import gaussian_kde
 
-        kde = gaussian_kde(samples[~np.isnan(samples)])
-        x_plot = np.linspace(np.nanmin(samples), np.nanmax(samples), 100)
+        good = samples[np.isfinite(samples)]
+        kde = gaussian_kde(good)
+        x_plot = np.linspace(good.min(), good.max(), 200)  # min/max now reflect broadening
         y = kde(x_plot)
 
         if norm_height:
             y = y / np.nanmax(y)
 
-        # Plot PDF
         ax.plot(x_plot, y, color=colour, alpha=alpha, label=linelabel)
-
         if fill_between:
             ax.fill_between(x_plot, y, color=colour, alpha=0.3)
-
         if label:
             ax.set_xlabel(labeltxt, fontsize="small", fontweight="bold")
 
-        # Remove y ticks since PDF height is arbitrary
-        ax.set_yticks([])
+        ax.set_yticks([])  # PDF height is arbitrary
 
-        # Auto x ticks
         from matplotlib.ticker import MaxNLocator
 
         ax.xaxis.set_major_locator(MaxNLocator(3))
@@ -2002,6 +2062,7 @@ class PipesFit:
         return_samples=False,
         linelabel="",
         norm_height=False,
+        broad_factor=None,
         **kwargs,
     ):
         # Generate list of parameters to plot

@@ -892,8 +892,16 @@ class Plotspector(FigureMaker):
         self.id = params["OBJID"]
         # Need to change this when fitting z
 
-        self.field = params["field"]
-        self.sfh_model = params["sfh_model"]
+        # The EXPANSE batch runner does not store 'field'/'sfh_model' at the
+        # top level of run_params - fall back to meta / input_model.
+        self.field = params.get("field", params.get("meta", {}).get("run_name", "unknown_field"))
+        sfh_model = params.get("sfh_model", None)
+        if sfh_model is None:
+            input_model = params.get("input_model", {}) or {}
+            sfh_model = input_model.get("use_builtin", False) or input_model.get("sfh", {}).get(
+                "model", "unknown"
+            )
+        self.sfh_model = sfh_model
         # This says what the parameters are
         try:
             redshift = self.chain["zred"]
@@ -919,12 +927,13 @@ class Plotspector(FigureMaker):
             "beta",
             "stochastic",
         ]:
+            flex = False  # default; only continuity_flex sets True below
+
             if self.sfh_model in [
                 "continuity",
                 "continuity_bursty",
                 "continuity_flex",
             ]:
-                flex = False
                 if self.sfh_model == "continuity_flex":
                     flex = True
                 # These are probably wrong
@@ -1156,6 +1165,79 @@ class Plotspector(FigureMaker):
 
                 # mid_bins = np.array([np.mean(10**np.array(i)) for i in agebins])/10**6
 
+            elif self.sfh_model in ["beta"]:
+                # Prospector-beta built-in: everything is packed into the
+                # 'nzsfh' vector [zred, logmass, logzsol, logsfr_ratios...]
+                # and the agebins depend on zred (zred_to_agebins_pbeta).
+                from prospect.models.transforms import zred_to_agebins_pbeta
+
+                nzsfh = np.atleast_2d(self.chain["nzsfh"])
+                zreds = nzsfh[:, 0]
+                logmass = nzsfh[:, 1]
+                logsfr_ratios = nzsfh[:, 3:]
+
+                # redshift comes from nzsfh, not a 'zred' chain column
+                self.z_16, self.redshift, self.z_84 = weighted_quantile(
+                    zreds, [0.16, 0.5, 0.84], self.weights
+                )
+
+                self.logmass_best_low, self.logmass_best, self.logmass_best_high = (
+                    weighted_quantile(np.ndarray.flatten(logmass), [0.16, 0.50, 0.84], self.weights)
+                )
+
+                agebins_init = np.array(self.model.init_config["agebins"]["init"])
+
+                sfrs, masses, agebins_all = [], [], []
+                for zred_i, lm, lr in zip(zreds, logmass, logsfr_ratios):
+                    ab = zred_to_agebins_pbeta(zred=np.atleast_1d(zred_i), agebins=agebins_init)
+                    mass_i = logsfr_ratios_to_masses(logmass=lm, logsfr_ratios=lr, agebins=ab)
+                    dt = 10 ** ab[:, 1] - 10 ** ab[:, 0]
+                    sfrs.append(mass_i / dt)
+                    masses.append(mass_i)
+                    agebins_all.append(ab)
+
+                sfrs = np.array(sfrs).T
+                masses = np.array(masses)  # (nsample, nbin)
+                agebins_all = np.array(agebins_all)  # (nsample, nbin, 2)
+
+                low_sfrs, median_sfrs, high_sfrs = [], [], []
+                for bin in sfrs:
+                    sfr_16, sfr_50, sfr_84 = weighted_quantile(bin, [0.16, 0.5, 0.84], self.weights)
+                    low_sfrs.append(sfr_16)
+                    median_sfrs.append(sfr_50)
+                    high_sfrs.append(sfr_84)
+
+                # SFR averaged over the last 10/100 Myr, per sample (bins vary
+                # with zred, so do the fractional-coverage sum per sample).
+                ages = 10 ** (agebins_all - 9)  # Gyr
+                for period, attr in [(0.01, "sfr_10myr"), (0.1, "sfr_100myr")]:
+                    ft = np.clip(
+                        (period - ages[:, :, 0]) / (ages[:, :, 1] - ages[:, :, 0]), 0.0, 1.0
+                    )
+                    dist = (ft * masses).sum(axis=-1) / (period * 1e9)
+                    setattr(self, f"{attr}_dist", dist)
+                    setattr(self, attr, weighted_quantile(dist, [0.16, 0.5, 0.84], self.weights))
+
+                # mass-weighted age per sample (Gyr -> stored in Myr like the
+                # continuity branch)
+                ages_yr = 10**agebins_all
+                dtsq = (ages_yr[:, :, 1] ** 2 - ages_yr[:, :, 0] ** 2) / 2.0
+                sfr_samp = masses / (ages_yr[:, :, 1] - ages_yr[:, :, 0])
+                mwa = (dtsq * sfr_samp).sum(axis=-1) / 10**logmass / 1e9  # Gyr
+                self.mwa_dist = mwa
+                self.mwa = weighted_quantile(mwa, [0.16, 0.5, 0.84], self.weights) * 10**3
+
+                # median agebins (per edge) for plotting
+                agebins = np.array(
+                    [
+                        [
+                            weighted_quantile(agebins_all[:, i, j], [0.5], self.weights)[0]
+                            for j in range(2)
+                        ]
+                        for i in range(agebins_all.shape[1])
+                    ]
+                )
+
             if ax is None:
                 fig, ax = plt.subplots(
                     nrows=2,
@@ -1344,12 +1426,18 @@ class Plotspector(FigureMaker):
         elif self.sfh_model in ["continuity_psb", "dirichlet"]:
             print("SFH plot not implemented for this SFH.")
 
-        elif self.sfh_model in ["exp", "delayed", "rising"]:
+        elif self.sfh_model in ["exp", "delayed", "rising", "delayed-tau", "delayed-exp"]:
             try:
                 tage = np.ndarray.flatten(self.chain["tage"])
-            except ValueError:
+            # KeyError: structured chain arrays raise KeyError (not ValueError)
+            # when 'tage' is not a free parameter (e.g. tage depends on tage_tuniv)
+            except (ValueError, KeyError):
                 tage_from_z = np.ndarray.flatten(self.chain["tage_tuniv"])
-                z = np.ndarray.flatten(self.chain["zred"])
+                try:
+                    z = np.ndarray.flatten(self.chain["zred"])
+                except (ValueError, KeyError):
+                    # fixed-redshift fit: take zred from the model instead
+                    z = np.full_like(tage_from_z, np.atleast_1d(self.model.params["zred"])[0])
                 tage = tage_from_tuniv(z, tage_from_z)  # in gyr
             tau = np.ndarray.flatten(self.chain["tau"])
             mass = np.ndarray.flatten(self.chain["mass"])
@@ -1363,7 +1451,7 @@ class Plotspector(FigureMaker):
             # mass = theta_best[labels=='mass']
             # These need to be actual fitted values
             # for delay tau this function gives the (unnormalized) SFR
-            if self.sfh_model in ["delayed", "rising"]:
+            if self.sfh_model in ["delayed", "rising", "delayed-tau", "delayed-exp"]:
                 sfr = lambda t, tau: (t / tau) * np.exp(-t / tau)
                 power = 1
             elif self.sfh_model == "exp":
@@ -2442,6 +2530,18 @@ class Plotspector(FigureMaker):
                 fill_between=fill_between,
             )
 
+        except (ImportError, ModuleNotFoundError):
+            # hist1d helper unavailable - fall back to a weighted KDE
+            from scipy.stats import gaussian_kde
+
+            good = draws[np.isfinite(draws)]
+            if len(good) > 1 and np.ptp(good) > 0:
+                kde = gaussian_kde(good)
+                x_plot = np.linspace(good.min(), good.max(), 200)
+                y = kde(x_plot)
+                ax.plot(x_plot, y, color=colour, alpha=alpha, lw=1, linestyle="dashdot")
+                if fill_between:
+                    ax.fill_between(x_plot, y, color=colour, alpha=0.3)
         except ValueError:
             pass
 
