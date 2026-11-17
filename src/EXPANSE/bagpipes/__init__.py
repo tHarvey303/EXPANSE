@@ -11,6 +11,11 @@ from .pipes_models import (
     create_dicts,
 )
 
+from .pipes_config import (
+    set_bagpipes_config,
+    read_recorded_config,
+)
+
 from .plotpipes import (calculate_bins, 
                        combine_bands, 
                        five_sig_depth_to_n_sig_depth,
@@ -21,4 +26,4 @@ from .plotpipes import (calculate_bins,
 
 
 __all__ = ['calculate_bins', 'combine_bands', 'five_sig_depth_to_n_sig_depth', 'colormap', 'PipesFit', 'PlotPipes', 
-              'delayed_dict', 'continuity_dict', 'dpl_dict', 'lognorm_dict', 'resolved_dict_cnst', 'create_dicts', 'resolved_dict_bursty', 'continuity_bursty_dict']
+              'delayed_dict', 'continuity_dict', 'dpl_dict', 'lognorm_dict', 'resolved_dict_cnst', 'create_dicts', 'resolved_dict_bursty', 'continuity_bursty_dict', 'set_bagpipes_config', 'read_recorded_config']

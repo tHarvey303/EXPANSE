@@ -94,21 +94,25 @@ if __name__ == "__main__":
             fit_instructions
         ), f"Length of IDs ({len(ids)}) and fit_instructions ({len(fit_instructions)}) do not match"
 
-        # Check if use_bpass in meta
+        # Bagpipes configuration: explicit meta["config"] (-> pipes.set_config)
+        # or the legacy meta["use_bpass"] flag. Must be the same for all galaxies.
+        from EXPANSE.bagpipes.pipes_config import (
+            resolve_config_from_meta,
+            set_bagpipes_config,
+        )
 
-        use_bpass = False
-        use_bpasses = [meta.get("use_bpass", False) for meta in metas]
-        # Check if all are True or all are False
-        if all(use_bpasses) or not any(use_bpasses):
-            use_bpass = use_bpasses[0]
-        else:
-            raise ValueError("use_bpass must be the same for all galaxies")
-
-        os.environ["use_bpass"] = str(int(use_bpass))
+        requested = [resolve_config_from_meta(meta) for meta in metas]
+        if len(set(requested)) > 1:
+            raise ValueError(
+                f"Bagpipes config / use_bpass must be the same for all galaxies, got {set(requested)}"
+            )
+        pipes_config_name, use_bpass = requested[0] if len(requested) > 0 else (None, False)
 
         # If all cat_filt_list are the same, we can use the same filter list for all galaxies.
         # Otherwise we will need one per bin.
-        import bagpipes as pipes
+        pipes = set_bagpipes_config(config=pipes_config_name, use_bpass=use_bpass)
+        if rank == 0:
+            print(f"Bagpipes config: {pipes.config.__name__}")
 
         # Check if all redshift_sigma are None
         if all([rs is None for rs in redshift_sigma]):

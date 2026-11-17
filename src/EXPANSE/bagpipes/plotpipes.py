@@ -487,7 +487,14 @@ class PipesFitNoLoad:
         self,
         bands=None,
         use_bpass=False,
+        config=None,
     ):
+        """Rebuild the Bagpipes model wavelength grid.
+
+        config is the name of the Bagpipes config the fit used (use_bpass is
+        the legacy equivalent of config="bpass"). By default the config name
+        recorded in the .h5 is used if there is one, else the active config.
+        """
         if bands is None:
             bands = self.bands
 
@@ -497,10 +504,15 @@ class PipesFitNoLoad:
             raise ValueError("No bands provided or stored in object.")
 
         paths = [glob.glob(f"{bagpipes_filter_dir}/*{band}*")[0] for band in bands]
-        if use_bpass:
-            from bagpipes import config_bpass as config
-        else:
-            from bagpipes import config
+        from .pipes_config import (
+            get_config_module,
+            read_recorded_config,
+            recorded_config_request,
+        )
+
+        if config is None and not use_bpass:
+            config, _ = recorded_config_request(read_recorded_config(self.h5_path))
+        config = get_config_module(config=config, use_bpass=use_bpass)
 
         from bagpipes.filters import filter_set
 
@@ -1258,16 +1270,21 @@ class PipesFit:
         data = h5py.File(h5_path, "r")
         # fit_instructions is attribute of data
         fit_instructions = data.attrs["fit_instructions"]
-        try:
-            self.config_used = eval(data.attrs["config"])
+        from .pipes_config import (
+            parse_recorded_config,
+            recorded_config_request,
+            set_bagpipes_config,
+            set_config_environment,
+        )
+
+        # Restore the Bagpipes config the fit used: the recorded config name
+        # if there is one, else the legacy BPASS / BC03 type.
+        self.config_used = parse_recorded_config(data.attrs.get("config", None))
+        recorded_config, recorded_use_bpass = recorded_config_request(self.config_used)
+        if self.config_used is not None:
             print("Fitting used ", self.config_used)
-            if self.config_used["type"] == "BPASS":
-                os.environ["use_bpass"] = str(int(True))
-            elif self.config_used["type"] == "BC03":
-                os.environ["use_bpass"] = str(int(False))
-        except KeyError:
-            self.config_used = None
-            pass
+        if recorded_use_bpass is not None:
+            set_config_environment(config=recorded_config, use_bpass=recorded_use_bpass)
 
         data.close()
 
@@ -1285,16 +1302,18 @@ class PipesFit:
                 # import run_bagpipes
                 from bagpipes import config, fit, galaxy
 
-            if self.config_used is not None:
-                assert (
-                    config.stellar_file == self.config_used["stellar_file"]
-                ), f'{config.stellar_file} != {self.config_used["stellar_file"]}'
-                assert (
-                    config.neb_line_file == self.config_used["neb_line_file"]
-                ), f'{config.neb_line_file} != {self.config_used["neb_line_file"]}'
-                assert (
-                    config.neb_cont_file == self.config_used["neb_cont_file"]
-                ), f'{config.neb_cont_file} != {self.config_used["neb_cont_file"]}'
+            if recorded_config is not None:
+                # Explicitly recorded config: make sure it is the active one
+                # even if Bagpipes was already imported with another.
+                set_bagpipes_config(config=recorded_config)
+                from bagpipes import config
+
+            if self.config_used:
+                for key in ["stellar_file", "neb_line_file", "neb_cont_file"]:
+                    if self.config_used.get(key, None) is not None:
+                        assert (
+                            getattr(config, key, None) == self.config_used[key]
+                        ), f"{getattr(config, key, None)} != {self.config_used[key]}"
 
             # fit_instructions = data['fit_instructions']
             if type(fit_instructions) in [str, np.str_]:

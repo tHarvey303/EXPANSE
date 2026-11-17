@@ -414,8 +414,14 @@ def create_dicts(
             The sampler to use. The default is "multinest".
         - "run_name": str
             The name of the run.
+        - "config": str
+            Name of the Bagpipes configuration to use, passed to bagpipes.set_config
+            (e.g. "bpass", "BC03_v1_3"; see bagpipes.list_available_configs()).
+            The config used is recorded in the posterior .h5 files and in the meta
+            of the EXPANSE Bagpipes table ("bagpipes_config").
         - "use_bpass": bool
-            Whether to use BPASS models or not. The default is True.
+            Legacy flag: True is equivalent to "config": "bpass", False (the default)
+            to the Bagpipes default config. Cannot be True together with another "config".
         - "fit_photometry": str
             The photometry to fit. The default is "TOTAL_BIN". Overrides what is set in run_bagpipes if it exists.
         - "update_cont_bins": bool

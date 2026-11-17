@@ -1540,9 +1540,12 @@ class ResolvedGalaxy:
             if len(possible_sed_keys) > 0:
                 for key in possible_sed_keys:
                     # read meta from key as well
+                    # Meta is serialised alongside the table (serialize_meta=True);
+                    # older files may carry it as dataset attributes instead.
                     meta = dict(hfile[key].attrs.items())
                     table = read_table_hdf5(hfile, key)
-                    table.meta = meta
+                    for meta_key, meta_value in meta.items():
+                        table.meta.setdefault(meta_key, meta_value)
 
                     tool, run = key.split("/")[1:]
                     sed_fitting_table[tool][run] = table
@@ -10329,8 +10332,16 @@ class ResolvedGalaxy:
         )
 
         fit_instructions = bagpipes_config.get("fit_instructions", {})
-        use_bpass = meta.get("use_bpass", False)
-        os.environ["use_bpass"] = str(int(use_bpass))
+        # Bagpipes configuration: explicit meta["config"] (-> pipes.set_config)
+        # or the legacy meta["use_bpass"] flag.
+        from .bagpipes.pipes_config import (
+            config_meta_from_h5,
+            resolve_config_from_meta,
+            set_bagpipes_config,
+            warn_if_config_changed,
+        )
+
+        pipes_config_name, use_bpass = resolve_config_from_meta(meta)
         run_name = meta.get("run_name", "default")
 
         redshift = meta.get("redshift", self.redshift)  # PLACEHOLDER for self.redshift
@@ -10476,7 +10487,7 @@ class ResolvedGalaxy:
         else:
             redshifts = np.ones(len(flux_table)) * redshift
 
-        import bagpipes as pipes
+        pipes = set_bagpipes_config(config=pipes_config_name, use_bpass=use_bpass)
         # out_subdir (moving files)
 
         out_subdir = f"{run_name}/{self.survey}/{self.galaxy_id}"
@@ -10642,6 +10653,7 @@ class ResolvedGalaxy:
                 sampler=sampler,
                 use_mpi=use_mpi,
             )
+            warn_if_config_changed(config=pipes_config_name, use_bpass=use_bpass)
 
         if rank == 0:
             # Move files to the correct location
@@ -10682,6 +10694,10 @@ class ResolvedGalaxy:
                 "fit_photometry": fit_photometry,
                 "exclude_bands": exclude_bands,
             }
+            # Bagpipes config actually used, as recorded in the posterior
+            meta_to_store.update(
+                config_meta_from_h5(f"{run_dir}/posterior/{out_subdir}/{ids[0]}.h5")
+            )
             table.meta.update(meta_to_store)
             # Save meta out to the table
             table.write(path, format="fits", overwrite=True)
@@ -12148,15 +12164,20 @@ class ResolvedGalaxy:
         bands=None,
         bagpipes_filter_dir=bagpipes_filter_dir,
         use_bpass=False,
+        config=None,
     ):
+        """Rebuild the Bagpipes model wavelength grid for a set of bands.
+
+        config is the name of the Bagpipes config the fit used (use_bpass is
+        the legacy equivalent of config="bpass"); default is the active one.
+        """
         if bands is None:
             bands = self.bands
 
         paths = [glob.glob(f"{bagpipes_filter_dir}/*{band}*")[0] for band in bands]
-        if use_bpass:
-            from bagpipes import config_bpass as config
-        else:
-            from bagpipes import config
+        from .bagpipes.pipes_config import get_config_module
+
+        config = get_config_module(config=config, use_bpass=use_bpass)
 
         from bagpipes.filters import filter_set
 
@@ -14434,13 +14455,14 @@ class ResolvedGalaxy:
 
                 with h5.File(h5_path, "r") as f:
                     """ Fun bodging of SED into correct form"""
-                    if (
-                        "config" not in f.attrs.keys()
-                        or "type" not in ast.literal_eval(f.attrs["config"]).keys()
-                    ):
-                        use_bpass = False
-                    else:
-                        use_bpass = ast.literal_eval(f.attrs["config"])["type"] == "BPASS"
+                    from .bagpipes.pipes_config import (
+                        parse_recorded_config,
+                        recorded_config_request,
+                    )
+
+                    pipes_config_name, _ = recorded_config_request(
+                        parse_recorded_config(f.attrs.get("config", None))
+                    )
                     if "spectrum_full" in f["advanced_quantities"].keys():
                         try:
                             data = f["advanced_quantities"]["spectrum_full"][:]
@@ -14461,7 +14483,11 @@ class ResolvedGalaxy:
                             print("error:", e)
                             bands = self.bands
 
-                        wav = self._recalculate_bagpipes_wavelength_array(bands=bands)
+                        # Only an explicitly recorded config changes the grid; legacy
+                        # files keep using the active config, as before.
+                        wav = self._recalculate_bagpipes_wavelength_array(
+                            bands=bands, config=pipes_config_name
+                        )
                         # Data is 2D - check one of the dimensions is the same as the length of wav
                         if data.shape[1] != len(wav) and data.shape[0] != len(wav):
                             raise Exception(
@@ -19254,6 +19280,12 @@ class ResolvedGalaxies(np.ndarray):
                         "run_name": config["run_name"],
                         "psf_type": config["psf_type"],
                     }
+                    # Bagpipes config actually used, as recorded in the posterior
+                    from .bagpipes.pipes_config import config_meta_from_h5
+
+                    meta_to_store.update(
+                        config_meta_from_h5(os.path.join(new_dir, f"{config['ids'][0]}.h5"))
+                    )
 
                     gal_cat.meta.update(meta_to_store)
 
